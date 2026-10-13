@@ -182,25 +182,54 @@ def screenshot(path):
 
 # ---------- звук і сповіщення ----------
 
-_WINDOWS_SOUNDS = [  # файли з C:\Windows\Media; назва — без «Windows Notify» і розширення
-    "Windows Notify System Generic.wav", "Windows Notify Messaging.wav", "Windows Notify Calendar.wav",
-    "Windows Notify Email.wav", "chimes.wav", "chord.wav", "ding.wav", "notify.wav", "tada.wav",
-    "Alarm01.wav", "Ring01.wav",
+# Windows: події стандартної звукової схеми («Панель керування → Звук → Звуки»).
+# Звук беремо з поточної схеми користувача — якщо він змінить його у Windows, Limber зіграє його ж.
+# Ідентифікатор → подія; підпис для інтерфейсу — i18n "snd_<ідентифікатор>".
+_WINDOWS_EVENTS = [
+    ("notification", "Notification.Default"),
+    ("reminder", "Notification.Reminder"),
+    ("message", "Notification.IM"),
+    ("mail", "Notification.Mail"),
+    ("chime", "Notification.Proximity"),
+    ("default", ".Default"),
 ]
+# Якщо у схемі звуків немає (наприклад, «Без звуків») — стандартні файли Windows напряму
+_WINDOWS_FALLBACK = [
+    ("notification", "Windows Notify System Generic.wav"), ("reminder", "Windows Notify Calendar.wav"),
+    ("message", "Windows Notify Messaging.wav"), ("mail", "Windows Notify Email.wav"),
+    ("chime", "Windows Proximity Notification.wav"), ("default", "Windows Background.wav"),
+]
+# macOS: стандартні звуки сповіщень («Системні параметри → Звук»)
 _MAC_SOUNDS = ["Glass", "Ping", "Hero", "Pop", "Purr", "Submarine", "Funk", "Bottle", "Blow", "Frog", "Morse",
                "Sosumi", "Tink", "Basso"]
 
 
+def _scheme_sound(event):
+    """Файл, призначений події в поточній звуковій схемі Windows, або None."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"AppEvents\Schemes\Apps\.Default\{event}\.Current") as key:
+            path = os.path.expandvars(winreg.QueryValue(key, None) or "")
+    except OSError:
+        return None
+    if path and not os.path.isabs(path):  # схема може містити лише ім'я файлу з папки Media
+        path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media", path)
+    return path if path and os.path.exists(path) else None
+
+
 def available_sounds():
-    """[(назва, шлях до файлу)] системних звуків, які є на цьому комп'ютері."""
+    """[(ідентифікатор, шлях до файлу)] стандартних системних звуків, які є на цьому комп'ютері."""
     if IS_WINDOWS:
-        media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
-        sounds = []
-        for file in _WINDOWS_SOUNDS:
-            path = os.path.join(media, file)
-            if os.path.exists(path):
-                name = os.path.splitext(file)[0].replace("Windows Notify ", "").replace("System ", "").rstrip("0123456789")
-                sounds.append((name[:1].upper() + name[1:], path))
+        sounds, seen = [], set()
+        for sound_id, event in _WINDOWS_EVENTS:
+            path = _scheme_sound(event)
+            if path and path.lower() not in seen:  # кілька подій можуть мати той самий файл
+                seen.add(path.lower())
+                sounds.append((sound_id, path))
+        if len(sounds) < 2:
+            media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
+            sounds = [(sound_id, os.path.join(media, file)) for sound_id, file in _WINDOWS_FALLBACK
+                      if os.path.exists(os.path.join(media, file))]
         return sounds
     if IS_MAC:
         return [(name, f"/System/Library/Sounds/{name}.aiff") for name in _MAC_SOUNDS

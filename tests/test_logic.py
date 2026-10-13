@@ -197,6 +197,14 @@ def test_download_checks_size_and_checksum(tmp_path):
         updates.download(dict(asset, size=1))
 
 
+def test_windows_sound_ids_have_labels_in_both_languages():
+    import system
+    ids = {sound_id for sound_id, _ in system._WINDOWS_EVENTS} | {sound_id for sound_id, _ in system._WINDOWS_FALLBACK}
+    for lang in i18n.LANGUAGES:
+        for sound_id in ids:
+            assert f"snd_{sound_id}" in i18n.STRINGS[lang], (lang, sound_id)
+
+
 def test_unknown_language_falls_back_to_english():
     i18n.set_language("de")
     assert i18n.get_language() == "en"

@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -1389,8 +1389,12 @@ class App:
             self.set_setting("sound_name", names[index])
             system.play_sound(sounds[index][1])
 
+        def label(index):  # Windows: перекладені назви подій; macOS: власні назви звуків (Glass, Ping…)
+            key = f"snd_{names[index]}"
+            return t(key) if key in i18n.STRINGS[i18n.get_language()] else names[index]
+
         Slider(parent, t("sound_name_label"), 0, len(names) - 1, 1, names.index(self.sound_name()),
-               lambda i: names[i], choose).pack(fill="x", pady=(0, 6))
+               label, choose).pack(fill="x", pady=(0, 6))
 
     def add_slider(self, parent, key):
         lo, hi, step, fmt = SLIDERS[key]
