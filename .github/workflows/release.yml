@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -37,12 +37,61 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: LimberSetup
+          name: windows
           path: dist/LimberSetup-*.exe
 
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+  macos:
+    runs-on: macos-latest  # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
         with:
-          files: dist/LimberSetup-*.exe
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Tests
+        run: python3 -m pytest -q
+
+      - name: Build app and dmg
+        run: |
+          VERSION=""
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          bash build_mac.sh $VERSION
+
+      # Запускає зібраний Limber.app, проходить усі вікна й робить знімки екрана
+      - name: Smoke test (UI screenshots)
+        timeout-minutes: 5
+        run: dist/Limber.app/Contents/MacOS/Limber --smoke-test "$PWD/smoke"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-smoke
+          path: |
+            smoke/
+            ~/Library/Application Support/Limber/limber.log
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/Limber-*.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            artifacts/windows/LimberSetup-*.exe
+            artifacts/macos/Limber-*.dmg
           generate_release_notes: true

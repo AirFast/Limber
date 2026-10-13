@@ -1,26 +1,22 @@
-"""Limber — нагадування про перерви з вправами, водою та статистикою (Windows)."""
-import ctypes
+"""Limber — нагадування про перерви з вправами, водою та статистикою (Windows, macOS)."""
 import datetime as dt
 import json
 import math
 import os
 import queue
 import random
-import shutil
-import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 import traceback
-import winreg
-import winsound
 from tkinter import messagebox
 
-if sys.stderr is None:  # pythonw: без консолі помилки імпорту інакше зникли б безслідно
-    _log_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Limber")
-    os.makedirs(_log_dir, exist_ok=True)
-    sys.stderr = sys.stdout = open(os.path.join(_log_dir, "limber.log"), "a", encoding="utf-8", buffering=1)
+import system
+
+if sys.stderr is None:  # збірка без консолі: помилки імпорту інакше зникли б безслідно
+    os.makedirs(system.data_dir(), exist_ok=True)
+    sys.stderr = sys.stdout = open(os.path.join(system.data_dir(), "limber.log"), "a", encoding="utf-8", buffering=1)
 
 import pystray
 from PIL import Image, ImageDraw, ImageTk
@@ -28,24 +24,16 @@ from PIL import Image, ImageDraw, ImageTk
 import exercises
 import i18n
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
+from system import font
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 APP_NAME = "Limber"
-APP_ID = "Limber.BreakReminder"
-APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
-DATA_DIR = os.path.join(APPDATA, "Limber")
-OLD_DATA_DIR = os.path.join(APPDATA, "Rozminka")  # дані з часів, коли програма звалася «Розминка»
+DATA_DIR = system.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 STATS_PATH = os.path.join(DATA_DIR, "stats.json")
 ICON_PATH = os.path.join(DATA_DIR, "limber.ico")
 LOG_PATH = os.path.join(DATA_DIR, "limber.log")
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-LEGACY_RUN_VALUES = ("Limber", "Rozminka")
-STARTUP_LINK = os.path.join(APPDATA, r"Microsoft\Windows\Start Menu\Programs\Startup\Limber.lnk")
-TASK_NAME = "Limber"
-MUTEX_NAME = "Local\\LimberSingleInstance"
-SHOW_EVENT_NAME = "Local\\LimberShowWindow"  # другий запуск просить уже запущений екземпляр показати вікно
 
 DEFAULTS = {
     "mini_interval_min": 20,
@@ -188,7 +176,7 @@ def load_config():
     cfg = dict(DEFAULTS)
     saved = load_json(CONFIG_PATH, {})
     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
-    i18n.set_language(cfg["language"] or i18n.system_language())
+    i18n.set_language(cfg["language"] or system.system_language())
     return cfg
 
 
@@ -313,102 +301,6 @@ class Scheduler:
         self.water_remaining = min(self.water_remaining, self.cfg["water_interval_min"] * 60)
 
 
-# ---------- Windows ----------
-
-def monitors():
-    """[(x, y, w, h, work_rect, is_primary)] для всіх моніторів, основний — першим."""
-    user32 = ctypes.windll.user32
-
-    class RECT(ctypes.Structure):
-        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
-
-    class MONITORINFO(ctypes.Structure):
-        _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", RECT), ("rcWork", RECT), ("dwFlags", ctypes.c_ulong)]
-
-    result = []
-    proc_type = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
-                                   ctypes.POINTER(RECT), ctypes.c_void_p)
-
-    def callback(hmon, _hdc, _rect, _data):
-        info = MONITORINFO()
-        info.cbSize = ctypes.sizeof(MONITORINFO)
-        user32.GetMonitorInfoW(ctypes.c_void_p(hmon), ctypes.byref(info))
-        r, w = info.rcMonitor, info.rcWork
-        result.append((r.l, r.t, r.r - r.l, r.b - r.t, (w.l, w.t, w.r, w.b), bool(info.dwFlags & 1)))
-        return 1
-
-    try:
-        user32.EnumDisplayMonitors(None, None, proc_type(callback), 0)
-    except OSError:
-        return []
-    result.sort(key=lambda m: not m[5])
-    return result
-
-
-def launch_target():
-    """(програма, аргументи) для запуску Limber без консолі."""
-    if getattr(sys, "frozen", False):
-        return sys.executable, ""
-    exe = sys.executable
-    pythonw = os.path.join(os.path.dirname(exe), "pythonw.exe")
-    if os.path.exists(pythonw):
-        exe = pythonw
-    return exe, f'"{os.path.abspath(__file__)}"'
-
-
-def run_powershell(script, **env):
-    """Скрипт отримує значення через змінні середовища — без проблем з лапками у шляхах."""
-    return subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                          env=dict(os.environ, **env), capture_output=True, stdin=subprocess.DEVNULL,
-                          creationflags=subprocess.CREATE_NO_WINDOW, timeout=60)
-
-
-def remove_legacy_autostart():
-    """Ранні версії писали автозапуск у реєстр Run і в папку «Автозавантаження»."""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            for name in LEGACY_RUN_VALUES:
-                try:
-                    winreg.DeleteValue(key, name)
-                except FileNotFoundError:
-                    pass
-    except OSError:
-        pass
-    if os.path.exists(STARTUP_LINK):
-        os.remove(STARTUP_LINK)
-
-
-def get_autostart():
-    return subprocess.run(["schtasks", "/query", "/tn", TASK_NAME], capture_output=True,
-                          creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0
-
-
-def set_autostart(enabled):
-    """Завдання Планувальника «під час входу» із затримкою — надійніше за реєстр Run."""
-    remove_legacy_autostart()
-    if not enabled:
-        run_powershell("Unregister-ScheduledTask -TaskName $env:L_TASK -Confirm:$false -ErrorAction SilentlyContinue",
-                       L_TASK=TASK_NAME)
-        return
-    target, arguments = launch_target()
-    # Встановлений Limber.exe запускається без аргументів, а порожній -Argument PowerShell не приймає
-    script = (
-        "$a = if ($env:L_ARGS) { New-ScheduledTaskAction -Execute $env:L_EXE -Argument $env:L_ARGS "
-        "-WorkingDirectory $env:L_DIR } else { New-ScheduledTaskAction -Execute $env:L_EXE -WorkingDirectory $env:L_DIR }; "
-        "$t = New-ScheduledTaskTrigger -AtLogOn -User $env:L_USER; $t.Delay = 'PT20S'; "
-        "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
-        "-ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew; "
-        "$p = New-ScheduledTaskPrincipal -UserId $env:L_USER -LogonType Interactive -RunLevel Limited; "
-        "Register-ScheduledTask -TaskName $env:L_TASK -Action $a -Trigger $t -Settings $s -Principal $p "
-        "-Description 'Limber break reminder' -Force | Out-Null")
-    result = run_powershell(script, L_EXE=target, L_ARGS=arguments, L_TASK=TASK_NAME,
-                            L_DIR=os.path.dirname(target if getattr(sys, "frozen", False)
-                                                  else os.path.abspath(__file__)),
-                            L_USER=f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}")
-    if result.returncode != 0:
-        raise OSError(result.stderr.decode("utf-8", "replace").strip() or "Register-ScheduledTask failed")
-
-
 SUPERSAMPLE = 4
 
 
@@ -497,22 +389,6 @@ def ensure_icon_file():
     return ICON_PATH
 
 
-def migrate_old_data():
-    if os.path.isdir(OLD_DATA_DIR) and not os.path.exists(DATA_DIR):
-        os.replace(OLD_DATA_DIR, DATA_DIR)
-    # Копії, запущені з-під застосунку Claude (пакет MSIX), писали дані в його приватне сховище
-    packages = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages")
-    if os.path.isdir(packages):
-        for name in os.listdir(packages):
-            cached = os.path.join(packages, name, "LocalCache", "Roaming", "Limber")
-            if name.startswith("Claude_") and os.path.isdir(cached):
-                os.makedirs(DATA_DIR, exist_ok=True)
-                for file in ("config.json", "stats.json"):
-                    src, dst = os.path.join(cached, file), os.path.join(DATA_DIR, file)
-                    if os.path.exists(src) and not os.path.exists(dst):
-                        shutil.copy2(src, dst)
-
-
 # ---------- застосунок ----------
 
 def check_mark(size, color):
@@ -536,7 +412,7 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
     if image:
         # У Tk padx — це ще й проміжок між текстом і картинкою, тому збираємо кнопку з двох Label
         btn = tk.Frame(parent, bg=bg, padx=22, pady=10, cursor="hand2")
-        parts = [tk.Label(btn, text=text, bg=bg, fg=fg, font=("Segoe UI", size), cursor="hand2"),
+        parts = [tk.Label(btn, text=text, bg=bg, fg=fg, font=font(size), cursor="hand2"),
                  tk.Label(btn, image=image, bg=bg, cursor="hand2")]
         parts[0].pack(side="left")
         parts[1].pack(side="left", padx=(7, 0))
@@ -555,7 +431,7 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
         btn = tk.Button(parent, text=text, command=command, bg=bg, fg=fg,
                         activebackground=hover, activeforeground=fg,
                         disabledforeground="#5d7775", relief="flat", bd=0, padx=22, pady=10,
-                        font=("Segoe UI", size), cursor="hand2")
+                        font=font(size), cursor="hand2")
     btn.bind("<Enter>", lambda e: btn.configure(bg=hover) if btn["state"] == "normal" else None)
     btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
     return btn
@@ -565,19 +441,8 @@ def card(parent, title=None):
     frame = tk.Frame(parent, bg=C["card"], padx=18, pady=14)
     if title:
         tk.Label(frame, text=title.upper(), bg=C["card"], fg=C["accent"],
-                 font=("Segoe UI Semibold", 9)).pack(anchor="w", pady=(0, 8))
+                 font=font(9, "semibold")).pack(anchor="w", pady=(0, 8))
     return frame
-
-
-def dark_title_bar(win):
-    try:
-        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
-        on = ctypes.c_int(1)
-        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (нові та старі збірки Windows 10)
-            if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
-                break
-    except (AttributeError, OSError):
-        pass
 
 
 class Slider(tk.Frame):
@@ -591,9 +456,9 @@ class Slider(tk.Frame):
         self.value = self.snap(value)
         head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
-        tk.Label(head, text=label, bg=bg, fg=C["muted"], font=("Segoe UI", 10)).pack(side="left")
+        tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10)).pack(side="left")
         self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
-                                    font=("Segoe UI Semibold", 11))
+                                    font=font(11, "semibold"))
         self.value_label.pack(side="right")
         self.canvas = tk.Canvas(self, height=26, bg=bg, highlightthickness=0, cursor="hand2")
         self.canvas.pack(fill="x", pady=(2, 0))
@@ -645,7 +510,7 @@ class Toggle(tk.Frame):
         bg = parent["bg"]
         super().__init__(parent, bg=bg, cursor="hand2")
         self.value, self.on_change = value, on_change
-        label = tk.Label(self, text=text, bg=bg, fg=C["text"], font=("Segoe UI", 11), cursor="hand2")
+        label = tk.Label(self, text=text, bg=bg, fg=C["text"], font=font(11), cursor="hand2")
         label.pack(side="left")
         self.canvas = tk.Canvas(self, width=46, height=24, bg=bg, highlightthickness=0, cursor="hand2")
         self.canvas.pack(side="right")
@@ -682,10 +547,12 @@ class App:
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.title(APP_NAME)
-        try:
-            self.root.iconbitmap(default=ensure_icon_file())  # для всіх вікон і панелі завдань
-        except (OSError, tk.TclError):
-            pass
+        system.init_tk(self.root)
+        if system.IS_WINDOWS:
+            try:
+                self.root.iconbitmap(default=ensure_icon_file())  # для всіх вікон і панелі завдань
+            except (OSError, tk.TclError):
+                pass
 
         self.main_win = None
         self.break_wins = []
@@ -695,10 +562,10 @@ class App:
         self.last_tick = time.monotonic()
         self.icon_key = None
         self.tooltip = None
-        self.show_event = None
+        self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
 
-        self.icon = pystray.Icon("Limber", make_icon(0, False), APP_NAME, self.build_menu())
-        threading.Thread(target=self.icon.run, daemon=True).start()
+        self.icon = system.make_tray_icon(pystray, "Limber", make_icon(0, False), APP_NAME, self.build_menu())
+        system.start_tray(self.icon, self.root)
 
         self.root.after(1000, self.loop)
         self.root.after(100, self.process_queue)
@@ -733,7 +600,7 @@ class App:
             except queue.Empty:
                 break
             self.handle(action)
-        if self.show_event and ctypes.windll.kernel32.WaitForSingleObject(self.show_event, 0) == 0:
+        if self.instance and self.instance.show_requested():
             self.open_main()
         self.root.after(100, self.process_queue)
 
@@ -754,14 +621,14 @@ class App:
             self.sched.pause(action[1])
             self.icon.update_menu()
         elif action == "quit":
-            self.icon.stop()
+            if system.IS_MAC:
+                self.icon.visible = False  # stop() зупинив би спільний з Tk цикл NSApplication
+            else:
+                self.icon.stop()
             self.root.destroy()
 
     def notify(self, message):
-        try:
-            self.icon.notify(message, APP_NAME)
-        except Exception:
-            pass
+        system.notify(self.icon, APP_NAME, message)
 
     def update_tray(self):
         s = self.sched
@@ -807,7 +674,7 @@ class App:
 
     def beep(self):
         if self.cfg["sound"]:
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            system.beep()
 
     # --- перерва ---
 
@@ -831,7 +698,8 @@ class App:
                             "after": None, "widgets": None, "demo": demo, "group": None}
         self.beep()
 
-        screens = monitors() or [(0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight(), None, True)]
+        system.activate_app()
+        screens = system.monitors() or [(0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight(), None, True)]
         for x, y, w, h, _work, primary in screens:
             win = tk.Toplevel(self.root, bg=C["bg"])
             win.overrideredirect(True)
@@ -842,21 +710,21 @@ class App:
             if demo:
                 win.bind("<Escape>", lambda e: self.end_break("skip"))
                 tk.Label(win, text=t("demo_banner"), bg=C["bg"], fg=C["dim"],
-                         font=("Segoe UI Semibold", 11)).place(x=28, y=22)
+                         font=font(11, "semibold")).place(x=28, y=22)
             if not primary:
                 tk.Label(win, text=t("break_other_screen"), bg=C["bg"], fg=C["muted"],
-                         font=("Segoe UI Light", 40)).place(relx=0.5, rely=0.5, anchor="center")
+                         font=font(40, "light")).place(relx=0.5, rely=0.5, anchor="center")
                 continue
 
             frame = tk.Frame(win, bg=C["bg"])
             frame.place(relx=0.5, rely=0.5, anchor="center")
             wrap = int(min(w * 0.6, 900))
             widgets = {
-                "phase": tk.Label(frame, bg=C["bg"], fg=C["accent"], font=("Segoe UI Semibold", 14)),
-                "title": tk.Label(frame, bg=C["bg"], fg=C["text"], font=("Segoe UI Semibold", 36)),
-                "text": tk.Label(frame, bg=C["bg"], fg=C["text"], font=("Segoe UI", 18), wraplength=wrap),
-                "timer": tk.Label(frame, bg=C["bg"], font=("Segoe UI Light", 72)),
-                "info": tk.Label(frame, bg=C["bg"], fg=C["muted"], font=("Segoe UI", 12)),
+                "phase": tk.Label(frame, bg=C["bg"], fg=C["accent"], font=font(14, "semibold")),
+                "title": tk.Label(frame, bg=C["bg"], fg=C["text"], font=font(36, "semibold")),
+                "text": tk.Label(frame, bg=C["bg"], fg=C["text"], font=font(18), wraplength=wrap),
+                "timer": tk.Label(frame, bg=C["bg"], font=font(72, "light")),
+                "info": tk.Label(frame, bg=C["bg"], fg=C["muted"], font=font(12)),
             }
             widgets["phase"].pack()
             widgets["title"].pack(pady=(8, 24))
@@ -868,7 +736,7 @@ class App:
             chips.pack(pady=(0, 22))
             widgets["chips"] = {}
             for group in (None, *exercises.GROUPS):
-                chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=("Segoe UI", 10),
+                chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=font(10),
                                 padx=12, pady=5, cursor="hand2")
                 chip.pack(side="left", padx=3)
                 chip.bind("<Button-1>", lambda e, g=group: self.choose_group(g))
@@ -888,7 +756,7 @@ class App:
             flat_button(buttons, t("skip"), lambda: self.end_break("skip")).pack(side="left", padx=8)
             if multi:
                 tk.Label(frame, text=t("body_note"),
-                         bg=C["bg"], fg=C["dim"], font=("Segoe UI", 11)).pack(pady=(28, 0))
+                         bg=C["bg"], fg=C["dim"], font=font(11)).pack(pady=(28, 0))
             win.focus_force()
 
         self.update_break_view()
@@ -948,7 +816,7 @@ class App:
             return
         state["left"] = state["steps"][state["index"]]["secs"]
         if self.cfg["sound"]:
-            winsound.MessageBeep(winsound.MB_OK)
+            system.beep("step")
         self.update_break_view()
 
     def break_tick(self):
@@ -999,7 +867,7 @@ class App:
             self.water_win.destroy()  # справжнє нагадування важливіше за демо
             self.water_win = None
         self.water_demo = demo
-        screens = monitors()
+        screens = system.monitors()
         if screens:
             _l, _t, right, bottom = screens[0][4]
         else:
@@ -1016,23 +884,23 @@ class App:
         head = tk.Frame(win, bg=C["panel"])
         head.pack(fill="x", padx=20, pady=(16, 0))
         tk.Label(head, text=t("water_title"), bg=C["panel"], fg=C["water"],
-                 font=("Segoe UI Semibold", 16)).pack(side="left")
+                 font=font(16, "semibold")).pack(side="left")
         tk.Label(head, text=t("x_of_y", a=min(drunk + 1, goal) if not done else drunk, b=goal), bg=C["panel"],
-                 fg=C["muted"], font=("Segoe UI", 11)).pack(side="right")
+                 fg=C["muted"], font=font(11)).pack(side="right")
         if demo:
             tk.Label(head, text=t("demo_tag"), bg=C["panel"], fg=C["dim"],
-                     font=("Segoe UI Semibold", 9)).pack(side="right", padx=8)
+                     font=font(9, "semibold")).pack(side="right", padx=8)
             win.bind("<Escape>", lambda e: self.end_water(False))
         dots = tk.Frame(win, bg=C["panel"])
         dots.pack(anchor="w", padx=18, pady=(2, 8))
         for i in range(goal):
             tk.Label(dots, text="●" if i < drunk else "○", bg=C["panel"],
-                     fg=C["water"] if i < drunk else C["dim"], font=("Segoe UI", 12)).pack(side="left", padx=1)
+                     fg=C["water"] if i < drunk else C["dim"], font=font(12)).pack(side="left", padx=1)
         if done:
             tip = t("water_goal_done")
         else:
             tip = random.choice(content("water_tips"))
-        tk.Label(win, text=tip, bg=C["panel"], fg=C["text"], font=("Segoe UI", 11),
+        tk.Label(win, text=tip, bg=C["panel"], fg=C["text"], font=font(11),
                  wraplength=width - 44, justify="left").pack(anchor="w", padx=20)
         buttons = tk.Frame(win, bg=C["panel"])
         buttons.pack(anchor="e", padx=16, pady=14)
@@ -1076,7 +944,7 @@ class App:
         self.main_win = win
         self.w = {}
         win.update()
-        dark_title_bar(win)
+        system.style_window(win)
 
         header = tk.Frame(win, bg=C["bg"])
         header.pack(fill="x", padx=24, pady=(18, 10))
@@ -1085,10 +953,10 @@ class App:
         title = tk.Frame(header, bg=C["bg"])
         title.pack(side="left")
         tk.Label(title, text=APP_NAME, bg=C["bg"], fg=C["text"],
-                 font=("Segoe UI Semibold", 18)).pack(anchor="w")
+                 font=font(18, "semibold")).pack(anchor="w")
         tk.Label(title, text=t("tagline"), bg=C["bg"], fg=C["muted"],
-                 font=("Segoe UI", 9)).pack(anchor="w")
-        self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=("Segoe UI", 10))
+                 font=font(9)).pack(anchor="w")
+        self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=font(10))
         self.w["saved"].pack(side="left", padx=14, pady=(6, 0))
         tabs = tk.Frame(header, bg=C["panel"])
         tabs.pack(side="right")
@@ -1100,7 +968,7 @@ class App:
                              ("stats", self.build_stats_page),
                              ("settings", self.build_settings_page)):
             self.pages[key] = builder(body)
-            btn = tk.Label(tabs, text=t(f"tab_{key}"), font=("Segoe UI", 11), padx=16, pady=6, cursor="hand2")
+            btn = tk.Label(tabs, text=t(f"tab_{key}"), font=font(11), padx=16, pady=6, cursor="hand2")
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.tab_buttons[key] = btn
@@ -1154,9 +1022,9 @@ class App:
 
         water = card(right, t("card_water"))
         water.pack(fill="x")
-        self.w["water"] = tk.Label(water, bg=C["card"], fg=C["water"], font=("Segoe UI Light", 28))
+        self.w["water"] = tk.Label(water, bg=C["card"], fg=C["water"], font=font(28, "light"))
         self.w["water"].pack(anchor="w")
-        self.w["water_sub"] = tk.Label(water, bg=C["card"], fg=C["muted"], font=("Segoe UI", 10))
+        self.w["water_sub"] = tk.Label(water, bg=C["card"], fg=C["muted"], font=font(10))
         self.w["water_sub"].pack(anchor="w")
 
         today = card(right, t("card_today"))
@@ -1168,9 +1036,9 @@ class App:
         for i, (key, caption, color) in enumerate(metrics):
             cell = tk.Frame(grid, bg=C["card"])
             cell.grid(row=i // 2, column=i % 2, sticky="nw", padx=(0, 30), pady=8)
-            self.w[f"today_{key}"] = tk.Label(cell, bg=C["card"], fg=color, font=("Segoe UI Light", 34))
+            self.w[f"today_{key}"] = tk.Label(cell, bg=C["card"], fg=color, font=font(34, "light"))
             self.w[f"today_{key}"].pack(anchor="w")
-            tk.Label(cell, text=caption, bg=C["card"], fg=C["muted"], font=("Segoe UI", 10)).pack(anchor="w")
+            tk.Label(cell, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
         return page
 
     def toggle_pause(self):
@@ -1196,8 +1064,8 @@ class App:
         else:
             subtitle = t(f"ring_{s.next_kind()}")
         c.create_text(size / 2, size / 2 - 10, text=fmt_time(s.remaining), fill=C["text"],
-                      font=("Segoe UI Light", 40))
-        c.create_text(size / 2, size / 2 + 38, text=subtitle, fill=C["muted"], font=("Segoe UI", 11))
+                      font=font(40, "light"))
+        c.create_text(size / 2, size / 2 + 38, text=subtitle, fill=C["muted"], font=font(11))
 
     # статистика
 
@@ -1211,9 +1079,9 @@ class App:
             box = card(summary)
             box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == 2 else 7))
             summary.columnconfigure(i, weight=1, uniform="sum")
-            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=("Segoe UI Light", 30))
+            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(30, "light"))
             self.w[key].pack(anchor="w")
-            tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=("Segoe UI", 10)).pack(anchor="w")
+            tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
 
         chart = card(page, t("card_last7"))
         chart.pack(fill="both", expand=True, pady=(14, 0))
@@ -1223,9 +1091,9 @@ class App:
         legend.pack(anchor="w", pady=(6, 0))
         for text, color in ((t("lg_mini"), C["accent"]), (t("lg_long"), C["accent_dark"]),
                             (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"])):
-            tk.Label(legend, text="●", bg=C["card"], fg=color, font=("Segoe UI", 12)).pack(side="left")
+            tk.Label(legend, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
             tk.Label(legend, text=text, bg=C["card"], fg=C["muted"],
-                     font=("Segoe UI", 10)).pack(side="left", padx=(2, 14))
+                     font=font(10)).pack(side="left", padx=(2, 14))
         return page
 
     def draw_stats(self):
@@ -1258,12 +1126,12 @@ class App:
                     y -= h
             total = rec["mini_done"] + rec["long_done"] + rec["skipped"]
             if total:
-                c.create_text(cx, y - 10, text=total, fill=C["text"], font=("Segoe UI Semibold", 10))
+                c.create_text(cx, y - 10, text=total, fill=C["text"], font=font(10, "semibold"))
             label = t("today") if day == today else t("weekdays").split()[day.weekday()]
             c.create_text(cx, bottom + 14, text=label, fill=C["text"] if day == today else C["muted"],
-                          font=("Segoe UI", 10))
+                          font=font(10))
             c.create_text(cx, bottom + 33, text=f"● {rec['water']}" if rec["water"] else "",
-                          fill=C["water"], font=("Segoe UI", 9))
+                          fill=C["water"], font=font(9))
 
     # налаштування
 
@@ -1292,7 +1160,7 @@ class App:
         self.build_language_switch(other).pack(fill="x", pady=(0, 6))
         Toggle(other, t("sound_toggle"), self.cfg["sound"],
                lambda v: self.set_setting("sound", v)).pack(fill="x", pady=4)
-        Toggle(other, t("autostart_toggle"), get_autostart(),
+        Toggle(other, t("autostart_toggle"), system.get_autostart(),
                self.set_autostart_setting).pack(fill="x", pady=4)
 
         group(right, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
@@ -1306,7 +1174,7 @@ class App:
         preview = card(right, t("card_preview"))
         preview.pack(fill="x", pady=(14, 0))
         tk.Label(preview, text=t("preview_hint"), bg=C["card"],
-                 fg=C["muted"], font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 8))
+                 fg=C["muted"], font=font(10)).pack(anchor="w", pady=(0, 8))
         row = tk.Frame(preview, bg=C["card"])
         row.pack(fill="x")
         for i, (text, action) in enumerate(((t("preview_mini"), lambda: self.show_demo_break("mini")),
@@ -1321,12 +1189,12 @@ class App:
     def build_language_switch(self, parent):
         """Рядок «Мова» з перемикачем-сегментом між мовами."""
         row = tk.Frame(parent, bg=parent["bg"])
-        tk.Label(row, text=t("language"), bg=parent["bg"], fg=C["text"], font=("Segoe UI", 11)).pack(side="left")
+        tk.Label(row, text=t("language"), bg=parent["bg"], fg=C["text"], font=font(11)).pack(side="left")
         segments = tk.Frame(row, bg=C["panel"])
         segments.pack(side="right")
         for code, name in i18n.LANGUAGES.items():
             active = code == i18n.get_language()
-            btn = tk.Label(segments, text=name, font=("Segoe UI", 10), padx=12, pady=3, cursor="hand2",
+            btn = tk.Label(segments, text=name, font=font(10), padx=12, pady=3, cursor="hand2",
                            bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.change_language(c))
@@ -1366,7 +1234,7 @@ class App:
 
     def set_autostart_setting(self, enabled):
         try:
-            set_autostart(enabled)
+            system.set_autostart(enabled, __file__)
             self.flash_saved()
         except OSError as e:
             messagebox.showerror(APP_NAME, t("autostart_error", e=e), parent=self.main_win)
@@ -1392,46 +1260,94 @@ class App:
             self.w[f"today_{key}"].configure(text=today[key])
 
 
+def run_smoke_test(app, out_dir):
+    """--smoke-test: проходить усі вікна без участі людини й робить знімки екрана.
+    Потрібен для перевірки збірки на macOS-сервері GitHub Actions, де немає кому дивитися."""
+    os.makedirs(out_dir, exist_ok=True)
+    original_language = app.cfg["language"]
+    counter = [0]
+
+    def shot(name):
+        app.root.update()
+        counter[0] += 1
+        system.screenshot(os.path.join(out_dir, f"{counter[0]:02d}_{name}.png"))
+
+    def page(name):
+        app.show_page(name)
+        app.main_win.lift()
+
+    steps = [
+        (app.open_main, None),
+        (lambda: page("status"), "status"),
+        (lambda: page("stats"), "stats"),
+        (lambda: page("settings"), "settings"),
+        (lambda: app.change_language("en" if i18n.get_language() == "uk" else "uk"), None),
+        (lambda: None, "settings_other_language"),
+        (lambda: app.show_demo_break("mini"), None),
+        (lambda: app.choose_group("back"), "mini_break_back"),
+        (lambda: app.end_break("skip"), None),
+        (lambda: (app.show_demo_break("long"), app.next_break_step()), "workout"),
+        (lambda: app.end_break("skip"), None),
+        (lambda: app.show_water(demo=True), "water"),
+        (lambda: app.end_water(False), None),
+    ]
+
+    def run(index=0):
+        try:
+            if index == len(steps):
+                app.cfg["language"] = original_language
+                save_json(CONFIG_PATH, app.cfg)
+                print("smoke test: OK", file=sys.stderr)
+                app.exit_code = 0
+                app.handle("quit")
+                return
+            action, name = steps[index]
+            action()
+            if name:
+                app.root.after(900, lambda: (shot(name), run(index + 1)))
+            else:
+                app.root.after(500, lambda: run(index + 1))
+        except Exception:
+            traceback.print_exc()
+            app.exit_code = 1
+            app.handle("quit")
+
+    app.exit_code = 1
+    app.root.after(1500, run)
+
+
 def main():
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except (AttributeError, OSError):
-        pass
-    try:
-        # Власна іконка в панелі завдань замість іконки Python
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
-    except (AttributeError, OSError):
-        pass
-    # Команди для інсталятора: увімкнути/вимкнути автозапуск і вийти
+    system.init_process()
+    # Команди для інсталятора: увімкнути/вимкнути автозапуск, задати мову — і вийти
     commands = [arg for arg in sys.argv[1:] if arg.startswith(("--set-autostart=", "--set-language="))]
     for arg in commands:
         name, value = arg[2:].split("=", 1)
         if name == "set-language":
             set_language_setting(value)
         else:
-            set_autostart(value == "on")
+            system.set_autostart(value == "on", __file__)
     if commands:
         return
 
-    kernel32 = ctypes.windll.kernel32
-    handle = ctypes.c_void_p
-    for fn, args in ((kernel32.CreateMutexW, [handle, ctypes.c_bool, ctypes.c_wchar_p]),
-                     (kernel32.CreateEventW, [handle, ctypes.c_bool, ctypes.c_bool, ctypes.c_wchar_p]),
-                     (kernel32.OpenEventW, [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p])):
-        fn.argtypes, fn.restype = args, handle
-    kernel32.SetEvent.argtypes = kernel32.CloseHandle.argtypes = [handle]
-    kernel32.WaitForSingleObject.argtypes = [handle, ctypes.c_uint32]
-    _mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS: просимо запущений екземпляр показати вікно
-        event = kernel32.OpenEventW(0x0002, False, SHOW_EVENT_NAME)  # EVENT_MODIFY_STATE
-        if event:
-            kernel32.SetEvent(event)
-            kernel32.CloseHandle(event)
-        return
+    instance = system.SingleInstance()
+    if not instance.acquire():
+        return  # уже запущена копія сама покаже вікно
 
-    migrate_old_data()
+    system.migrate_old_data(DATA_DIR)
+    smoke_dir = sys.argv[sys.argv.index("--smoke-test") + 1] if "--smoke-test" in sys.argv else None
+    # macOS: інсталятора немає (програму просто перетягують у «Програми»),
+    # тож автозапуск вмикаємо під час першого запуску; вимкнути можна в налаштуваннях
+    if system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH):
+        try:
+            system.set_autostart(True, __file__)
+        except OSError:
+            traceback.print_exc()
+        save_json(CONFIG_PATH, load_json(CONFIG_PATH, {}))
+
     app = App()
-    app.show_event = kernel32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
+    app.instance = instance
+    if smoke_dir:
+        run_smoke_test(app, smoke_dir)
     if "--test-break" in sys.argv:
         app.root.after(1500, app.trigger_break)
     if "--test-water" in sys.argv:
@@ -1439,6 +1355,8 @@ def main():
     if "--open" in sys.argv:
         app.root.after(500, app.open_main)
     app.root.mainloop()
+    if smoke_dir:
+        sys.exit(app.exit_code)
 
 
 def setup_logging():

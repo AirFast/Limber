@@ -13,4 +13,5 @@ if __name__ == "__main__":
     out = os.path.join(ROOT, "assets", "limber.ico")
     make_app_icon(256).save(out, sizes=SIZES)
     make_app_icon(256).save(os.path.join(ROOT, "assets", "limber.png"))
-    print(f"saved {out}")
+    make_app_icon(1024).save(os.path.join(ROOT, "assets", "limber.icns"))  # macOS
+    print(f"saved {out} and limber.icns")

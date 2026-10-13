@@ -1,5 +1,4 @@
-"""Переклади Limber: рядки інтерфейсу, вправи, поради та форматування чисел (uk, en)."""
-import ctypes
+"""Переклади Limber: рядки інтерфейсу, поради про воду та форматування чисел (uk, en)."""
 
 LANGUAGES = {"uk": "Українська", "en": "English"}
 DEFAULT_LANGUAGE = "uk"
@@ -14,15 +13,6 @@ def set_language(code):
 
 def get_language():
     return _current
-
-
-def system_language():
-    """Мова інтерфейсу Windows: українська → uk, будь-яка інша → en."""
-    try:
-        primary = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
-    except (AttributeError, OSError):
-        return DEFAULT_LANGUAGE
-    return "uk" if primary == 0x22 else "en"
 
 
 def t(key, **values):
