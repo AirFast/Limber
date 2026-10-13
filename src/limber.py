@@ -565,6 +565,7 @@ class App:
 
         self.icon = system.make_tray_icon(pystray, "Limber", make_icon(0, False), APP_NAME, self.build_menu())
         system.start_tray(self.icon, self.root)
+        system.on_reopen(self.root, self.open_main)
 
         self.root.after(1000, self.loop)
         self.root.after(100, self.process_queue)
@@ -928,6 +929,7 @@ class App:
     # --- головне вікно ---
 
     def open_main(self):
+        system.activate_app()  # macOS: інакше вікно програми рядка меню відкривається позаду інших
         if self.main_win:
             self.main_win.deiconify()
             self.main_win.lift()

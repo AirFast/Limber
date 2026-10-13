@@ -94,6 +94,13 @@ def style_window(win):
             pass
 
 
+def on_reopen(root, callback):
+    """macOS: повторне відкриття вже запущеної програми (Finder, Launchpad, Spotlight) не стартує
+    другу копію, а надсилає першій подію «reopen» — показуємо на неї вікно."""
+    if IS_MAC:
+        root.createcommand("::tk::mac::ReopenApplication", callback)
+
+
 def activate_app():
     """macOS: програма рядка меню неактивна, тож перед повноекранною перервою виводимо її наперед."""
     if IS_MAC:
