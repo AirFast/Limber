@@ -29,7 +29,7 @@ from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds,
                   fmt_warn, t)
 from system import font
 
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -49,6 +49,7 @@ DEFAULTS = {
     "water_enabled": True,
     "water_interval_min": 60,
     "water_goal": 8,
+    "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
     "intensity": 2,
     "workout_enabled": True,
     "sound": True,
@@ -92,6 +93,7 @@ SLIDERS = {
     "water_interval_min": (15, 240, 15, fmt_minutes),
     "water_goal": (4, 16, 1, fmt_glasses),
     "intensity": (1, 3, 1, fmt_intensity),
+    "pause_min": (15, 240, 15, fmt_minutes),
 }
 
 WORK_SEC, REST_SEC, WARMUP_SEC = 40, 15, 30
@@ -636,6 +638,7 @@ class App:
                 pass
 
         self.main_win = None
+        self.w = {}  # віджети головного вікна; порожній, поки вікно не відкрите
         self.break_wins = []
         self.break_state = None
         self.water_win = None
@@ -848,7 +851,8 @@ class App:
             title = t("warn_title_workout")
         else:
             title = t(f"warn_title_{kind}")
-        actions = []
+        pause = self.cfg["pause_min"]
+        actions = [(t("pause_btn", time=fmt_minutes(pause)), lambda: self.handle(("pause", pause)), False)]
         if self.sched.can_postpone():
             left = self.cfg["postpone_limit"] - self.sched.postpones
             actions.append((t("postpone_btn", min=self.cfg["postpone_min"], left=left), self.postpone_from_warning, False))
@@ -1147,13 +1151,15 @@ class App:
             row = tk.Frame(win, bg=C["panel"])
             row.pack(anchor="e", padx=14, pady=12)
             for label, command, primary in actions:
-                flat_button(row, label, lambda c=command: (self.close_toast(), c()), size=10,
-                            bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"],
-                            ).pack(side="left", padx=4)
+                btn = flat_button(row, label, lambda c=command: (self.close_toast(), c()), size=10,
+                                  bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"])
+                btn.configure(padx=14)
+                btn.pack(side="left", padx=3)
         else:
             for widget in (win, *win.winfo_children()):
                 widget.bind("<Button-1>", lambda e: self.close_toast())
         win.update_idletasks()
+        width = max(width, win.winfo_reqwidth())  # три кнопки можуть не вміститися в стандартну ширину
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
         self.toast_win = win
@@ -1192,7 +1198,7 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.geometry("800x880")
+        win.geometry("800x895")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
@@ -1273,7 +1279,7 @@ class App:
         self.w["ring"].pack(pady=(4, 12))
         flat_button(left, t("break_now"), self.trigger_break, bg=C["accent"], fg=C["on_accent"],
                     size=11).pack(fill="x", pady=3)
-        self.w["pause_btn"] = flat_button(left, t("pause_30_btn"), self.toggle_pause, size=11)
+        self.w["pause_btn"] = flat_button(left, t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=3)
         flat_button(left, t("reset"), self.sched.reset, size=11).pack(fill="x", pady=3)
 
@@ -1313,7 +1319,7 @@ class App:
         return page
 
     def toggle_pause(self):
-        self.handle("resume" if self.sched.paused else ("pause", 30))
+        self.handle("resume" if self.sched.paused else ("pause", self.cfg["pause_min"]))
 
     def draw_ring(self):
         c, s = self.w["ring"], self.sched
@@ -1502,7 +1508,7 @@ class App:
         Toggle(breaks, t("group_buttons_toggle"), self.cfg["group_buttons"],
                lambda v: self.set_setting("group_buttons", v)).pack(fill="x", pady=(2, 0))
         # Ліва колонка — усе про перерви; права — довгі перерви, вода та загальне
-        group(left, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
+        group(left, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
         sound = card(left, t("card_sound"))
         sound.pack(fill="x")
         Toggle(sound, t("sound_toggle"), self.cfg["sound"],
@@ -1626,7 +1632,7 @@ class App:
         s = self.sched
         self.draw_ring()
         self.w["update"].configure(text=t("update_banner", version=self.update_info[0]) if self.update_info else "")
-        self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_30_btn"))
+        self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
         today = self.stats.day(dt.date.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         self.w["today_water_caption"].configure(text=f"{t('m_water')} · {fmt_volume(today['water'])}")
