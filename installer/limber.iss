@@ -38,6 +38,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [CustomMessages]
 ukrainian.AutostartTask=Запускати Limber разом з Windows
 english.AutostartTask=Start Limber with Windows
+ukrainian.RemoveUserData=Видалити також ваші налаштування та статистику Limber?%n%nЯкщо залишити їх, після повторного встановлення все відновиться.
+english.RemoveUserData=Also delete your Limber settings and statistics?%n%nIf you keep them, everything will be restored if you reinstall.
 
 [Tasks]
 Name: "autostart"; Description: "{cm:AutostartTask}"; Flags: checkedonce
@@ -46,8 +48,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\dist\Limber\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Версії 1.0–1.1 клали ярлик прямо в «Програми»; тепер він у папці Limber
+Type: files; Name: "{autoprograms}\{#AppName}.lnk"
+
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--open"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--open"
+Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--open"; Tasks: desktopicon
 
 [Run]
@@ -70,4 +77,13 @@ var
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
+end;
+
+// Після видалення пропонуємо прибрати й дані користувача (%APPDATA%\Limber).
+// У тихому режимі (/SILENT, /VERYSILENT) дані лишаються.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
+    if MsgBox(CustomMessage('RemoveUserData'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      DelTree(ExpandConstant('{userappdata}\{#AppName}'), True, True, True);
 end;

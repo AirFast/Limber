@@ -25,10 +25,11 @@ if sys.stderr is None:  # pythonw: без консолі помилки імпо
 import pystray
 from PIL import Image, ImageDraw, ImageTk
 
+import exercises
 import i18n
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 APP_NAME = "Limber"
 APP_ID = "Limber.BreakReminder"
@@ -100,40 +101,69 @@ def step(title, text, secs, kind="exercise", phase=""):
     return {"title": title, "text": text, "secs": secs, "kind": kind, "phase": phase}
 
 
-def build_workout(total, level):
-    """Інтервальне тренування рівно на `total` секунд: розминка, робота/відпочинок, заминка."""
-    exercises = content("workout")
-    pool = exercises[level] + (exercises[level - 1] if level > 1 else [])
-    count = max(1, (total - 2 * WARMUP_SEC + REST_SEC) // (WORK_SEC + REST_SEC))
-    while count > 1 and total - WARMUP_SEC - count * WORK_SEC - (count - 1) * REST_SEC < 20:
-        count -= 1
+def pick_many(pool, count):
+    """`count` вправ без повторів, поки вистачає пулу."""
     picks = []
     while len(picks) < count:
         picks += random.sample(pool, min(len(pool), count - len(picks)))
+    return picks
+
+
+def link_rests(steps):
+    """Підписи «Далі: …» у кроках відпочинку — за наступною вправою."""
+    for i, s in enumerate(steps):
+        if s["kind"] == "rest":
+            upcoming = next((n for n in steps[i + 1:] if n["kind"] == "work"), None)
+            if upcoming:
+                s["text"] = t("rest_next", title=upcoming["title"])
+
+
+def build_workout(total, level, group=None):
+    """Інтервальне тренування рівно на `total` секунд: розминка, робота/відпочинок, заминка."""
+    count = max(1, (total - 2 * WARMUP_SEC + REST_SEC) // (WORK_SEC + REST_SEC))
+    while count > 1 and total - WARMUP_SEC - count * WORK_SEC - (count - 1) * REST_SEC < 20:
+        count -= 1
+    picks = pick_many(exercises.workout_pool(level, group), count)
 
     steps = [step(*content("warmup"), WARMUP_SEC, "warmup", t("phase_warmup"))]
-    for i, (title, text) in enumerate(picks):
+    for i, (title, text, _group) in enumerate(picks):
         steps.append(step(title, text, WORK_SEC, "work", t("phase_work", n=i + 1, count=count)))
         if i < count - 1:
-            steps.append(step(t("rest_title"), t("rest_next", title=picks[i + 1][0]), REST_SEC, "rest",
-                              t("phase_rest")))
+            steps.append(step(t("rest_title"), "", REST_SEC, "rest", t("phase_rest")))
     used = sum(s["secs"] for s in steps)
     steps.append(step(*content("cooldown"), max(total - used, 10), "cooldown", t("phase_cooldown")))
+    link_rests(steps)
     return steps
 
 
-def build_break(kind, cfg):
-    """Список кроків перерви. Міні та звичайна довга перерва — один крок."""
-    level = cfg["intensity"]
+def regroup_workout(steps, start, level, group):
+    """Замінює вправи тренування, починаючи з кроку `start`, на вправи вибраної групи."""
+    targets = [s for s in steps[start:] if s["kind"] == "work"]
+    for s, (title, text, _group) in zip(targets, pick_many(exercises.workout_pool(level, group), len(targets))):
+        s["title"], s["text"] = title, text
+    link_rests(steps)
+
+
+def single_break_step(kind, cfg, group=None, avoid=None):
+    """Один крок міні-перерви або довгої перерви без тренування."""
     if kind == "mini":
-        pool = content("mini_active") if level >= 2 and random.random() < 0.4 else content("mini")
-        return [step(*random.choice(pool), cfg["mini_duration_sec"], phase=t("phase_mini"))]
+        pool = exercises.mini_pool(cfg["intensity"], group)
+    else:
+        pool = exercises.long_pool(group)
+    fresh = [e for e in pool if e[0] != avoid] or pool  # повторний вибір групи дає іншу вправу
+    title, body, _group = random.choice(fresh)
+    if kind == "mini":
+        return step(title, body, cfg["mini_duration_sec"], phase=t("phase_mini"))
+    text = "\n".join(f"{i}.  {line}" for i, line in enumerate(body, 1))
+    return step(title, text, cfg["long_duration_min"] * 60, "list", t("phase_long"))
+
+
+def build_break(kind, cfg, group=None):
+    """Список кроків перерви. Міні та звичайна довга перерва — один крок."""
     total = cfg["long_duration_min"] * 60
-    if cfg["workout_enabled"] and total >= 120:
-        return build_workout(total, level)
-    title, lines = random.choice(content("long"))
-    text = "\n".join(f"{i}.  {line}" for i, line in enumerate(lines, 1))
-    return [step(title, text, total, "list", t("phase_long"))]
+    if kind == "long" and cfg["workout_enabled"] and total >= 120:
+        return build_workout(total, cfg["intensity"], group)
+    return [single_break_step(kind, cfg, group)]
 
 
 # ---------- дані ----------
@@ -798,7 +828,7 @@ class App:
         steps = build_break(kind, self.cfg)
         multi = len(steps) > 1
         self.break_state = {"kind": kind, "steps": steps, "index": 0, "left": steps[0]["secs"],
-                            "after": None, "widgets": None, "demo": demo}
+                            "after": None, "widgets": None, "demo": demo, "group": None}
         self.beep()
 
         screens = monitors() or [(0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight(), None, True)]
@@ -832,7 +862,17 @@ class App:
             widgets["title"].pack(pady=(8, 24))
             widgets["text"].pack()
             widgets["timer"].pack(pady=(30, 4))
-            widgets["info"].pack(pady=(0, 26))
+            widgets["info"].pack(pady=(0, 18))
+            # Вибір групи м'язів: замінює поточну (і наступні) вправи
+            chips = tk.Frame(frame, bg=C["bg"])
+            chips.pack(pady=(0, 22))
+            widgets["chips"] = {}
+            for group in (None, *exercises.GROUPS):
+                chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=("Segoe UI", 10),
+                                padx=12, pady=5, cursor="hand2")
+                chip.pack(side="left", padx=3)
+                chip.bind("<Button-1>", lambda e, g=group: self.choose_group(g))
+                widgets["chips"][group] = chip
             self.break_state["widgets"] = widgets
 
             buttons = tk.Frame(frame, bg=C["bg"])
@@ -866,6 +906,9 @@ class App:
         widgets["text"].configure(text=current["text"], justify="left" if current["kind"] == "list" else "center")
         widgets["timer"].configure(text=fmt_time(state["left"]),
                                    fg=C["muted"] if current["kind"] == "rest" else C["accent"])
+        for group, chip in widgets["chips"].items():
+            active = group == state["group"]
+            chip.configure(bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
         if len(steps) > 1:
             total_left = state["left"] + sum(s["secs"] for s in steps[index + 1:])
             info = t("step_info", n=index + 1, total=len(steps), time=fmt_time(total_left))
@@ -874,6 +917,26 @@ class App:
                 if upcoming:
                     info += t("up_next", title=upcoming["title"])
             widgets["info"].configure(text=info)
+
+    def choose_group(self, group):
+        """Кнопка групи м'язів на екрані перерви. Повторне натискання дає іншу вправу тієї ж групи."""
+        state = self.break_state
+        if not state:
+            return
+        steps, index = state["steps"], state["index"]
+        current = steps[index]
+        if len(steps) == 1:
+            new = single_break_step(state["kind"], self.cfg, group, avoid=current["title"])
+            new["secs"] = current["secs"]
+            steps[0] = new
+            if state["kind"] == "mini":
+                state["left"] = new["secs"]  # нова міні-вправа — на повний час
+        else:
+            regroup_workout(steps, index if current["kind"] == "work" else index + 1, self.cfg["intensity"], group)
+            if current["kind"] == "work":
+                state["left"] = current["secs"]
+        state["group"] = group
+        self.update_break_view()
 
     def next_break_step(self):
         state = self.break_state

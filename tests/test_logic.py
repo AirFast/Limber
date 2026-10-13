@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+import exercises  # noqa: E402
 import i18n  # noqa: E402
 import limber  # noqa: E402
 
@@ -93,10 +94,47 @@ def test_both_languages_have_the_same_strings():
 def test_both_languages_have_the_same_content_shape():
     uk, en = i18n.CONTENT["uk"], i18n.CONTENT["en"]
     assert set(uk) == set(en)
-    for name in ("mini", "mini_active", "long", "water_tips"):
-        assert len(uk[name]) == len(en[name]), name
-    for level in (1, 2, 3):
-        assert len(uk["workout"][level]) == len(en["workout"][level])
+    assert len(uk["water_tips"]) == len(en["water_tips"])
+
+
+def test_exercise_entries_are_complete():
+    for kind, group, level, uk, en in exercises.EXERCISES:
+        assert kind in ("mini", "active", "long", "workout")
+        assert group in exercises.GROUPS
+        assert (level in (1, 2, 3)) == (kind == "workout")
+        for title, body in (uk, en):
+            assert title and body
+            assert isinstance(body, list) == (kind == "long")
+
+
+@pytest.mark.parametrize("group", exercises.GROUPS)
+@pytest.mark.parametrize("level", [1, 2, 3])
+def test_every_group_has_exercises_for_every_break(group, level):
+    assert exercises.mini_pool(level, group)
+    assert exercises.long_pool(group)
+    assert exercises.workout_pool(level, group)
+
+
+def test_regroup_replaces_only_upcoming_work_steps():
+    steps = limber.build_workout(300, 2)
+    first_work = next(i for i, s in enumerate(steps) if s["kind"] == "work")
+    before = steps[first_work]["title"]
+    start = first_work + 1
+    limber.regroup_workout(steps, start, 2, "legs")
+    legs = {title for title, _, _ in exercises.workout_pool(2, "legs")}
+    assert steps[first_work]["title"] == before
+    assert all(s["title"] in legs for s in steps[start:] if s["kind"] == "work")
+    for i, s in enumerate(steps):
+        if s["kind"] == "rest":
+            following = next(n for n in steps[i + 1:] if n["kind"] == "work")
+            assert following["title"] in s["text"]
+
+
+def test_single_step_for_group_avoids_current_exercise():
+    cfg = dict(limber.DEFAULTS)
+    current = limber.single_break_step("mini", cfg, "eyes")["title"]
+    for _ in range(20):
+        assert limber.single_break_step("mini", cfg, "eyes", avoid=current)["title"] != current
 
 
 def test_every_slider_has_a_label_in_both_languages():
@@ -120,7 +158,7 @@ def test_workout_is_built_in_the_current_language():
     i18n.set_language("en")
     steps = limber.build_workout(300, 2)
     assert steps[0]["phase"] == "WARM-UP" and steps[-1]["phase"] == "COOL-DOWN"
-    english_titles = {title for title, _ in i18n.CONTENT["en"]["workout"][2] + i18n.CONTENT["en"]["workout"][1]}
+    english_titles = {en[0] for kind, _g, level, _uk, en in exercises.EXERCISES if kind == "workout" and level in (1, 2)}
     assert all(s["title"] in english_titles for s in steps if s["kind"] == "work")
 
 
