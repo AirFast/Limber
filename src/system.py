@@ -66,6 +66,13 @@ def init_tk(root):
     щоб розмітка вікон виглядала однаково."""
     if IS_MAC:
         root.tk.call("tk", "scaling", 96 / 72)
+        # Tk під час старту робить програму звичайною (Dock, меню «File Edit…»), ігноруючи
+        # LSUIElement з Info.plist. Повертаємо режим програми рядка меню.
+        try:
+            from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        except Exception:
+            pass
 
 
 def style_window(win):

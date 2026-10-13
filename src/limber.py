@@ -427,11 +427,10 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
             widget.bind("<Enter>", lambda e: paint(hover))
             widget.bind("<Leave>", lambda e: paint(bg))
         return btn
-    else:
-        btn = tk.Button(parent, text=text, command=command, bg=bg, fg=fg,
-                        activebackground=hover, activeforeground=fg,
-                        disabledforeground="#5d7775", relief="flat", bd=0, padx=22, pady=10,
-                        font=font(size), cursor="hand2")
+    # Label, а не tk.Button: на macOS кнопка Tk завжди системна біла й ігнорує кольори
+    btn = tk.Label(parent, text=text, bg=bg, fg=fg, disabledforeground=C["dim"],
+                   padx=22, pady=10, font=font(size), cursor="hand2")
+    btn.bind("<Button-1>", lambda e: command() if btn["state"] == "normal" else None)
     btn.bind("<Enter>", lambda e: btn.configure(bg=hover) if btn["state"] == "normal" else None)
     btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
     return btn
