@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -53,6 +53,8 @@ DEFAULTS = {
     "sound": True,
     "language": "",  # "" — за мовою системи; інсталятор записує мову, вибрану під час встановлення
     "check_updates": True,
+    "sound_name": "",        # системний звук сповіщення; "" — перший доступний
+    "group_buttons": True,   # кнопки груп м'язів на екрані перерви; вимкнено — вправи випадкові
     "notified_version": "",  # про яку нову версію вже показали сповіщення
 }
 UPDATE_CHECK_DELAY_MS = 30_000
@@ -589,6 +591,7 @@ class App:
     def on_update_result(self, result):
         if not result or not updates.is_newer(result[0], __version__):
             return
+        print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} доступне оновлення {result[0]}", file=sys.stderr)
         self.update_info = result
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
@@ -711,7 +714,7 @@ class App:
 
     def beep(self):
         if self.cfg["sound"]:
-            system.beep()
+            system.beep("info", self.sound_name())
 
     # --- перерва ---
 
@@ -770,9 +773,9 @@ class App:
             widgets["info"].pack(pady=(0, 18))
             # Вибір групи м'язів: замінює поточну (і наступні) вправи
             chips = tk.Frame(frame, bg=C["bg"])
-            chips.pack(pady=(0, 22))
+            chips.pack(pady=(0, 22 if self.cfg["group_buttons"] else 8))
             widgets["chips"] = {}
-            for group in (None, *exercises.GROUPS):
+            for group in (None, *exercises.GROUPS) if self.cfg["group_buttons"] else ():
                 chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=font(10),
                                 padx=12, pady=5, cursor="hand2")
                 chip.pack(side="left", padx=3)
@@ -974,7 +977,7 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.geometry("800x825")
+        win.geometry("800x880")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
@@ -1190,30 +1193,39 @@ class App:
             for key in keys:
                 self.add_slider(box, key)
 
-        group(left, t("card_breaks"), ("mini_interval_min", "mini_duration_sec", "intensity"))
-        long_box = card(left, t("card_long"))
+        breaks = card(left, t("card_breaks"))
+        breaks.pack(fill="x", pady=(0, 14))
+        for key in ("mini_interval_min", "mini_duration_sec", "intensity"):
+            self.add_slider(breaks, key)
+        Toggle(breaks, t("group_buttons_toggle"), self.cfg["group_buttons"],
+               lambda v: self.set_setting("group_buttons", v)).pack(fill="x", pady=(2, 0))
+        # Ліва колонка — усе про перерви; права — довгі перерви, вода та загальне
+        group(left, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
+        sound = card(left, t("card_sound"))
+        sound.pack(fill="x")
+        Toggle(sound, t("sound_toggle"), self.cfg["sound"],
+               lambda v: self.set_setting("sound", v)).pack(fill="x", pady=(0, 8))
+        self.add_sound_slider(sound)
+
+        long_box = card(right, t("card_long"))
         long_box.pack(fill="x", pady=(0, 14))
         self.add_slider(long_box, "long_every")
         self.add_slider(long_box, "long_duration_min")
         Toggle(long_box, t("workout_toggle"), self.cfg["workout_enabled"],
                lambda v: self.set_setting("workout_enabled", v)).pack(fill="x", pady=(2, 0))
-        other = card(left, t("card_other"))
-        other.pack(fill="x")
-        self.build_language_switch(other).pack(fill="x", pady=(0, 6))
-        Toggle(other, t("sound_toggle"), self.cfg["sound"],
-               lambda v: self.set_setting("sound", v)).pack(fill="x", pady=4)
-        Toggle(other, t("autostart_toggle_mac" if system.IS_MAC else "autostart_toggle"), system.get_autostart(),
-               self.set_autostart_setting).pack(fill="x", pady=4)
-        Toggle(other, t("updates_toggle"), self.cfg["check_updates"],
-               lambda v: self.set_setting("check_updates", v)).pack(fill="x", pady=4)
-
-        group(right, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
         water = card(right, t("card_water"))
         water.pack(fill="x")
         Toggle(water, t("water_toggle"), self.cfg["water_enabled"],
                lambda v: self.set_setting("water_enabled", v)).pack(fill="x", pady=(0, 8))
         self.add_slider(water, "water_interval_min")
         self.add_slider(water, "water_goal")
+        other = card(right, t("card_other"))
+        other.pack(fill="x", pady=(14, 0))
+        self.build_language_switch(other).pack(fill="x", pady=(0, 6))
+        Toggle(other, t("autostart_toggle_mac" if system.IS_MAC else "autostart_toggle"), system.get_autostart(),
+               self.set_autostart_setting).pack(fill="x", pady=4)
+        Toggle(other, t("updates_toggle"), self.cfg["check_updates"],
+               lambda v: self.set_setting("check_updates", v)).pack(fill="x", pady=4)
 
         preview = card(right, t("card_preview"))
         preview.pack(fill="x", pady=(14, 0))
@@ -1262,6 +1274,25 @@ class App:
         self.open_main()
         self.show_page("settings")
         self.flash_saved()
+
+    def sound_name(self):
+        """Вибраний звук сповіщення або перший доступний на цьому комп'ютері."""
+        names = [name for name, _path in system.available_sounds()]
+        return self.cfg["sound_name"] if self.cfg["sound_name"] in names else (names[0] if names else "")
+
+    def add_sound_slider(self, parent):
+        """Повзунок перебирає системні звуки й одразу програє вибраний — для прослуховування."""
+        sounds = system.available_sounds()
+        if len(sounds) < 2:
+            return
+        names = [name for name, _path in sounds]
+
+        def choose(index):
+            self.set_setting("sound_name", names[index])
+            system.play_sound(sounds[index][1])
+
+        Slider(parent, t("sound_name_label"), 0, len(names) - 1, 1, names.index(self.sound_name()),
+               lambda i: names[i], choose).pack(fill="x", pady=(0, 6))
 
     def add_slider(self, parent, key):
         lo, hi, step, fmt = SLIDERS[key]

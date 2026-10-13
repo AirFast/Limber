@@ -182,18 +182,56 @@ def screenshot(path):
 
 # ---------- звук і сповіщення ----------
 
-def beep(kind="info"):
-    """kind: info — початок/кінець перерви, step — зміна вправи."""
+_WINDOWS_SOUNDS = [  # файли з C:\Windows\Media; назва — без «Windows Notify» і розширення
+    "Windows Notify System Generic.wav", "Windows Notify Messaging.wav", "Windows Notify Calendar.wav",
+    "Windows Notify Email.wav", "chimes.wav", "chord.wav", "ding.wav", "notify.wav", "tada.wav",
+    "Alarm01.wav", "Ring01.wav",
+]
+_MAC_SOUNDS = ["Glass", "Ping", "Hero", "Pop", "Purr", "Submarine", "Funk", "Bottle", "Blow", "Frog", "Morse",
+               "Sosumi", "Tink", "Basso"]
+
+
+def available_sounds():
+    """[(назва, шлях до файлу)] системних звуків, які є на цьому комп'ютері."""
+    if IS_WINDOWS:
+        media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
+        sounds = []
+        for file in _WINDOWS_SOUNDS:
+            path = os.path.join(media, file)
+            if os.path.exists(path):
+                name = os.path.splitext(file)[0].replace("Windows Notify ", "").replace("System ", "").rstrip("0123456789")
+                sounds.append((name[:1].upper() + name[1:], path))
+        return sounds
+    if IS_MAC:
+        return [(name, f"/System/Library/Sounds/{name}.aiff") for name in _MAC_SOUNDS
+                if os.path.exists(f"/System/Library/Sounds/{name}.aiff")]
+    return []
+
+
+def play_sound(path):
+    """Програє файл звуку, не блокуючи інтерфейс."""
+    try:
+        if IS_WINDOWS:
+            import winsound
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+        elif IS_MAC:
+            subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, RuntimeError):
+        pass
+
+
+def beep(kind="info", sound=None):
+    """kind: info — початок/кінець перерви (звук на вибір користувача), step — зміна вправи."""
+    if kind == "info" and sound:
+        path = dict(available_sounds()).get(sound)
+        if path:
+            play_sound(path)
+            return
     if IS_WINDOWS:
         import winsound
         winsound.MessageBeep(winsound.MB_OK if kind == "step" else winsound.MB_ICONASTERISK)
     elif IS_MAC:
-        sound = "Tink" if kind == "step" else "Glass"
-        try:
-            subprocess.Popen(["afplay", f"/System/Library/Sounds/{sound}.aiff"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
-            pass
+        play_sound(f"/System/Library/Sounds/{'Tink' if kind == 'step' else 'Glass'}.aiff")
 
 
 def notify(icon, title, message):
