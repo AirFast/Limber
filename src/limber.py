@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.7.1"
+__version__ = "1.8.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -820,14 +820,14 @@ class App:
         was_paused = self.sched.paused_until is not None
         for event in self.sched.tick(delta):
             if event == "warn":
-                self.show_toast(APP_NAME, t(f"warn_{self.sched.next_kind()}", sec=int(self.sched.remaining)),
-                                timeout_ms=8_000)
+                self.show_break_warning()
             elif event == "break":
                 self.show_break(self.sched.next_kind())
             elif event == "water":
                 self.show_water()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
+        self.update_break_warning()
         self.update_tray()
         self.refresh_main()
         self.root.after(1000, self.loop)
@@ -835,6 +835,40 @@ class App:
     def beep(self):
         if self.cfg["sound"]:
             system.beep("info", self.sound_name())
+
+    # --- попередження перед перервою ---
+
+    def show_break_warning(self):
+        """Віконце «Скоро перерва» з живим відліком. Тримається до самого початку перерви;
+        «Відкласти» переносить її (з тим самим лімітом, що й на екрані перерви), «Ок» лише ховає віконце."""
+        kind = self.sched.next_kind()
+        if kind == "long" and self.cfg["workout_enabled"] and self.cfg["long_duration_min"] >= 2:
+            title = t("warn_title_workout")
+        else:
+            title = t(f"warn_title_{kind}")
+        actions = []
+        if self.sched.can_postpone():
+            left = self.cfg["postpone_limit"] - self.sched.postpones
+            actions.append((t("postpone_btn", min=self.cfg["postpone_min"], left=left), self.postpone_from_warning, False))
+        actions.append((t("ok"), lambda: None, True))
+        self.show_toast(title, t("warn_countdown", time=fmt_time(self.sched.remaining)), actions,
+                        timeout_ms=int(self.sched.remaining * 1000) + 15_000, kind="warning")
+
+    def update_break_warning(self):
+        """Щосекунди: оновлює відлік або прибирає віконце, якщо перерва почалась чи програма на паузі."""
+        if getattr(self, "toast_kind", None) != "warning":
+            return
+        s = self.sched
+        if s.in_break or s.paused or s.remaining <= 0:
+            self.close_toast()
+        elif self.toast_text:
+            self.toast_text.configure(text=t("warn_countdown", time=fmt_time(s.remaining)))
+
+    def postpone_from_warning(self):
+        if self.sched.in_break or not self.sched.can_postpone():
+            return
+        self.stats.add("postponed")
+        self.sched.postpone()
 
     # --- перерва ---
 
@@ -851,6 +885,8 @@ class App:
         self.show_break(kind, demo=True)
 
     def show_break(self, kind, demo=False):
+        if getattr(self, "toast_kind", None) == "warning" and not demo:
+            self.close_toast()  # перерва почалась — попередження більше не потрібне
         self.close_break_windows()
         steps = build_break(kind, self.cfg)
         multi = len(steps) > 1
@@ -1027,12 +1063,17 @@ class App:
             self.water_win.destroy()  # справжнє нагадування важливіше за демо
             self.water_win = None
         self.water_demo = demo
-        self.close_toast()  # обидва віконця живуть у тому самому куті екрана
         screens = system.monitors()
         if screens:
             _l, _t, right, bottom = screens[0][4]
         else:
             right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
+        # Обидва віконця живуть у тому самому куті: попередження про перерву лишаємо
+        # й ставимо воду над ним, решту сповіщень закриваємо
+        if getattr(self, "toast_kind", None) == "warning" and self.toast_win:
+            bottom = self.toast_win.winfo_rooty()
+        else:
+            self.close_toast()
         width = 420
         win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=C["water"])
         win.overrideredirect(True)
@@ -1077,7 +1118,7 @@ class App:
 
     # --- власні сповіщення ---
 
-    def show_toast(self, title, text, actions=(), timeout_ms=10_000):
+    def show_toast(self, title, text, actions=(), timeout_ms=10_000, kind="info"):
         """Спливаюче віконце в куті екрана. Не покладаємося на системні сповіщення:
         користувач міг їх вимкнути (на Windows вони тоді просто мовчки зникають),
         а на macOS вони ненадійні для програм без підпису Apple.
@@ -1113,6 +1154,7 @@ class App:
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
         self.toast_win = win
+        self.toast_kind = kind
         self.toast_after = self.root.after(timeout_ms, self.close_toast)
 
     def close_toast(self):
@@ -1123,6 +1165,7 @@ class App:
             self.toast_win.destroy()
             self.toast_win = None
             self.toast_text = None
+            self.toast_kind = None
 
     def end_water(self, drank):
         if self.water_win:
@@ -1594,6 +1637,8 @@ def run_smoke_test(app, out_dir):
         (lambda: app.end_water(False), None),
         (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
                                 [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),
+        (app.close_toast, None),
+        (lambda: (setattr(app.sched, "warned", True), app.show_break_warning()), "break_warning"),
         (app.close_toast, None),
         # Мережа й сертифікати: на macOS без certifi HTTPS у зібраній програмі не працює
         (lambda: print(f"smoke test: update check -> {updates.fetch_latest()}", file=sys.stderr), None),
