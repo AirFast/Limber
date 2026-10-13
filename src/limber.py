@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -410,39 +410,57 @@ def ensure_icon_file():
 _glass_cache = {}
 
 
-def glass_image(width, height, filled, bg):
-    """Абстрактна склянка: силует, що розширюється догори; випита — з водою всередині."""
-    key = (width, height, filled, bg)
-    if key in _glass_cache:
-        return _glass_cache[key]
-    edge = rgba(C["water"] if filled else C["dim"])
+def blend(color, other, amount):
+    """Змішування двох кольорів #rrggbb: amount = 0 → color, 1 → other."""
+    a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(other[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(round(x + (y - x) * amount) for x, y in zip(a, b))
+
+
+def glass_picture(width, height, filled, bg):
+    """Абстрактна склянка з рідиною: хвиляста поверхня й відблиск на гребені.
+    Випита — синя вода й синій контур; ще не випита — сіра рідина й сірий контур."""
+    if filled:
+        edge, liquid, shine = lighten(C["water"], 0.35), C["water"], lighten(C["water"], 0.6)
+    else:
+        edge, liquid, shine = C["dim"], blend(C["dim"], bg, 0.55), blend(C["dim"], bg, 0.15)
 
     def paint(d, s):
         w, h = width * s, height * s
-        stroke = max(1.5, width * 0.1) * s
+        stroke = max(1.5, width * 0.09) * s
         top, bottom = 0.1 * h, h - stroke / 2 - 0.5 * s
         left_top, right_top = stroke / 2 + 0.5 * s, w - stroke / 2 - 0.5 * s
         left_bottom, right_bottom = 0.2 * w, 0.8 * w
 
-        def x_at(y, x_top, x_bottom):
+        def wall(y, x_top, x_bottom):
             return x_top + (x_bottom - x_top) * (y - top) / (bottom - top)
 
-        if filled:
-            level = top + (bottom - top) * 0.3  # рівень води
-            inset = stroke * 0.5
-            d.polygon([(x_at(level, left_top, left_bottom) + inset, level),
-                       (x_at(level, right_top, right_bottom) - inset, level),
-                       (right_bottom - inset, bottom - inset), (left_bottom + inset, bottom - inset)],
-                      fill=rgba(C["water"]))
+        # Поверхня рідини — синусоїда трохи більш ніж на півтора періоди
+        level = top + (bottom - top) * 0.3
+        amplitude = h * 0.045
+        inset = stroke * 0.55
+        x0, x1 = wall(level, left_top, left_bottom) + inset, wall(level, right_top, right_bottom) - inset
+        steps = 28
+        surface = [(x0 + (x1 - x0) * i / steps,
+                    level + amplitude * math.sin(2 * math.pi * 1.6 * i / steps + 0.4)) for i in range(steps + 1)]
+        d.polygon(surface + [(right_bottom - inset, bottom - inset), (left_bottom + inset, bottom - inset)],
+                  fill=rgba(liquid))
+        d.line(surface, fill=rgba(shine), width=max(1, int(stroke * 0.7)), joint="curve")
+
         d.line([(left_top, top), (left_bottom, bottom), (right_bottom, bottom), (right_top, top)],
-               fill=edge, width=int(stroke), joint="curve")
+               fill=rgba(edge), width=int(stroke), joint="curve")
         r = stroke / 2
         for x in (left_top, right_top):  # заокруглені верхні краї
-            d.ellipse((x - r, top - r, x + r, top + r), fill=edge)
+            d.ellipse((x - r, top - r, x + r, top + r), fill=rgba(edge))
 
-    image = ImageTk.PhotoImage(smooth_image(width, height, paint, bg))
-    _glass_cache[key] = image
-    return image
+    return smooth_image(width, height, paint, bg)
+
+
+def glass_image(width, height, filled, bg):
+    key = (width, height, filled, bg)
+    if key not in _glass_cache:
+        _glass_cache[key] = ImageTk.PhotoImage(glass_picture(width, height, filled, bg))
+    return _glass_cache[key]
 
 
 def check_mark(size, color):
