@@ -19,7 +19,7 @@ python3 -m pytest -q tests/test_logic.py::test_postpone_limit   # single test
 
 Dev/debug flags for `src/limber.py`: `--open`, `--test-break` (trigger a break after 1.5 s), `--test-water`, `--smoke-test <dir>` (walks every window and saves screenshots, then exits with a status code — CI runs this against the built macOS app). Installer-only flags that apply a setting and exit immediately: `--set-autostart=on|off`, `--set-language=uk|en`.
 
-There is no linter configured.
+Lint with `python3 -m pyflakes src tests` (CI runs it; it also catches duplicate keys in the `i18n.py` dictionaries, which would silently override a string).
 
 ## Architecture
 

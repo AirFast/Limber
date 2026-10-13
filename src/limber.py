@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -1337,30 +1337,37 @@ class App:
     # статистика
 
     def build_stats_page(self, parent):
+        """Картки нагорі — один день (сьогодні або той, на який наведено курсор на графіку)."""
         page = tk.Frame(parent, bg=C["bg"])
+        self.w["stats_day"] = tk.Label(page, bg=C["bg"], fg=C["text"], font=font(12, "semibold"))
+        self.w["stats_day"].pack(anchor="w", pady=(0, 8))
         summary = tk.Frame(page, bg=C["bg"])
         summary.pack(fill="x")
-        for i, (key, caption, color) in enumerate((("sum_done", t("sum_done"), C["accent"]),
-                                                   ("sum_skipped", t("m_skipped"), C["muted"]),
-                                                   ("sum_water", t("m_water"), C["water"]))):
+        cards = (("day_breaks", t("m_breaks"), C["accent"]), ("day_skipped", t("m_skipped"), C["muted"]),
+                 ("day_postponed", t("m_postponed"), C["muted"]), ("day_water", t("m_water"), C["water"]))
+        for i, (key, caption, color) in enumerate(cards):
             box = card(summary)
-            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == 2 else 7))
+            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0 if i == len(cards) - 1 else 6))
             summary.columnconfigure(i, weight=1, uniform="sum")
-            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(30, "light"))
+            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(28, "light"))
             self.w[key].pack(anchor="w")
             tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
 
         chart = card(page, t("card_last7"))
         chart.pack(fill="both", expand=True, pady=(14, 0))
-        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=290)
+        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=270, cursor="hand2")
         self.w["chart"].pack(fill="both", expand=True)
-        legend = tk.Frame(chart, bg=C["card"])
-        legend.pack(anchor="w", pady=(6, 0))
+        self.w["chart"].bind("<Motion>", self.on_chart_motion)
+        self.w["chart"].bind("<Leave>", lambda e: self.highlight_day(None))
+        bottom_row = tk.Frame(chart, bg=C["card"])
+        bottom_row.pack(fill="x", pady=(6, 0))
         for text, color in ((t("lg_mini"), C["accent"]), (t("lg_long"), C["accent_dark"]),
                             (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"])):
-            tk.Label(legend, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
-            tk.Label(legend, text=text, bg=C["card"], fg=C["muted"],
+            tk.Label(bottom_row, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
+            tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
                      font=font(10)).pack(side="left", padx=(2, 14))
+        self.w["week_total"] = tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10))
+        self.w["week_total"].pack(anchor="w", pady=(4, 0))
         return page
 
     def draw_stats(self):
@@ -1370,19 +1377,22 @@ class App:
         today = dt.date.today()
         days = [today - dt.timedelta(days=i) for i in range(6, -1, -1)]
         records = [self.stats.day(d) for d in days]
-        self.w["sum_done"].configure(text=sum(r["mini_done"] + r["long_done"] for r in records))
-        self.w["sum_skipped"].configure(text=sum(r["skipped"] for r in records))
-        self.w["sum_water"].configure(text=sum(r["water"] for r in records))
+        self.w["week_total"].configure(text=t(
+            "week_total", breaks=sum(r["mini_done"] + r["long_done"] for r in records),
+            skipped=sum(r["skipped"] for r in records), water=sum(r["water"] for r in records)))
 
         c.delete("all")
-        width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 250)
+        width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 230)
         top, bottom = 24, height - 48
+        slot = width / 7
+        self.chart_info = {"days": days, "records": records, "slot": slot, "top": top, "bottom": bottom,
+                           "width": width, "bar": min(44, slot * 0.5), "hover": None}
         peak = max([r["mini_done"] + r["long_done"] + r["skipped"] for r in records] + [4])
         for i in range(5):
             y = bottom - (bottom - top) * i / 4
             c.create_line(0, y, width, y, fill=C["track"] if i == 0 else "#20403f")
-        slot = width / 7
-        bar = min(44, slot * 0.5)
+        bar = self.chart_info["bar"]
+        bar_tops = []
         for i, (day, rec) in enumerate(zip(days, records)):
             cx = slot * i + slot / 2
             y = bottom
@@ -1391,6 +1401,7 @@ class App:
                 if h:
                     c.create_rectangle(cx - bar / 2, y - h, cx + bar / 2, y, fill=color, outline="")
                     y -= h
+            bar_tops.append(y)
             total = rec["mini_done"] + rec["long_done"] + rec["skipped"]
             if total:
                 c.create_text(cx, y - 10, text=total, fill=C["text"], font=font(10, "semibold"))
@@ -1399,6 +1410,66 @@ class App:
                           font=font(10))
             c.create_text(cx, bottom + 33, text=f"● {rec['water']}" if rec["water"] else "",
                           fill=C["water"], font=font(9))
+        self.chart_info["bar_tops"] = bar_tops
+        self.show_stats_day(6)
+
+    def show_stats_day(self, index):
+        """Картки нагорі: дані одного дня з графіка (6 — сьогодні)."""
+        info = self.chart_info
+        day, rec = info["days"][index], info["records"][index]
+        date = f"{day:%d.%m}"
+        if day == dt.date.today():
+            title = t("stats_today", date=date)
+        else:
+            title = t("stats_day", weekday=t("weekdays").split()[day.weekday()], date=date)
+        self.w["stats_day"].configure(text=title)
+        self.w["day_breaks"].configure(text=rec["mini_done"] + rec["long_done"])
+        self.w["day_skipped"].configure(text=rec["skipped"])
+        self.w["day_postponed"].configure(text=rec["postponed"])
+        self.w["day_water"].configure(text=rec["water"])
+
+    def on_chart_motion(self, event):
+        info = getattr(self, "chart_info", None)
+        if not info:
+            return
+        inside = info["top"] - 20 <= event.y <= info["bottom"] + 44
+        self.highlight_day(min(6, max(0, int(event.x // info["slot"]))) if inside else None)
+
+    def highlight_day(self, index):
+        """Підсвітка стовпчика, підказка з деталями дня й картки нагорі для цього дня."""
+        info = getattr(self, "chart_info", None)
+        c = self.w.get("chart")
+        if not info or not c or index == info["hover"]:
+            return
+        info["hover"] = index
+        c.delete("hover")
+        if index is None:
+            self.show_stats_day(6)
+            return
+        slot, top, bottom = info["slot"], info["top"], info["bottom"]
+        band = c.create_rectangle(slot * index + 4, top - 14, slot * (index + 1) - 4, bottom + 44,
+                                  fill="#20403f", outline="", tags="hover")
+        c.tag_lower(band)
+        rec = info["records"][index]
+        lines = [
+            f"{t('tip_mini')}: {rec['mini_done']}",
+            f"{t('tip_long')}: {rec['long_done']}",
+            f"{t('tip_skipped')}: {rec['skipped']}",
+            f"{t('tip_postponed')}: {rec['postponed']}",
+            f"{t('tip_day_water')}: {t('x_of_y', a=rec['water'], b=self.cfg['water_goal'])}",
+        ]
+        text = c.create_text(0, 0, text="\n".join(lines), anchor="nw", fill=C["text"], font=font(10), tags="hover")
+        x0, y0, x1, y1 = c.bbox(text)
+        box_w, box_h = x1 - x0 + 24, y1 - y0 + 18
+        cx, bar = slot * index + slot / 2, info["bar"]
+        x = cx + bar / 2 + 10
+        if x + box_w > info["width"] - 4:  # біля правого краю — підказка ліворуч від стовпчика
+            x = cx - bar / 2 - 10 - box_w
+        y = max(4, min(info["bar_tops"][index] - box_h / 2, bottom - box_h))
+        box = c.create_rectangle(x, y, x + box_w, y + box_h, fill=C["panel"], outline=C["accent"], tags="hover")
+        c.coords(text, x + 12, y + 9)
+        c.tag_raise(text, box)
+        self.show_stats_day(index)
 
     # налаштування
 
