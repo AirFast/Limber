@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import exercises  # noqa: E402
 import i18n  # noqa: E402
 import limber  # noqa: E402
+import updates  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -160,6 +161,14 @@ def test_workout_is_built_in_the_current_language():
     assert steps[0]["phase"] == "WARM-UP" and steps[-1]["phase"] == "COOL-DOWN"
     english_titles = {en[0] for kind, _g, level, _uk, en in exercises.EXERCISES if kind == "workout" and level in (1, 2)}
     assert all(s["title"] in english_titles for s in steps if s["kind"] == "work")
+
+
+@pytest.mark.parametrize("candidate, current, newer", [
+    ("v1.4.0", "1.3.0", True), ("1.10.0", "1.9.9", True), ("v1.3.0", "1.3.0", False),
+    ("1.2.9", "1.3.0", False), ("v2", "1.9.9", True), ("1.3.1", "1.3", True),
+])
+def test_version_comparison(candidate, current, newer):
+    assert updates.is_newer(candidate, current) is newer
 
 
 def test_unknown_language_falls_back_to_english():

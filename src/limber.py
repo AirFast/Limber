@@ -10,6 +10,7 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import webbrowser
 from tkinter import messagebox
 
 import system
@@ -23,10 +24,11 @@ from PIL import Image, ImageDraw, ImageTk
 
 import exercises
 import i18n
+import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -49,8 +51,12 @@ DEFAULTS = {
     "intensity": 2,
     "workout_enabled": True,
     "sound": True,
-    "language": "",  # "" — за мовою Windows; інсталятор записує мову, вибрану під час встановлення
+    "language": "",  # "" — за мовою системи; інсталятор записує мову, вибрану під час встановлення
+    "check_updates": True,
+    "notified_version": "",  # про яку нову версію вже показали сповіщення
 }
+UPDATE_CHECK_DELAY_MS = 30_000
+UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 C = {
     "bg": "#13292a",
@@ -562,6 +568,7 @@ class App:
         self.icon_key = None
         self.tooltip = None
         self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
+        self.update_info = None  # (версія, адреса релізу), якщо на GitHub є новіша версія
 
         self.icon = system.make_tray_icon(pystray, "Limber", make_icon(0, False), APP_NAME, self.build_menu())
         system.start_tray(self.icon, self.root)
@@ -569,6 +576,30 @@ class App:
 
         self.root.after(1000, self.loop)
         self.root.after(100, self.process_queue)
+        self.root.after(UPDATE_CHECK_DELAY_MS, self.check_updates)
+
+    # --- оновлення ---
+
+    def check_updates(self):
+        """Раз на добу питає GitHub про останній реліз; мережа — у фоновому потоці."""
+        if self.cfg["check_updates"]:
+            threading.Thread(target=lambda: self.queue.put(("update", updates.fetch_latest())), daemon=True).start()
+        self.root.after(UPDATE_CHECK_INTERVAL_MS, self.check_updates)
+
+    def on_update_result(self, result):
+        if not result or not updates.is_newer(result[0], __version__):
+            return
+        self.update_info = result
+        self.icon.menu = self.build_menu()
+        self.icon.update_menu()
+        if self.cfg["notified_version"] != result[0]:
+            self.notify(t("update_notify", version=result[0]))
+            self.cfg["notified_version"] = result[0]
+            save_json(CONFIG_PATH, self.cfg)
+        self.refresh_main()
+
+    def open_update(self):
+        webbrowser.open(self.update_info[1] if self.update_info else updates.LATEST_PAGE)
 
     # --- трей ---
 
@@ -578,6 +609,8 @@ class App:
 
         item = pystray.MenuItem
         return pystray.Menu(
+            item(lambda i: t("update_menu", version=self.update_info[0]) if self.update_info else "",
+                 post("open_update"), visible=lambda i: self.update_info is not None),
             item(t("open"), post("open"), default=True),
             item(t("break_now"), post("break_now")),
             item(t("reset"), post("reset")),
@@ -620,6 +653,10 @@ class App:
                 self.sched.finish_break()
             self.sched.pause(action[1])
             self.icon.update_menu()
+        elif action == "open_update":
+            self.open_update()
+        elif isinstance(action, tuple) and action[0] == "update":
+            self.on_update_result(action[1])
         elif action == "quit":
             if system.IS_MAC:
                 self.icon.visible = False  # stop() зупинив би спільний з Tk цикл NSApplication
@@ -937,7 +974,7 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.geometry("800x790")
+        win.geometry("800x825")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
@@ -959,6 +996,10 @@ class App:
                  font=font(9)).pack(anchor="w")
         self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=font(10))
         self.w["saved"].pack(side="left", padx=14, pady=(6, 0))
+        self.w["update"] = tk.Label(header, text="", bg=C["bg"], fg=C["water"], font=font(10, "semibold"),
+                                    cursor="hand2")
+        self.w["update"].pack(side="left", pady=(6, 0))
+        self.w["update"].bind("<Button-1>", lambda e: self.open_update())
         tabs = tk.Frame(header, bg=C["panel"])
         tabs.pack(side="right")
 
@@ -1163,6 +1204,8 @@ class App:
                lambda v: self.set_setting("sound", v)).pack(fill="x", pady=4)
         Toggle(other, t("autostart_toggle_mac" if system.IS_MAC else "autostart_toggle"), system.get_autostart(),
                self.set_autostart_setting).pack(fill="x", pady=4)
+        Toggle(other, t("updates_toggle"), self.cfg["check_updates"],
+               lambda v: self.set_setting("check_updates", v)).pack(fill="x", pady=4)
 
         group(right, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
         water = card(right, t("card_water"))
@@ -1245,6 +1288,7 @@ class App:
             return
         s = self.sched
         self.draw_ring()
+        self.w["update"].configure(text=t("update_banner", version=self.update_info[0]) if self.update_info else "")
         self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_30_btn"))
         today = self.stats.day(dt.date.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"])
@@ -1291,6 +1335,8 @@ def run_smoke_test(app, out_dir):
         (lambda: app.end_break("skip"), None),
         (lambda: app.show_water(demo=True), "water"),
         (lambda: app.end_water(False), None),
+        # Мережа й сертифікати: на macOS без certifi HTTPS у зібраній програмі не працює
+        (lambda: print(f"smoke test: update check -> {updates.fetch_latest()}", file=sys.stderr), None),
     ]
 
     def run(index=0):
