@@ -234,20 +234,6 @@ def beep(kind="info", sound=None):
         play_sound(f"/System/Library/Sounds/{'Tink' if kind == 'step' else 'Glass'}.aiff")
 
 
-def notify(icon, title, message):
-    """Системне сповіщення. На macOS pystray їх не підтримує — використовуємо AppleScript."""
-    try:
-        if IS_MAC:
-            def quote(s):
-                return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-            subprocess.Popen(["osascript", "-e", f"display notification {quote(message)} with title {quote(title)}"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            icon.notify(message, title)
-    except Exception:
-        pass
-
-
 def system_language():
     """Мова інтерфейсу системи: українська → uk, будь-яка інша → en."""
     if IS_WINDOWS:

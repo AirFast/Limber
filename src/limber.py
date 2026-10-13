@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -596,7 +596,9 @@ class App:
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
         if self.cfg["notified_version"] != result[0]:
-            self.notify(t("update_notify", version=result[0]))
+            self.show_toast(t("update_toast_title", version=result[0]), t("update_toast_text"),
+                            [(t("download"), self.open_update, True), (t("later"), lambda: None, False)],
+                            timeout_ms=60_000)
             self.cfg["notified_version"] = result[0]
             save_json(CONFIG_PATH, self.cfg)
         self.refresh_main()
@@ -667,8 +669,6 @@ class App:
                 self.icon.stop()
             self.root.destroy()
 
-    def notify(self, message):
-        system.notify(self.icon, APP_NAME, message)
 
     def update_tray(self):
         s = self.sched
@@ -701,7 +701,8 @@ class App:
         was_paused = self.sched.paused_until is not None
         for event in self.sched.tick(delta):
             if event == "warn":
-                self.notify(t(f"warn_{self.sched.next_kind()}", sec=int(self.sched.remaining)))
+                self.show_toast(APP_NAME, t(f"warn_{self.sched.next_kind()}", sec=int(self.sched.remaining)),
+                                timeout_ms=8_000)
             elif event == "break":
                 self.show_break(self.sched.next_kind())
             elif event == "water":
@@ -907,6 +908,7 @@ class App:
             self.water_win.destroy()  # справжнє нагадування важливіше за демо
             self.water_win = None
         self.water_demo = demo
+        self.close_toast()  # обидва віконця живуть у тому самому куті екрана
         screens = system.monitors()
         if screens:
             _l, _t, right, bottom = screens[0][4]
@@ -954,6 +956,53 @@ class App:
         if demo:
             win.focus_force()
         self.beep()
+
+    # --- власні сповіщення ---
+
+    def show_toast(self, title, text, actions=(), timeout_ms=10_000):
+        """Спливаюче віконце в куті екрана. Не покладаємося на системні сповіщення:
+        користувач міг їх вимкнути (на Windows вони тоді просто мовчки зникають),
+        а на macOS вони ненадійні для програм без підпису Apple.
+        actions: [(напис, функція, головна_кнопка?)]."""
+        self.close_toast()
+        screens = system.monitors()
+        if screens:
+            _l, _t, right, bottom = screens[0][4]
+        else:
+            right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
+        if self.water_win:  # не перекриваємо нагадування про воду
+            bottom = self.water_win.winfo_rooty()
+        width = 380
+        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=C["accent"])
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        tk.Label(win, text=title, bg=C["panel"], fg=C["accent"],
+                 font=font(13, "semibold")).pack(anchor="w", padx=18, pady=(14, 2))
+        tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(10), wraplength=width - 40,
+                 justify="left").pack(anchor="w", padx=18, pady=(0, 0 if actions else 14))
+        if actions:
+            row = tk.Frame(win, bg=C["panel"])
+            row.pack(anchor="e", padx=14, pady=12)
+            for label, command, primary in actions:
+                flat_button(row, label, lambda c=command: (self.close_toast(), c()), size=10,
+                            bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"],
+                            hover="#7fd6cb" if primary else None).pack(side="left", padx=4)
+        else:
+            for widget in (win, *win.winfo_children()):
+                widget.bind("<Button-1>", lambda e: self.close_toast())
+        win.update_idletasks()
+        height = win.winfo_reqheight()
+        win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
+        self.toast_win = win
+        self.toast_after = self.root.after(timeout_ms, self.close_toast)
+
+    def close_toast(self):
+        if getattr(self, "toast_after", None):
+            self.root.after_cancel(self.toast_after)
+            self.toast_after = None
+        if getattr(self, "toast_win", None):
+            self.toast_win.destroy()
+            self.toast_win = None
 
     def end_water(self, drank):
         if self.water_win:
@@ -1366,6 +1415,9 @@ def run_smoke_test(app, out_dir):
         (lambda: app.end_break("skip"), None),
         (lambda: app.show_water(demo=True), "water"),
         (lambda: app.end_water(False), None),
+        (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
+                                [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),
+        (app.close_toast, None),
         # Мережа й сертифікати: на macOS без certifi HTTPS у зібраній програмі не працює
         (lambda: print(f"smoke test: update check -> {updates.fetch_latest()}", file=sys.stderr), None),
     ]
