@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.5.1"
+__version__ = "1.6.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -588,16 +588,18 @@ class App:
             threading.Thread(target=lambda: self.queue.put(("update", updates.fetch_latest())), daemon=True).start()
         self.root.after(UPDATE_CHECK_INTERVAL_MS, self.check_updates)
 
-    def on_update_result(self, result):
-        if not result or not updates.is_newer(result[0], __version__):
+    def on_update_result(self, result, install_now=False):
+        if not result or not updates.is_newer(result[0], current_version()):
             return
         print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} доступне оновлення {result[0]}", file=sys.stderr)
         self.update_info = result
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
-        if self.cfg["notified_version"] != result[0]:
+        if install_now:
+            self.start_update()
+        elif self.cfg["notified_version"] != result[0]:
             self.show_toast(t("update_toast_title", version=result[0]), t("update_toast_text"),
-                            [(t("download"), self.open_update, True), (t("later"), lambda: None, False)],
+                            [(t("update_now"), self.start_update, True), (t("later"), lambda: None, False)],
                             timeout_ms=60_000)
             self.cfg["notified_version"] = result[0]
             save_json(CONFIG_PATH, self.cfg)
@@ -605,6 +607,47 @@ class App:
 
     def open_update(self):
         webbrowser.open(self.update_info[1] if self.update_info else updates.LATEST_PAGE)
+
+    def start_update(self):
+        """Кнопка «Оновити»: завантажити, перевірити й встановити нову версію самостійно.
+        Якщо це неможливо (запуск із коду, немає файлу для цієї системи) — відкрити сторінку релізу."""
+        if getattr(self, "updating", False) or not self.update_info:
+            return
+        asset = updates.pick_asset(self.update_info[2])
+        if not updates.can_self_update() or not asset:
+            self.open_update()
+            return
+        self.updating = True
+        version = self.update_info[0]
+        self.show_toast(t("updating_title", version=version), t("updating_progress", percent=0),
+                        timeout_ms=30 * 60_000)
+
+        def work():
+            try:
+                path = updates.download(asset, progress=lambda p: self.queue.put(("update_progress", p)))
+                self.queue.put(("update_ready", path))
+            except Exception as error:
+                traceback.print_exc()
+                self.queue.put(("update_failed", str(error)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_event(self, kind, value):
+        if kind == "update_progress":
+            if getattr(self, "toast_text", None):
+                self.toast_text.configure(text=t("updating_progress", percent=value))
+        elif kind == "update_ready":
+            print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} встановлюю оновлення з {value}", file=sys.stderr)
+            if getattr(self, "toast_text", None):
+                self.toast_text.configure(text=t("updating_install"))
+                self.root.update()
+            updates.install(value)
+            self.handle("quit")  # інсталятор (Windows) чи скрипт (macOS) запустить нову версію
+        elif kind == "update_failed":
+            self.updating = False
+            self.show_toast(t("update_failed_title"), t("update_failed_text"),
+                            [(t("download"), self.open_update, True), (t("later"), lambda: None, False)],
+                            timeout_ms=60_000)
 
     # --- трей ---
 
@@ -615,7 +658,7 @@ class App:
         item = pystray.MenuItem
         return pystray.Menu(
             item(lambda i: t("update_menu", version=self.update_info[0]) if self.update_info else "",
-                 post("open_update"), visible=lambda i: self.update_info is not None),
+                 post("start_update"), visible=lambda i: self.update_info is not None),
             item(t("open"), post("open"), default=True),
             item(t("break_now"), post("break_now")),
             item(t("reset"), post("reset")),
@@ -658,8 +701,12 @@ class App:
                 self.sched.finish_break()
             self.sched.pause(action[1])
             self.icon.update_menu()
-        elif action == "open_update":
-            self.open_update()
+        elif action == "start_update":
+            self.start_update()
+        elif isinstance(action, tuple) and action[0] in ("update_progress", "update_ready", "update_failed"):
+            self.on_update_event(*action)
+        elif isinstance(action, tuple) and action[0] == "update_now":
+            self.on_update_result(action[1], install_now=True)
         elif isinstance(action, tuple) and action[0] == "update":
             self.on_update_result(action[1])
         elif action == "quit":
@@ -978,8 +1025,9 @@ class App:
         win.attributes("-topmost", True)
         tk.Label(win, text=title, bg=C["panel"], fg=C["accent"],
                  font=font(13, "semibold")).pack(anchor="w", padx=18, pady=(14, 2))
-        tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(10), wraplength=width - 40,
-                 justify="left").pack(anchor="w", padx=18, pady=(0, 0 if actions else 14))
+        self.toast_text = tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(10),
+                                   wraplength=width - 40, justify="left")
+        self.toast_text.pack(anchor="w", padx=18, pady=(0, 0 if actions else 14))
         if actions:
             row = tk.Frame(win, bg=C["panel"])
             row.pack(anchor="e", padx=14, pady=12)
@@ -1003,6 +1051,7 @@ class App:
         if getattr(self, "toast_win", None):
             self.toast_win.destroy()
             self.toast_win = None
+            self.toast_text = None
 
     def end_water(self, drank):
         if self.water_win:
@@ -1051,7 +1100,7 @@ class App:
         self.w["update"] = tk.Label(header, text="", bg=C["bg"], fg=C["water"], font=font(10, "semibold"),
                                     cursor="hand2")
         self.w["update"].pack(side="left", pady=(6, 0))
-        self.w["update"].bind("<Button-1>", lambda e: self.open_update())
+        self.w["update"].bind("<Button-1>", lambda e: self.start_update())
         tabs = tk.Frame(header, bg=C["panel"])
         tabs.pack(side="right")
 
@@ -1385,6 +1434,12 @@ class App:
             self.w[f"today_{key}"].configure(text=today[key])
 
 
+def current_version():
+    """Версія для порівняння з релізами. LIMBER_VERSION_OVERRIDE — лише для перевірки
+    самооновлення в CI: зібрана програма «вдає» стару версію й оновлюється до останнього релізу."""
+    return os.environ.get("LIMBER_VERSION_OVERRIDE") or __version__
+
+
 def run_smoke_test(app, out_dir):
     """--smoke-test: проходить усі вікна без участі людини й робить знімки екрана.
     Потрібен для перевірки збірки на macOS-сервері GitHub Actions, де немає кому дивитися."""
@@ -1484,6 +1539,8 @@ def main():
         app.root.after(1500, lambda: (setattr(app.sched, "water_open", True), app.show_water()))
     if "--open" in sys.argv:
         app.root.after(500, app.open_main)
+    if "--update-now" in sys.argv:  # перевірка самооновлення: одразу шукаємо реліз і оновлюємося
+        threading.Thread(target=lambda: app.queue.put(("update_now", updates.fetch_latest())), daemon=True).start()
     app.root.mainloop()
     if smoke_dir:
         sys.exit(app.exit_code)

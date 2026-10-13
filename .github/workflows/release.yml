@@ -66,6 +66,27 @@ jobs:
         timeout-minutes: 5
         run: dist/Limber.app/Contents/MacOS/Limber --smoke-test "$PWD/smoke"
 
+      # Самооновлення: копія зібраної програми «вдає» версію 0.0.1, сама завантажує
+      # останній реліз із GitHub, замінює себе й перезапускається
+      - name: Self-update test
+        timeout-minutes: 5
+        run: |
+          LATEST=$(python3 -c "import json, urllib.request; print(json.load(urllib.request.urlopen('https://api.github.com/repos/AirFast/Limber/releases/latest'))['tag_name'].lstrip('v'))")
+          APP="$RUNNER_TEMP/Limber.app"
+          cp -R dist/Limber.app "$APP"
+          LIMBER_VERSION_OVERRIDE=0.0.1 "$APP/Contents/MacOS/Limber" --update-now &
+          V=""
+          for i in $(seq 1 90); do
+            V=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || true)
+            [ "$V" = "$LATEST" ] && break
+            sleep 2
+          done
+          echo "version after update: $V (latest release: $LATEST)"
+          sleep 8
+          echo "running after update:"; pgrep -fl "Limber.app/Contents/MacOS/Limber" || echo "(not running)"
+          pkill -f "Limber.app/Contents/MacOS/Limber" || true
+          test "$V" = "$LATEST"
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:

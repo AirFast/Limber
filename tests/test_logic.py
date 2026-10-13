@@ -171,6 +171,32 @@ def test_version_comparison(candidate, current, newer):
     assert updates.is_newer(candidate, current) is newer
 
 
+def test_pick_asset_matches_this_platform(monkeypatch):
+    assets = [{"name": "Limber-2.0.0-macos-arm64.dmg"}, {"name": "LimberSetup-2.0.0.exe"}]
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    assert updates.pick_asset(assets)["name"] == "LimberSetup-2.0.0.exe"
+    monkeypatch.setattr(updates.sys, "platform", "darwin")
+    monkeypatch.setattr(updates.platform, "machine", lambda: "arm64")
+    assert updates.pick_asset(assets)["name"] == "Limber-2.0.0-macos-arm64.dmg"
+    monkeypatch.setattr(updates.platform, "machine", lambda: "x86_64")
+    assert updates.pick_asset(assets) is None
+
+
+def test_download_checks_size_and_checksum(tmp_path):
+    import hashlib
+    source = tmp_path / "LimberSetup-9.9.9.exe"
+    source.write_bytes(b"x" * 300_000)
+    good = hashlib.sha256(source.read_bytes()).hexdigest()
+    asset = {"name": source.name, "url": source.as_uri(), "size": 300_000, "sha256": good}
+    seen = []
+    path = updates.download(asset, progress=seen.append)
+    assert open(path, "rb").read() == source.read_bytes() and seen
+    with pytest.raises(OSError):
+        updates.download(dict(asset, sha256="0" * 64))
+    with pytest.raises(OSError):
+        updates.download(dict(asset, size=1))
+
+
 def test_unknown_language_falls_back_to_english():
     i18n.set_language("de")
     assert i18n.get_language() == "en"
