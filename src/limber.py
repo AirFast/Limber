@@ -26,7 +26,7 @@ import i18n
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
