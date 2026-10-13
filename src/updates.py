@@ -35,7 +35,13 @@ def _ssl_context():
 
 
 def _open(url, timeout, accept="application/vnd.github+json"):
-    request = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "Limber-updater"})
+    headers = {"Accept": accept, "User-Agent": "Limber-updater"}
+    # Лише для API й лише на сервері збирання (GitHub Actions): без токена спільні IP раннерів
+    # швидко вичерпують ліміт запитів. У користувачів цієї змінної немає.
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(request, timeout=timeout, context=_ssl_context())
 
 
