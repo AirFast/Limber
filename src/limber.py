@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -57,6 +57,8 @@ DEFAULTS = {
     "group_buttons": True,   # кнопки груп м'язів на екрані перерви; вимкнено — вправи випадкові
     "notified_version": "",  # про яку нову версію вже показали сповіщення
 }
+MAX_GLASSES = 30          # верхня межа ручного введення води за день
+MAX_GLASSES_SHOWN = 16    # скільки склянок уміщається в ряд
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
@@ -211,6 +213,12 @@ class Stats:
     def add(self, key):
         rec = self.data.setdefault(dt.date.today().isoformat(), {})
         rec[key] = rec.get(key, 0) + 1
+        save_json(STATS_PATH, self.data)
+
+    def set(self, key, value):
+        """Ручне виправлення лічильника за сьогодні (наприклад, кількості склянок води)."""
+        rec = self.data.setdefault(dt.date.today().isoformat(), {})
+        rec[key] = max(0, int(value))
         save_json(STATS_PATH, self.data)
 
     def day(self, date):
@@ -399,6 +407,44 @@ def ensure_icon_file():
 
 # ---------- застосунок ----------
 
+_glass_cache = {}
+
+
+def glass_image(width, height, filled, bg):
+    """Абстрактна склянка: силует, що розширюється догори; випита — з водою всередині."""
+    key = (width, height, filled, bg)
+    if key in _glass_cache:
+        return _glass_cache[key]
+    edge = rgba(C["water"] if filled else C["dim"])
+
+    def paint(d, s):
+        w, h = width * s, height * s
+        stroke = max(1.5, width * 0.1) * s
+        top, bottom = 0.1 * h, h - stroke / 2 - 0.5 * s
+        left_top, right_top = stroke / 2 + 0.5 * s, w - stroke / 2 - 0.5 * s
+        left_bottom, right_bottom = 0.2 * w, 0.8 * w
+
+        def x_at(y, x_top, x_bottom):
+            return x_top + (x_bottom - x_top) * (y - top) / (bottom - top)
+
+        if filled:
+            level = top + (bottom - top) * 0.3  # рівень води
+            inset = stroke * 0.5
+            d.polygon([(x_at(level, left_top, left_bottom) + inset, level),
+                       (x_at(level, right_top, right_bottom) - inset, level),
+                       (right_bottom - inset, bottom - inset), (left_bottom + inset, bottom - inset)],
+                      fill=rgba(C["water"]))
+        d.line([(left_top, top), (left_bottom, bottom), (right_bottom, bottom), (right_top, top)],
+               fill=edge, width=int(stroke), joint="curve")
+        r = stroke / 2
+        for x in (left_top, right_top):  # заокруглені верхні краї
+            d.ellipse((x - r, top - r, x + r, top + r), fill=edge)
+
+    image = ImageTk.PhotoImage(smooth_image(width, height, paint, bg))
+    _glass_cache[key] = image
+    return image
+
+
 def check_mark(size, color):
     """Згладжена галочка на прозорому тлі."""
     def paint(d, s):
@@ -413,9 +459,17 @@ def check_mark(size, color):
     return ImageTk.PhotoImage(smooth_image(size, size, paint))
 
 
+def lighten(color, amount=0.14):
+    """Колір, світліший на amount — для стану наведення будь-якої кнопки.
+    (Раніше всім кнопкам задавався той самий темний колір наведення, і на бірюзовій
+    «Перерва зараз» темний текст ставав нерозбірливим.)"""
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02x%02x%02x" % tuple(round(c + (255 - c) * amount) for c in (r, g, b))
+
+
 def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, image=None):
     bg = bg or C["panel"]
-    hover = hover or C["panel_hover"]
+    hover = hover or lighten(bg)
     fg = fg or C["text"]
     if image:
         # У Tk padx — це ще й проміжок між текстом і картинкою, тому збираємо кнопку з двох Label
@@ -980,11 +1034,10 @@ class App:
             tk.Label(head, text=t("demo_tag"), bg=C["panel"], fg=C["dim"],
                      font=font(9, "semibold")).pack(side="right", padx=8)
             win.bind("<Escape>", lambda e: self.end_water(False))
-        dots = tk.Frame(win, bg=C["panel"])
-        dots.pack(anchor="w", padx=18, pady=(2, 8))
-        for i in range(goal):
-            tk.Label(dots, text="●" if i < drunk else "○", bg=C["panel"],
-                     fg=C["water"] if i < drunk else C["dim"], font=font(12)).pack(side="left", padx=1)
+        glasses = tk.Frame(win, bg=C["panel"])
+        glasses.pack(anchor="w", padx=18, pady=(6, 10))
+        for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
+            tk.Label(glasses, image=glass_image(18, 24, i < drunk, C["panel"]), bg=C["panel"]).pack(side="left", padx=2)
         if done:
             tip = t("water_goal_done")
         else:
@@ -995,7 +1048,7 @@ class App:
         buttons.pack(anchor="e", padx=16, pady=14)
         flat_button(buttons, t("later"), lambda: self.end_water(False), bg=C["bg"], size=11).pack(side="left", padx=4)
         flat_button(buttons, t("drank"), lambda: self.end_water(True), bg=C["water"], fg="#0b2233",
-                    size=11, hover="#6bb8ea", image=check_mark(16, "#0b2233")).pack(side="left", padx=4)
+                    size=11, image=check_mark(16, "#0b2233")).pack(side="left", padx=4)
         win.update_idletasks()
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
@@ -1034,7 +1087,7 @@ class App:
             for label, command, primary in actions:
                 flat_button(row, label, lambda c=command: (self.close_toast(), c()), size=10,
                             bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"],
-                            hover="#7fd6cb" if primary else None).pack(side="left", padx=4)
+                            ).pack(side="left", padx=4)
         else:
             for widget in (win, *win.winfo_children()):
                 widget.bind("<Button-1>", lambda e: self.close_toast())
@@ -1169,6 +1222,16 @@ class App:
         self.w["water"].pack(anchor="w")
         self.w["water_sub"] = tk.Label(water, bg=C["card"], fg=C["muted"], font=font(10))
         self.w["water_sub"].pack(anchor="w")
+        # Склянки за сьогодні: клік по склянці виставляє кількість, «−»/«+» — по одній
+        row = tk.Frame(water, bg=C["card"])
+        row.pack(fill="x", pady=(10, 0))
+        self.w["glasses"] = tk.Frame(row, bg=C["card"])
+        self.w["glasses"].pack(side="left")
+        self.w["glasses_key"] = None
+        for text, delta in (("+", 1), ("−", -1)):
+            btn = flat_button(row, text, lambda d=delta: self.change_water(d), size=12)
+            btn.configure(padx=10, pady=0)
+            btn.pack(side="right", padx=(4, 0))
 
         today = card(right, t("card_today"))
         today.pack(fill="both", expand=True, pady=(14, 0))
@@ -1436,6 +1499,43 @@ class App:
             self.w["water_sub"].configure(text=t("water_next", progress=progress))
         for key in ("mini_done", "long_done", "skipped", "water"):
             self.w[f"today_{key}"].configure(text=today[key])
+        self.render_glasses(today["water"])
+
+    def render_glasses(self, drunk):
+        """Ряд склянок у картці «Вода» — перемальовуємо лише коли щось змінилося."""
+        goal = self.cfg["water_goal"]
+        if self.w.get("glasses_key") == (drunk, goal):
+            return
+        self.w["glasses_key"] = (drunk, goal)
+        frame = self.w["glasses"]
+        for child in frame.winfo_children():
+            child.destroy()
+        for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
+            size, gap = ((22, 30), 3) if max(goal, drunk) <= 10 else ((16, 22), 1)  # 16 склянок мають уміститися
+            glass = tk.Label(frame, image=glass_image(*size, i < drunk, C["card"]), bg=C["card"], cursor="hand2")
+            glass.pack(side="left", padx=gap)
+            # Клік по останній випитій склянці знімає її, по будь-якій іншій — виставляє кількість до неї
+            glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(n - 1 if n == drunk else n))
+
+    def change_water(self, delta):
+        self.set_water(self.stats.day(dt.date.today())["water"] + delta)
+
+    def set_water(self, count):
+        """Ручна зміна кількості випитої води за сьогодні."""
+        before = self.stats.day(dt.date.today())["water"]
+        count = max(0, min(count, MAX_GLASSES))
+        if count == before:
+            return
+        self.stats.set("water", count)
+        if count > before:
+            # Щойно випив — наступне нагадування відраховується заново; відкрите нагадування вже зайве
+            if self.water_win and not self.water_demo:
+                self.water_win.destroy()
+                self.water_win = None
+            self.sched.water_answered(True)
+        self.refresh_main()
+        if self.w.get("chart") and self.w["chart"].winfo_ismapped():
+            self.draw_stats()
 
 
 def current_version():

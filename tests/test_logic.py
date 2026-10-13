@@ -199,7 +199,7 @@ def test_download_checks_size_and_checksum(tmp_path):
 
 def test_windows_sound_ids_have_labels_in_both_languages():
     import system
-    ids = {sound_id for sound_id, _ in system._WINDOWS_EVENTS} | {sound_id for sound_id, _ in system._WINDOWS_FALLBACK}
+    ids = {sound_id for sound_id, _ in system._WINDOWS_EVENTS + system._WINDOWS_FALLBACK + system._WINDOWS_EXTRA}
     for lang in i18n.LANGUAGES:
         for sound_id in ids:
             assert f"snd_{sound_id}" in i18n.STRINGS[lang], (lang, sound_id)

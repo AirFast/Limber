@@ -199,9 +199,19 @@ _WINDOWS_FALLBACK = [
     ("message", "Windows Notify Messaging.wav"), ("mail", "Windows Notify Email.wav"),
     ("chime", "Windows Proximity Notification.wav"), ("default", "Windows Background.wav"),
 ]
+# Інші стандартні звуки Windows (C:\Windows\Media), приємні як сигнал перерви
+_WINDOWS_EXTRA = [
+    ("ding", "Windows Ding.wav"), ("nudge", "Windows Message Nudge.wav"), ("balloon", "Windows Balloon.wav"),
+    ("classic", "Windows Notify.wav"), ("exclamation", "Windows Exclamation.wav"),
+    ("device", "Windows Hardware Insert.wav"), ("unlock", "Windows Unlock.wav"),
+    ("print", "Windows Print complete.wav"), ("logon", "Windows Logon.wav"),
+    ("chimes", "chimes.wav"), ("chord", "chord.wav"), ("tada", "tada.wav"),
+]
 # macOS: стандартні звуки сповіщень («Системні параметри → Звук»)
 _MAC_SOUNDS = ["Glass", "Ping", "Hero", "Pop", "Purr", "Submarine", "Funk", "Bottle", "Blow", "Frog", "Morse",
                "Sosumi", "Tink", "Basso"]
+# Новіші звуки сповіщень macOS (Sonoma і пізніші): є не в усіх версіях — беремо, якщо знайдуться
+_MAC_MODERN_DIR = "/System/Library/PrivateFrameworks/ToneLibrary.framework/Versions/A/Resources/AlertTones/Modern"
 
 
 def _scheme_sound(event):
@@ -226,14 +236,26 @@ def available_sounds():
             if path and path.lower() not in seen:  # кілька подій можуть мати той самий файл
                 seen.add(path.lower())
                 sounds.append((sound_id, path))
+        media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
         if len(sounds) < 2:
-            media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
             sounds = [(sound_id, os.path.join(media, file)) for sound_id, file in _WINDOWS_FALLBACK
                       if os.path.exists(os.path.join(media, file))]
+            seen = {path.lower() for _id, path in sounds}
+        for sound_id, file in _WINDOWS_EXTRA:
+            path = os.path.join(media, file)
+            if os.path.exists(path) and path.lower() not in seen:
+                seen.add(path.lower())
+                sounds.append((sound_id, path))
         return sounds
     if IS_MAC:
-        return [(name, f"/System/Library/Sounds/{name}.aiff") for name in _MAC_SOUNDS
-                if os.path.exists(f"/System/Library/Sounds/{name}.aiff")]
+        sounds = [(name, f"/System/Library/Sounds/{name}.aiff") for name in _MAC_SOUNDS
+                  if os.path.exists(f"/System/Library/Sounds/{name}.aiff")]
+        if os.path.isdir(_MAC_MODERN_DIR):
+            for file in sorted(os.listdir(_MAC_MODERN_DIR)):
+                name, ext = os.path.splitext(file)
+                if ext.lower() in (".m4r", ".caf", ".aiff", ".m4a") and name not in dict(sounds):
+                    sounds.append((name, os.path.join(_MAC_MODERN_DIR, file)))
+        return sounds
     return []
 
 
