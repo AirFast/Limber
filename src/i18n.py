@@ -56,11 +56,21 @@ def fmt_warn(v):
     return t("off") if v == 0 else fmt_seconds(v)
 
 
-def fmt_glasses(v):
-    liters = f"{v * 0.25:g}"
+GLASS_LITERS = 0.25  # стандартна склянка — 250 мл
+
+
+def fmt_volume(glasses):
+    """Приблизний об'єм води: 5 склянок → «≈1,25 л» / «≈1.25 L»."""
+    liters = f"{glasses * GLASS_LITERS:g}"
     if _current == "uk":
-        return f"{v} {_plural_uk(v, 'склянка', 'склянки', 'склянок')} (≈{liters.replace('.', ',')} л)"
-    return f"{v} {'glass' if v == 1 else 'glasses'} (≈{liters} L)"
+        return f"≈{liters.replace('.', ',')} л"
+    return f"≈{liters} L"
+
+
+def fmt_glasses(v):
+    if _current == "uk":
+        return f"{v} {_plural_uk(v, 'склянка', 'склянки', 'склянок')} ({fmt_volume(v)})"
+    return f"{v} {'glass' if v == 1 else 'glasses'} ({fmt_volume(v)})"
 
 
 def fmt_intensity(v):
@@ -141,14 +151,14 @@ STRINGS = {
         "ring_long": "до довгої перерви",
         "water_off": "нагадування вимкнено",
         "water_now": "Час пити!",
-        "water_today": "сьогодні {n} з {goal}",
+        "water_today": "сьогодні {n} з {goal} · {volume}",
         "water_next": "до наступної склянки  ·  {progress}",
         # статистика
         "m_breaks": "перерв зроблено",
         "m_postponed": "відкладено",
         "stats_today": "Сьогодні, {date}",
         "stats_day": "{weekday}, {date}",
-        "week_total": "За 7 днів: перерв {breaks} · пропущено {skipped} · склянок води {water}",
+        "week_total": "За 7 днів: перерв {breaks} · пропущено {skipped} · склянок води {water} ({volume})",
         "tip_mini": "Міні-перерви",
         "tip_long": "Довгі перерви",
         "tip_skipped": "Пропущено",
@@ -301,13 +311,13 @@ STRINGS = {
         "ring_long": "until long break",
         "water_off": "reminders off",
         "water_now": "Time to drink!",
-        "water_today": "today {n} of {goal}",
+        "water_today": "today {n} of {goal} · {volume}",
         "water_next": "until next glass  ·  {progress}",
         "m_breaks": "breaks done",
         "m_postponed": "postponed",
         "stats_today": "Today, {date}",
         "stats_day": "{weekday}, {date}",
-        "week_total": "Last 7 days: {breaks} breaks · {skipped} skipped · {water} glasses of water",
+        "week_total": "Last 7 days: {breaks} breaks · {skipped} skipped · {water} glasses of water ({volume})",
         "tip_mini": "Mini breaks",
         "tip_long": "Long breaks",
         "tip_skipped": "Skipped",

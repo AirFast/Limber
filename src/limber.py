@@ -25,10 +25,11 @@ from PIL import Image, ImageDraw, ImageTk
 import exercises
 import i18n
 import updates
-from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
+from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_volume,
+                  fmt_warn, t)
 from system import font
 
-__version__ = "1.9.1"
+__version__ = "1.10.0"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -1307,7 +1308,8 @@ class App:
             cell.grid(row=i // 2, column=i % 2, sticky="nw", padx=(0, 30), pady=8)
             self.w[f"today_{key}"] = tk.Label(cell, bg=C["card"], fg=color, font=font(34, "light"))
             self.w[f"today_{key}"].pack(anchor="w")
-            tk.Label(cell, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
+            self.w[f"today_{key}_caption"] = tk.Label(cell, text=caption, bg=C["card"], fg=C["muted"], font=font(10))
+            self.w[f"today_{key}_caption"].pack(anchor="w")
         return page
 
     def toggle_pause(self):
@@ -1354,6 +1356,9 @@ class App:
             self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(28, "light"))
             self.w[key].pack(anchor="w")
             tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
+        # Об'єм — окремим рядком: у вузькій картці «glasses of water · ≈2.25 L» не вміщається
+        self.w["day_water_volume"] = tk.Label(self.w["day_water"].master, bg=C["card"], fg=C["water"], font=font(10))
+        self.w["day_water_volume"].pack(anchor="w")
 
         chart = card(page, t("card_last7"))
         chart.pack(fill="both", expand=True, pady=(14, 0))
@@ -1379,9 +1384,10 @@ class App:
         today = dt.date.today()
         days = [today - dt.timedelta(days=i) for i in range(6, -1, -1)]
         records = [self.stats.day(d) for d in days]
+        week_water = sum(r["water"] for r in records)
         self.w["week_total"].configure(text=t(
             "week_total", breaks=sum(r["mini_done"] + r["long_done"] for r in records),
-            skipped=sum(r["skipped"] for r in records), water=sum(r["water"] for r in records)))
+            skipped=sum(r["skipped"] for r in records), water=week_water, volume=fmt_volume(week_water)))
 
         c.delete("all")
         width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 230)
@@ -1427,6 +1433,7 @@ class App:
         self.w["stats_day"].configure(text=title)
         self.w["day_breaks"].configure(text=rec["mini_done"] + rec["long_done"])
         self.w["day_skipped"].configure(text=rec["skipped"])
+        self.w["day_water_volume"].configure(text=fmt_volume(rec["water"]))
         self.w["day_postponed"].configure(text=rec["postponed"])
         self.w["day_water"].configure(text=rec["water"])
 
@@ -1458,7 +1465,7 @@ class App:
             f"{t('tip_long')}: {rec['long_done']}",
             f"{t('tip_skipped')}: {rec['skipped']}",
             f"{t('tip_postponed')}: {rec['postponed']}",
-            f"{t('tip_day_water')}: {t('x_of_y', a=rec['water'], b=self.cfg['water_goal'])}",
+            f"{t('tip_day_water')}: {t('x_of_y', a=rec['water'], b=self.cfg['water_goal'])} ({fmt_volume(rec['water'])})",
         ]
         text = c.create_text(0, 0, text="\n".join(lines), anchor="nw", fill=C["text"], font=font(10), tags="hover")
         x0, y0, x1, y1 = c.bbox(text)
@@ -1621,7 +1628,8 @@ class App:
         self.w["update"].configure(text=t("update_banner", version=self.update_info[0]) if self.update_info else "")
         self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_30_btn"))
         today = self.stats.day(dt.date.today())
-        progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"])
+        progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
+        self.w["today_water_caption"].configure(text=f"{t('m_water')} · {fmt_volume(today['water'])}")
         if not self.cfg["water_enabled"]:
             self.w["water"].configure(text="—")
             self.w["water_sub"].configure(text=t("water_off"))

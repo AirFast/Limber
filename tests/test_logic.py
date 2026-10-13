@@ -205,6 +205,14 @@ def test_windows_sound_ids_have_labels_in_both_languages():
             assert f"snd_{sound_id}" in i18n.STRINGS[lang], (lang, sound_id)
 
 
+@pytest.mark.parametrize("lang, glasses, text", [
+    ("uk", 0, "≈0 л"), ("uk", 5, "≈1,25 л"), ("uk", 8, "≈2 л"), ("en", 5, "≈1.25 L"), ("en", 42, "≈10.5 L"),
+])
+def test_fmt_volume(lang, glasses, text):
+    i18n.set_language(lang)
+    assert i18n.fmt_volume(glasses) == text
+
+
 def test_unknown_language_falls_back_to_english():
     i18n.set_language("de")
     assert i18n.get_language() == "en"
