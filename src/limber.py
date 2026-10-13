@@ -25,10 +25,12 @@ if sys.stderr is None:  # pythonw: без консолі помилки імпо
 import pystray
 from PIL import Image, ImageDraw, ImageTk
 
-__version__ = "1.0.0"
+import i18n
+from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
+
+__version__ = "1.1.0"
 
 APP_NAME = "Limber"
-APP_TAGLINE = "час розім'ятися"
 APP_ID = "Limber.BreakReminder"
 APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
 DATA_DIR = os.path.join(APPDATA, "Limber")
@@ -58,6 +60,7 @@ DEFAULTS = {
     "intensity": 2,
     "workout_enabled": True,
     "sound": True,
+    "language": "",  # "" — за мовою Windows; інсталятор записує мову, вибрану під час встановлення
 }
 
 C = {
@@ -76,180 +79,21 @@ C = {
 }
 
 
-def fmt_minutes(v):
-    h, m = divmod(v, 60)
-    if not h:
-        return f"{m} хв"
-    return f"{h} год {m} хв" if m else f"{h} год"
-
-
-def fmt_seconds(v):
-    m, s = divmod(v, 60)
-    if not m:
-        return f"{s} с"
-    return f"{m} хв {s} с" if s else f"{m} хв"
-
-
-def fmt_times(v):
-    if v == 0:
-        return "не можна"
-    word = "раз" if v % 10 == 1 and v % 100 != 11 else ("рази" if 2 <= v % 10 <= 4 and not 12 <= v % 100 <= 14 else "разів")
-    return f"{v} {word}"
-
-
-def fmt_warn(v):
-    return "вимкнено" if v == 0 else fmt_seconds(v)
-
-
-def glasses_word(v):
-    if v % 10 == 1 and v % 100 != 11:
-        return "склянка"
-    return "склянки" if 2 <= v % 10 <= 4 and not 12 <= v % 100 <= 14 else "склянок"
-
-
-def fmt_glasses(v):
-    return f"{v} {glasses_word(v)} (≈{v * 0.25:g} л)".replace(".", ",")
-
-
-# Повзунки налаштувань: (ключ, підпис, мінімум, максимум, крок, формат)
+# Повзунки налаштувань: ключ → (мінімум, максимум, крок, формат); підпис — t("s_<ключ>")
 SLIDERS = {
-    "mini_interval_min": ("Перерва кожні", 5, 120, 5, fmt_minutes),
-    "mini_duration_sec": ("Тривалість міні-перерви", 10, 300, 5, fmt_seconds),
-    "long_every": ("Кожна N-та перерва — довга", 1, 10, 1, str),
-    "long_duration_min": ("Тривалість довгої перерви", 1, 30, 1, fmt_minutes),
-    "postpone_min": ("Відкласти на", 1, 30, 1, fmt_minutes),
-    "postpone_limit": ("Можна відкласти", 0, 5, 1, fmt_times),
-    "warn_before_sec": ("Попередження перед перервою", 0, 120, 5, fmt_warn),
-    "water_interval_min": ("Нагадувати кожні", 15, 240, 15, fmt_minutes),
-    "water_goal": ("Мета на день", 4, 16, 1, fmt_glasses),
-    "intensity": ("Інтенсивність вправ", 1, 3, 1, lambda v: fmt_intensity(v)),
+    "mini_interval_min": (5, 120, 5, fmt_minutes),
+    "mini_duration_sec": (10, 300, 5, fmt_seconds),
+    "long_every": (1, 10, 1, str),
+    "long_duration_min": (1, 30, 1, fmt_minutes),
+    "postpone_min": (1, 30, 1, fmt_minutes),
+    "postpone_limit": (0, 5, 1, fmt_times),
+    "warn_before_sec": (0, 120, 5, fmt_warn),
+    "water_interval_min": (15, 240, 15, fmt_minutes),
+    "water_goal": (4, 16, 1, fmt_glasses),
+    "intensity": (1, 3, 1, fmt_intensity),
 }
 
-MINI_EXERCISES = [
-    ("Правило 20-20-20", "Знайдіть предмет щонайменше за 6 метрів і дивіться на нього 20 секунд."),
-    ("Кліпання", "Часто покліпайте 10 секунд, потім заплющіть очі й розслабтеся."),
-    ("Очі вгору-вниз", "Не повертаючи голови, повільно подивіться вгору, потім униз. Повторіть 5 разів."),
-    ("Очі вліво-вправо", "Не повертаючи голови, повільно переведіть погляд уліво, потім управо. 5 разів."),
-    ("Вісімка очима", "Повільно «намалюйте» очима велику вісімку: тричі в один бік і тричі в інший."),
-    ("Ближче — далі", "Подивіться на палець перед носом, потім удалину за вікно. Повторіть 5 разів."),
-    ("Пальмінг", "Розітріть долоні до тепла й накрийте ними заплющені очі. Посидьте в темряві."),
-    ("Нахили голови", "Нахиліть голову до правого плеча, затримайтеся на 10 секунд. Потім до лівого."),
-    ("Плечі", "Покрутіть плечима 10 разів назад, потім 10 разів уперед."),
-    ("Кисті", "Стисніть кулаки, потім широко розчепірте пальці. Повторіть 10 разів."),
-    ("Постава", "Сядьте рівно: стопи на підлозі, спина на спинці крісла, плечі опущені й розслаблені."),
-    ("Дихання 4-4-6", "Вдих на 4 рахунки, затримка на 4, повільний видих на 6. Повторіть 3 рази."),
-]
-
-WATER_TIPS = [
-    "Пийте невеликими ковтками — так вода засвоюється краще, ніж пів літра за раз.",
-    "Тримайте пляшку чи графин на столі: що ближче вода, то частіше її п'єш.",
-    "Колір сечі — найпростіший орієнтир: світло-солом'яний означає, що води досить.",
-    "Здається, що хочеться перекусити? Іноді це насправді спрага — спершу випийте води.",
-    "Кава й солодкі напої воду не замінюють. Краще — звичайна вода або трав'яний чай.",
-    "Склянка води за пів години до їжі допомагає травленню і не дає переїсти.",
-    "Втома й головний біль наприкінці дня часто бувають від нестачі води.",
-    "Сходіть по воду пішки — це ще й маленька розминка для ніг.",
-    "Якщо проста вода набридла, додайте скибочку лимона, огірка чи листок м'яти.",
-    "У спеку, під час спорту чи хвороби води потрібно більше, ніж зазвичай.",
-    "Почніть ранок зі склянки води — після сну організму її бракує.",
-    "Сухість в очах і губах — теж сигнал, що час попити.",
-]
-
-LONG_EXERCISES = [
-    ("Розтяжка спини", [
-        "Встаньте, зчепіть руки в замок над головою.",
-        "Потягніться вгору на 10 секунд.",
-        "Нахиліться вліво, потім управо — по 10 секунд.",
-        "Повторіть 3 рази.",
-    ]),
-    ("Шия та плечі", [
-        "Повільно покрутіть головою по 5 разів у кожен бік.",
-        "Зведіть лопатки й потримайте 5 секунд — 10 разів.",
-        "Потягніть руку через груди іншою рукою — по 15 секунд.",
-    ]),
-    ("Ноги", [
-        "Встаньте й зробіть 10 присідань.",
-        "Нахиліться й потягніться до пальців ніг — 15 секунд.",
-        "Підніміться на носки 15 разів.",
-    ]),
-    ("Прогулянка", [
-        "Встаньте з-за столу.",
-        "Пройдіться кімнатою чи коридором.",
-        "Подивіться у вікно вдалину.",
-        "Випийте склянку води.",
-    ]),
-    ("Віджимання від стіни", [
-        "Встаньте на відстані витягнутих рук від стіни.",
-        "Зробіть 10–15 віджимань.",
-        "Покрутіть кистями й розімніть зап'ястя.",
-    ]),
-    ("Розкриття грудей", [
-        "Станьте в дверному отворі, долоні на одвірках.",
-        "Подайтеся вперед до легкого натягу в грудях — 20 секунд.",
-        "Повторіть 3 рази, глибоко дихаючи.",
-    ]),
-    ("Повороти корпусу", [
-        "Сядьте на край стільця, спина рівна.",
-        "Поверніть корпус ліворуч і затримайтеся на 15 секунд.",
-        "Те саме праворуч.",
-        "Зробіть 3 підходи.",
-    ]),
-]
-
-
-# Швидкі вправи для тіла — іноді замість вправ для очей на міні-перерві (рівень 2+)
-MINI_ACTIVE = [
-    ("10 присідань", "Встаньте й зробіть 10 спокійних присідань. Спина рівна, п'яти на підлозі."),
-    ("Підйоми на носки", "Встаньте й 20 разів підніміться на носки, повільно опускаючись."),
-    ("Віджимання від столу", "Зробіть 10 віджимань від краю стійкого столу."),
-    ("Потягніться", "Встаньте на носки, потягніться руками вгору й затримайтеся на 10 секунд."),
-    ("Пройдіться", "Встаньте й пройдіться кімнатою — сидіння теж треба перебивати."),
-]
-
-WORKOUT_WARMUP = ("Розминка", "Крокуйте на місці, високо піднімаючи коліна, і робіть кола руками.")
-WORKOUT_COOLDOWN = ("Заминка", "Повільно потягніться вгору, потім нахиліться до носків. Дихайте глибоко й спокійно.")
-
-# Вправи для тренування на довгій перерві за рівнем інтенсивності
-WORKOUT_EXERCISES = {
-    1: [
-        ("Кола плечима", "Великі повільні кола плечима: половину часу вперед, половину — назад."),
-        ("Нахили в боки", "Руки на поясі, повільно нахиляйтеся вліво й управо."),
-        ("Повороти корпусу", "Стоячи, руки перед грудьми, плавно повертайте корпус уліво-вправо."),
-        ("Підйоми на носки", "Тримаючись за стіл, піднімайтеся на носки й повільно опускайтеся."),
-        ("Ходьба на місці", "Крокуйте на місці в спокійному темпі, розмахуючи руками."),
-        ("Розкриття грудей", "Зчепіть руки за спиною, розправте плечі й потягніть руки назад і вниз."),
-        ("Котик біля столу", "Руки на край столу, по черзі округлюйте й прогинайте спину."),
-        ("Кола тазом", "Руки на поясі, повільні кола тазом в обидва боки."),
-    ],
-    2: [
-        ("Присідання", "Ноги на ширині плечей, сідайте назад, ніби на стілець. Спина рівна."),
-        ("Віджимання від столу", "Руки на край стійкого столу, тіло рівне, згинайте лікті."),
-        ("Випади на місці", "Крок уперед, обидва коліна під кутом 90°. Чергуйте ноги."),
-        ("Стільчик біля стіни", "Спиною до стіни, сповзіть до кута в колінах 90° і тримайте."),
-        ("Планка на столі", "Передпліччя на стіл, тіло рівною лінією від голови до п'ят. Тримайте."),
-        ("Махи ногою в бік", "Тримаючись за стіл, відводьте пряму ногу в бік. Половину часу — кожною."),
-        ("Високі коліна", "Крокуйте на місці, піднімаючи коліна до рівня стегна."),
-        ("Зворотні віджимання", "Руки на край стійкого стільця за спиною, згинайте лікті до 90°."),
-    ],
-    3: [
-        ("Джампінг-джек", "Стрибок — ноги ширше, руки над головою; стрибок назад. У швидкому темпі."),
-        ("Присідання зі стрибком", "Присід і вибуховий стрибок угору. Приземляйтеся м'яко, на зігнуті ноги."),
-        ("Віджимання", "Від підлоги або з колін. Тіло рівне, опускайтеся грудьми до підлоги."),
-        ("Біг на місці", "Швидко, коліна до рівня пояса, активно працюйте руками."),
-        ("Альпініст", "Упор лежачи, по черзі швидко підтягуйте коліна до грудей."),
-        ("Випади з чергуванням", "Глибокі випади вперед, по черзі кожною ногою."),
-        ("Планка", "Упор на передпліччя, тіло рівне, живіт підтягнутий. Тримайте."),
-        ("Берпі без стрибка", "Присід, руки на підлогу, ноги назад у планку, назад у присід і встати."),
-        ("Присідання сумо", "Широко ноги, носки назовні, глибокий присід."),
-    ],
-}
-
-INTENSITY_NAMES = {1: "легко", 2: "середньо", 3: "енергійно"}
 WORK_SEC, REST_SEC, WARMUP_SEC = 40, 15, 30
-
-
-def fmt_intensity(v):
-    return INTENSITY_NAMES[v]
 
 
 def step(title, text, secs, kind="exercise", phase=""):
@@ -258,7 +102,8 @@ def step(title, text, secs, kind="exercise", phase=""):
 
 def build_workout(total, level):
     """Інтервальне тренування рівно на `total` секунд: розминка, робота/відпочинок, заминка."""
-    pool = WORKOUT_EXERCISES[level] + (WORKOUT_EXERCISES[level - 1] if level > 1 else [])
+    exercises = content("workout")
+    pool = exercises[level] + (exercises[level - 1] if level > 1 else [])
     count = max(1, (total - 2 * WARMUP_SEC + REST_SEC) // (WORK_SEC + REST_SEC))
     while count > 1 and total - WARMUP_SEC - count * WORK_SEC - (count - 1) * REST_SEC < 20:
         count -= 1
@@ -266,13 +111,14 @@ def build_workout(total, level):
     while len(picks) < count:
         picks += random.sample(pool, min(len(pool), count - len(picks)))
 
-    steps = [step(*WORKOUT_WARMUP, WARMUP_SEC, "warmup", "РОЗМИНКА")]
+    steps = [step(*content("warmup"), WARMUP_SEC, "warmup", t("phase_warmup"))]
     for i, (title, text) in enumerate(picks):
-        steps.append(step(title, text, WORK_SEC, "work", f"ВПРАВА {i + 1} / {count}"))
+        steps.append(step(title, text, WORK_SEC, "work", t("phase_work", n=i + 1, count=count)))
         if i < count - 1:
-            steps.append(step("Відпочинок", f"Далі: {picks[i + 1][0]}", REST_SEC, "rest", "ВІДПОЧИНОК"))
+            steps.append(step(t("rest_title"), t("rest_next", title=picks[i + 1][0]), REST_SEC, "rest",
+                              t("phase_rest")))
     used = sum(s["secs"] for s in steps)
-    steps.append(step(*WORKOUT_COOLDOWN, max(total - used, 10), "cooldown", "ЗАМИНКА"))
+    steps.append(step(*content("cooldown"), max(total - used, 10), "cooldown", t("phase_cooldown")))
     return steps
 
 
@@ -280,14 +126,14 @@ def build_break(kind, cfg):
     """Список кроків перерви. Міні та звичайна довга перерва — один крок."""
     level = cfg["intensity"]
     if kind == "mini":
-        pool = MINI_ACTIVE if level >= 2 and random.random() < 0.4 else MINI_EXERCISES
-        return [step(*random.choice(pool), cfg["mini_duration_sec"], phase="МІНІ-ПЕРЕРВА")]
+        pool = content("mini_active") if level >= 2 and random.random() < 0.4 else content("mini")
+        return [step(*random.choice(pool), cfg["mini_duration_sec"], phase=t("phase_mini"))]
     total = cfg["long_duration_min"] * 60
     if cfg["workout_enabled"] and total >= 120:
         return build_workout(total, level)
-    title, lines = random.choice(LONG_EXERCISES)
+    title, lines = random.choice(content("long"))
     text = "\n".join(f"{i}.  {line}" for i, line in enumerate(lines, 1))
-    return [step(title, text, total, "list", "ДОВГА ПЕРЕРВА")]
+    return [step(title, text, total, "list", t("phase_long"))]
 
 
 # ---------- дані ----------
@@ -312,7 +158,15 @@ def load_config():
     cfg = dict(DEFAULTS)
     saved = load_json(CONFIG_PATH, {})
     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
+    i18n.set_language(cfg["language"] or i18n.system_language())
     return cfg
+
+
+def set_language_setting(code):
+    """--set-language: інсталятор зберігає мову, вибрану під час встановлення."""
+    cfg = load_json(CONFIG_PATH, {})
+    cfg["language"] = code if code in i18n.LANGUAGES else ""
+    save_json(CONFIG_PATH, cfg)
 
 
 def fmt_time(seconds):
@@ -516,7 +370,7 @@ def set_autostart(enabled):
         "-ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew; "
         "$p = New-ScheduledTaskPrincipal -UserId $env:L_USER -LogonType Interactive -RunLevel Limited; "
         "Register-ScheduledTask -TaskName $env:L_TASK -Action $a -Trigger $t -Settings $s -Principal $p "
-        "-Description 'Limber: нагадування про перерви' -Force | Out-Null")
+        "-Description 'Limber break reminder' -Force | Out-Null")
     result = run_powershell(script, L_EXE=target, L_ARGS=arguments, L_TASK=TASK_NAME,
                             L_DIR=os.path.dirname(target if getattr(sys, "frozen", False)
                                                   else os.path.abspath(__file__)),
@@ -827,19 +681,19 @@ class App:
 
         item = pystray.MenuItem
         return pystray.Menu(
-            item("Відкрити", post("open"), default=True),
-            item("Перерва зараз", post("break_now")),
-            item("Скинути таймер", post("reset")),
+            item(t("open"), post("open"), default=True),
+            item(t("break_now"), post("break_now")),
+            item(t("reset"), post("reset")),
             pystray.Menu.SEPARATOR,
-            item("Пауза", pystray.Menu(
-                item("30 хвилин", post(("pause", 30))),
-                item("1 година", post(("pause", 60))),
-                item("2 години", post(("pause", 120))),
-                item("До ранку", post(("pause", None))),
+            item(t("pause"), pystray.Menu(
+                item(t("pause_30"), post(("pause", 30))),
+                item(t("pause_60"), post(("pause", 60))),
+                item(t("pause_120"), post(("pause", 120))),
+                item(t("pause_morning"), post(("pause", None))),
             )),
-            item("Продовжити", post("resume"), visible=lambda i: self.sched.paused_until is not None),
+            item(t("resume"), post("resume"), visible=lambda i: self.sched.paused_until is not None),
             pystray.Menu.SEPARATOR,
-            item("Вихід", post("quit")),
+            item(t("quit"), post("quit")),
         )
 
     def process_queue(self):
@@ -882,16 +736,15 @@ class App:
     def update_tray(self):
         s = self.sched
         if s.paused:
-            title = f"{APP_NAME}: пауза до {s.paused_until:%H:%M}"
+            title = t("tip_paused", app=APP_NAME, time=f"{s.paused_until:%H:%M}")
             key = ("paused",)
         elif s.in_break:
-            title = f"{APP_NAME}: перерва"
+            title = t("tip_break", app=APP_NAME)
             key = ("break",)
         else:
-            kind = "довга" if s.next_kind() == "long" else "міні"
-            title = f"{APP_NAME}: перерва ({kind}) через {fmt_time(s.remaining)}"
+            title = t(f"tip_next_{s.next_kind()}", app=APP_NAME, time=fmt_time(s.remaining))
             if self.cfg["water_enabled"] and not s.water_open:
-                title += f"\nВода через {fmt_time(s.water_remaining)}"
+                title += "\n" + t("tip_water", time=fmt_time(s.water_remaining))
             key = ("run", int(24 * (1 - s.remaining / max(s.period, 1))))
         if title != self.tooltip:
             self.tooltip = title
@@ -911,8 +764,7 @@ class App:
         was_paused = self.sched.paused_until is not None
         for event in self.sched.tick(delta):
             if event == "warn":
-                kind = "Довга перерва" if self.sched.next_kind() == "long" else "Міні-перерва"
-                self.notify(f"{kind} через {int(self.sched.remaining)} с")
+                self.notify(t(f"warn_{self.sched.next_kind()}", sec=int(self.sched.remaining)))
             elif event == "break":
                 self.show_break(self.sched.next_kind())
             elif event == "water":
@@ -959,10 +811,10 @@ class App:
             self.break_wins.append(win)
             if demo:
                 win.bind("<Escape>", lambda e: self.end_break("skip"))
-                tk.Label(win, text="ДЕМО-ПЕРЕГЛЯД  ·  Esc — закрити", bg=C["bg"], fg=C["dim"],
+                tk.Label(win, text=t("demo_banner"), bg=C["bg"], fg=C["dim"],
                          font=("Segoe UI Semibold", 11)).place(x=28, y=22)
             if not primary:
-                tk.Label(win, text="Перерва", bg=C["bg"], fg=C["muted"],
+                tk.Label(win, text=t("break_other_screen"), bg=C["bg"], fg=C["muted"],
                          font=("Segoe UI Light", 40)).place(relx=0.5, rely=0.5, anchor="center")
                 continue
 
@@ -986,16 +838,16 @@ class App:
             buttons = tk.Frame(frame, bg=C["bg"])
             buttons.pack()
             left = self.cfg["postpone_limit"] - self.sched.postpones
-            postpone = flat_button(buttons, f"Відкласти на {self.cfg['postpone_min']} хв (ще {max(left, 0)})",
+            postpone = flat_button(buttons, t("postpone_btn", min=self.cfg["postpone_min"], left=max(left, 0)),
                                    lambda: self.end_break("postpone"))
             if not self.sched.can_postpone():
                 postpone.configure(state="disabled")
             postpone.pack(side="left", padx=8)
             if multi:
-                flat_button(buttons, "Наступна вправа →", self.next_break_step).pack(side="left", padx=8)
-            flat_button(buttons, "Пропустити", lambda: self.end_break("skip")).pack(side="left", padx=8)
+                flat_button(buttons, t("next_exercise"), self.next_break_step).pack(side="left", padx=8)
+            flat_button(buttons, t("skip"), lambda: self.end_break("skip")).pack(side="left", padx=8)
             if multi:
-                tk.Label(frame, text="Слухайте своє тіло: якщо вправа викликає біль — пропустіть її.",
+                tk.Label(frame, text=t("body_note"),
                          bg=C["bg"], fg=C["dim"], font=("Segoe UI", 11)).pack(pady=(28, 0))
             win.focus_force()
 
@@ -1016,11 +868,11 @@ class App:
                                    fg=C["muted"] if current["kind"] == "rest" else C["accent"])
         if len(steps) > 1:
             total_left = state["left"] + sum(s["secs"] for s in steps[index + 1:])
-            info = f"Крок {index + 1} з {len(steps)}  ·  усього залишилось {fmt_time(total_left)}"
+            info = t("step_info", n=index + 1, total=len(steps), time=fmt_time(total_left))
             if current["kind"] == "work" and index + 1 < len(steps):
                 upcoming = next((s for s in steps[index + 1:] if s["kind"] != "rest"), None)
                 if upcoming:
-                    info += f"  ·  далі: {upcoming['title']}"
+                    info += t("up_next", title=upcoming["title"])
             widgets["info"].configure(text=info)
 
     def next_break_step(self):
@@ -1100,12 +952,12 @@ class App:
         done = drunk >= goal
         head = tk.Frame(win, bg=C["panel"])
         head.pack(fill="x", padx=20, pady=(16, 0))
-        tk.Label(head, text="Час випити води", bg=C["panel"], fg=C["water"],
+        tk.Label(head, text=t("water_title"), bg=C["panel"], fg=C["water"],
                  font=("Segoe UI Semibold", 16)).pack(side="left")
-        tk.Label(head, text=f"{min(drunk + 1, goal) if not done else drunk} з {goal}", bg=C["panel"],
+        tk.Label(head, text=t("x_of_y", a=min(drunk + 1, goal) if not done else drunk, b=goal), bg=C["panel"],
                  fg=C["muted"], font=("Segoe UI", 11)).pack(side="right")
         if demo:
-            tk.Label(head, text="демо", bg=C["panel"], fg=C["dim"],
+            tk.Label(head, text=t("demo_tag"), bg=C["panel"], fg=C["dim"],
                      font=("Segoe UI Semibold", 9)).pack(side="right", padx=8)
             win.bind("<Escape>", lambda e: self.end_water(False))
         dots = tk.Frame(win, bg=C["panel"])
@@ -1114,15 +966,15 @@ class App:
             tk.Label(dots, text="●" if i < drunk else "○", bg=C["panel"],
                      fg=C["water"] if i < drunk else C["dim"], font=("Segoe UI", 12)).pack(side="left", padx=1)
         if done:
-            tip = "Денну мету виконано! Пити можна й далі — особливо в спеку чи після руху."
+            tip = t("water_goal_done")
         else:
-            tip = random.choice(WATER_TIPS)
+            tip = random.choice(content("water_tips"))
         tk.Label(win, text=tip, bg=C["panel"], fg=C["text"], font=("Segoe UI", 11),
                  wraplength=width - 44, justify="left").pack(anchor="w", padx=20)
         buttons = tk.Frame(win, bg=C["panel"])
         buttons.pack(anchor="e", padx=16, pady=14)
-        flat_button(buttons, "Пізніше", lambda: self.end_water(False), bg=C["bg"], size=11).pack(side="left", padx=4)
-        flat_button(buttons, "Випив", lambda: self.end_water(True), bg=C["water"], fg="#0b2233",
+        flat_button(buttons, t("later"), lambda: self.end_water(False), bg=C["bg"], size=11).pack(side="left", padx=4)
+        flat_button(buttons, t("drank"), lambda: self.end_water(True), bg=C["water"], fg="#0b2233",
                     size=11, hover="#6bb8ea", image=check_mark(16, "#0b2233")).pack(side="left", padx=4)
         win.update_idletasks()
         height = win.winfo_reqheight()
@@ -1153,7 +1005,7 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.geometry("800x745")
+        win.geometry("800x790")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
@@ -1171,7 +1023,7 @@ class App:
         title.pack(side="left")
         tk.Label(title, text=APP_NAME, bg=C["bg"], fg=C["text"],
                  font=("Segoe UI Semibold", 18)).pack(anchor="w")
-        tk.Label(title, text=APP_TAGLINE, bg=C["bg"], fg=C["muted"],
+        tk.Label(title, text=t("tagline"), bg=C["bg"], fg=C["muted"],
                  font=("Segoe UI", 9)).pack(anchor="w")
         self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=("Segoe UI", 10))
         self.w["saved"].pack(side="left", padx=14, pady=(6, 0))
@@ -1181,11 +1033,11 @@ class App:
         body = tk.Frame(win, bg=C["bg"])
         body.pack(fill="both", expand=True, padx=24, pady=(4, 20))
         self.pages, self.tab_buttons = {}, {}
-        for key, text, builder in (("status", "Стан", self.build_status_page),
-                                   ("stats", "Статистика", self.build_stats_page),
-                                   ("settings", "Налаштування", self.build_settings_page)):
+        for key, builder in (("status", self.build_status_page),
+                             ("stats", self.build_stats_page),
+                             ("settings", self.build_settings_page)):
             self.pages[key] = builder(body)
-            btn = tk.Label(tabs, text=text, font=("Segoe UI", 11), padx=16, pady=6, cursor="hand2")
+            btn = tk.Label(tabs, text=t(f"tab_{key}"), font=("Segoe UI", 11), padx=16, pady=6, cursor="hand2")
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.tab_buttons[key] = btn
@@ -1214,7 +1066,7 @@ class App:
             return
         if not getattr(self, "saved_check", None):
             self.saved_check = check_mark(14, C["accent"])
-        label.configure(text="Збережено ", image=self.saved_check, compound="right")
+        label.configure(text=t("saved"), image=self.saved_check, compound="right")
         if getattr(self, "_saved_after", None):
             self.root.after_cancel(self._saved_after)
         self._saved_after = self.root.after(
@@ -1228,28 +1080,28 @@ class App:
         left.pack(side="left", fill="y", padx=(0, 14))
         self.w["ring"] = tk.Canvas(left, width=270, height=270, bg=C["card"], highlightthickness=0)
         self.w["ring"].pack(pady=(4, 12))
-        flat_button(left, "Перерва зараз", self.trigger_break, bg=C["accent"], fg=C["on_accent"],
+        flat_button(left, t("break_now"), self.trigger_break, bg=C["accent"], fg=C["on_accent"],
                     size=11).pack(fill="x", pady=3)
-        self.w["pause_btn"] = flat_button(left, "Пауза 30 хв", self.toggle_pause, size=11)
+        self.w["pause_btn"] = flat_button(left, t("pause_30_btn"), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=3)
-        flat_button(left, "Скинути таймер", self.sched.reset, size=11).pack(fill="x", pady=3)
+        flat_button(left, t("reset"), self.sched.reset, size=11).pack(fill="x", pady=3)
 
         right = tk.Frame(page, bg=C["bg"])
         right.pack(side="left", fill="both", expand=True)
 
-        water = card(right, "Вода")
+        water = card(right, t("card_water"))
         water.pack(fill="x")
         self.w["water"] = tk.Label(water, bg=C["card"], fg=C["water"], font=("Segoe UI Light", 28))
         self.w["water"].pack(anchor="w")
         self.w["water_sub"] = tk.Label(water, bg=C["card"], fg=C["muted"], font=("Segoe UI", 10))
         self.w["water_sub"].pack(anchor="w")
 
-        today = card(right, "Сьогодні")
+        today = card(right, t("card_today"))
         today.pack(fill="both", expand=True, pady=(14, 0))
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="both", expand=True)
-        metrics = (("mini_done", "міні-перерв", C["accent"]), ("long_done", "довгих перерв", C["accent"]),
-                   ("skipped", "пропущено", C["muted"]), ("water", "склянок води", C["water"]))
+        metrics = (("mini_done", t("m_mini"), C["accent"]), ("long_done", t("m_long"), C["accent"]),
+                   ("skipped", t("m_skipped"), C["muted"]), ("water", t("m_water"), C["water"]))
         for i, (key, caption, color) in enumerate(metrics):
             cell = tk.Frame(grid, bg=C["card"])
             cell.grid(row=i // 2, column=i % 2, sticky="nw", padx=(0, 30), pady=8)
@@ -1275,11 +1127,11 @@ class App:
                 C["card"]))
         c.create_image(0, 0, anchor="nw", image=self.ring_photo)
         if s.paused:
-            subtitle = f"пауза до {s.paused_until:%H:%M}"
+            subtitle = t("ring_paused", time=f"{s.paused_until:%H:%M}")
         elif s.in_break:
-            subtitle = "зараз перерва"
+            subtitle = t("ring_break")
         else:
-            subtitle = "до довгої перерви" if s.next_kind() == "long" else "до міні-перерви"
+            subtitle = t(f"ring_{s.next_kind()}")
         c.create_text(size / 2, size / 2 - 10, text=fmt_time(s.remaining), fill=C["text"],
                       font=("Segoe UI Light", 40))
         c.create_text(size / 2, size / 2 + 38, text=subtitle, fill=C["muted"], font=("Segoe UI", 11))
@@ -1290,9 +1142,9 @@ class App:
         page = tk.Frame(parent, bg=C["bg"])
         summary = tk.Frame(page, bg=C["bg"])
         summary.pack(fill="x")
-        for i, (key, caption, color) in enumerate((("sum_done", "перерв за 7 днів", C["accent"]),
-                                                   ("sum_skipped", "пропущено", C["muted"]),
-                                                   ("sum_water", "склянок води", C["water"]))):
+        for i, (key, caption, color) in enumerate((("sum_done", t("sum_done"), C["accent"]),
+                                                   ("sum_skipped", t("m_skipped"), C["muted"]),
+                                                   ("sum_water", t("m_water"), C["water"]))):
             box = card(summary)
             box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == 2 else 7))
             summary.columnconfigure(i, weight=1, uniform="sum")
@@ -1300,14 +1152,14 @@ class App:
             self.w[key].pack(anchor="w")
             tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=("Segoe UI", 10)).pack(anchor="w")
 
-        chart = card(page, "Останні 7 днів")
+        chart = card(page, t("card_last7"))
         chart.pack(fill="both", expand=True, pady=(14, 0))
         self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=290)
         self.w["chart"].pack(fill="both", expand=True)
         legend = tk.Frame(chart, bg=C["card"])
         legend.pack(anchor="w", pady=(6, 0))
-        for text, color in (("міні", C["accent"]), ("довгі", C["accent_dark"]),
-                            ("пропущені", C["dim"]), ("вода", C["water"])):
+        for text, color in ((t("lg_mini"), C["accent"]), (t("lg_long"), C["accent_dark"]),
+                            (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"])):
             tk.Label(legend, text="●", bg=C["card"], fg=color, font=("Segoe UI", 12)).pack(side="left")
             tk.Label(legend, text=text, bg=C["card"], fg=C["muted"],
                      font=("Segoe UI", 10)).pack(side="left", padx=(2, 14))
@@ -1344,7 +1196,7 @@ class App:
             total = rec["mini_done"] + rec["long_done"] + rec["skipped"]
             if total:
                 c.create_text(cx, y - 10, text=total, fill=C["text"], font=("Segoe UI Semibold", 10))
-            label = "сьогодні" if day == today else ["пн", "вт", "ср", "чт", "пт", "сб", "нд"][day.weekday()]
+            label = t("today") if day == today else t("weekdays").split()[day.weekday()]
             c.create_text(cx, bottom + 14, text=label, fill=C["text"] if day == today else C["muted"],
                           font=("Segoe UI", 10))
             c.create_text(cx, bottom + 33, text=f"● {rec['water']}" if rec["water"] else "",
@@ -1365,46 +1217,80 @@ class App:
             for key in keys:
                 self.add_slider(box, key)
 
-        group(left, "Перерви", ("mini_interval_min", "mini_duration_sec", "intensity"))
-        long_box = card(left, "Довгі перерви")
+        group(left, t("card_breaks"), ("mini_interval_min", "mini_duration_sec", "intensity"))
+        long_box = card(left, t("card_long"))
         long_box.pack(fill="x", pady=(0, 14))
         self.add_slider(long_box, "long_every")
         self.add_slider(long_box, "long_duration_min")
-        Toggle(long_box, "Інтервальне тренування", self.cfg["workout_enabled"],
+        Toggle(long_box, t("workout_toggle"), self.cfg["workout_enabled"],
                lambda v: self.set_setting("workout_enabled", v)).pack(fill="x", pady=(2, 0))
-        other = card(left, "Інше")
+        other = card(left, t("card_other"))
         other.pack(fill="x")
-        Toggle(other, "Звук на початку й наприкінці", self.cfg["sound"],
+        self.build_language_switch(other).pack(fill="x", pady=(0, 6))
+        Toggle(other, t("sound_toggle"), self.cfg["sound"],
                lambda v: self.set_setting("sound", v)).pack(fill="x", pady=4)
-        Toggle(other, "Запускати разом з Windows", get_autostart(),
+        Toggle(other, t("autostart_toggle"), get_autostart(),
                self.set_autostart_setting).pack(fill="x", pady=4)
 
-        group(right, "Відкладання", ("postpone_min", "postpone_limit", "warn_before_sec"))
-        water = card(right, "Вода")
+        group(right, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
+        water = card(right, t("card_water"))
         water.pack(fill="x")
-        Toggle(water, "Нагадувати пити воду", self.cfg["water_enabled"],
+        Toggle(water, t("water_toggle"), self.cfg["water_enabled"],
                lambda v: self.set_setting("water_enabled", v)).pack(fill="x", pady=(0, 8))
         self.add_slider(water, "water_interval_min")
         self.add_slider(water, "water_goal")
 
-        preview = card(right, "Перегляд")
+        preview = card(right, t("card_preview"))
         preview.pack(fill="x", pady=(14, 0))
-        tk.Label(preview, text="Спробуйте з поточними налаштуваннями:", bg=C["card"],
+        tk.Label(preview, text=t("preview_hint"), bg=C["card"],
                  fg=C["muted"], font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 8))
         row = tk.Frame(preview, bg=C["card"])
         row.pack(fill="x")
-        for i, (text, action) in enumerate((("Міні", lambda: self.show_demo_break("mini")),
-                                            ("Довга", lambda: self.show_demo_break("long")),
-                                            ("Вода", lambda: self.show_water(demo=True)))):
+        for i, (text, action) in enumerate(((t("preview_mini"), lambda: self.show_demo_break("mini")),
+                                            (t("preview_long"), lambda: self.show_demo_break("long")),
+                                            (t("preview_water"), lambda: self.show_water(demo=True)))):
             btn = flat_button(row, text, action, size=10)
             btn.configure(padx=6, pady=7)
             btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 4, 0 if i == 2 else 4))
             row.columnconfigure(i, weight=1, uniform="preview")
         return page
 
+    def build_language_switch(self, parent):
+        """Рядок «Мова» з перемикачем-сегментом між мовами."""
+        row = tk.Frame(parent, bg=parent["bg"])
+        tk.Label(row, text=t("language"), bg=parent["bg"], fg=C["text"], font=("Segoe UI", 11)).pack(side="left")
+        segments = tk.Frame(row, bg=C["panel"])
+        segments.pack(side="right")
+        for code, name in i18n.LANGUAGES.items():
+            active = code == i18n.get_language()
+            btn = tk.Label(segments, text=name, font=("Segoe UI", 10), padx=12, pady=3, cursor="hand2",
+                           bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
+            btn.pack(side="left", padx=2, pady=2)
+            btn.bind("<Button-1>", lambda e, c=code: self.change_language(c))
+        return row
+
+    def change_language(self, code):
+        if code == i18n.get_language():
+            return
+        self.cfg["language"] = code
+        save_json(CONFIG_PATH, self.cfg)
+        i18n.set_language(code)
+        self.icon.menu = self.build_menu()
+        self.icon.update_menu()
+        self.tooltip = None
+        # Вікно перебудовуємо поза обробником кліку, бо кнопка, що його викликала, теж зникне
+        self.root.after(10, self.reopen_main_on_settings)
+
+    def reopen_main_on_settings(self):
+        if self.main_win:
+            self.close_main()
+        self.open_main()
+        self.show_page("settings")
+        self.flash_saved()
+
     def add_slider(self, parent, key):
-        label, lo, hi, step, fmt = SLIDERS[key]
-        Slider(parent, label, lo, hi, step, self.cfg[key], fmt,
+        lo, hi, step, fmt = SLIDERS[key]
+        Slider(parent, t(f"s_{key}"), lo, hi, step, self.cfg[key], fmt,
                lambda v, k=key: self.set_setting(k, v)).pack(fill="x", pady=(0, 10))
 
     def set_setting(self, key, value):
@@ -1420,25 +1306,25 @@ class App:
             set_autostart(enabled)
             self.flash_saved()
         except OSError as e:
-            messagebox.showerror(APP_NAME, f"Не вдалося змінити автозапуск: {e}", parent=self.main_win)
+            messagebox.showerror(APP_NAME, t("autostart_error", e=e), parent=self.main_win)
 
     def refresh_main(self):
         if not self.main_win or "ring" not in self.w:
             return
         s = self.sched
         self.draw_ring()
-        self.w["pause_btn"].configure(text="Продовжити" if s.paused else "Пауза 30 хв")
+        self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_30_btn"))
         today = self.stats.day(dt.date.today())
-        progress = f"сьогодні {today['water']} з {self.cfg['water_goal']}"
+        progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"])
         if not self.cfg["water_enabled"]:
             self.w["water"].configure(text="—")
-            self.w["water_sub"].configure(text="нагадування вимкнено")
+            self.w["water_sub"].configure(text=t("water_off"))
         elif s.water_open:
-            self.w["water"].configure(text="Час пити!")
+            self.w["water"].configure(text=t("water_now"))
             self.w["water_sub"].configure(text=progress)
         else:
             self.w["water"].configure(text=fmt_time(s.water_remaining))
-            self.w["water_sub"].configure(text=f"до наступної склянки  ·  {progress}")
+            self.w["water_sub"].configure(text=t("water_next", progress=progress))
         for key in ("mini_done", "long_done", "skipped", "water"):
             self.w[f"today_{key}"].configure(text=today[key])
 
@@ -1454,10 +1340,15 @@ def main():
     except (AttributeError, OSError):
         pass
     # Команди для інсталятора: увімкнути/вимкнути автозапуск і вийти
-    for arg in sys.argv[1:]:
-        if arg.startswith("--set-autostart="):
-            set_autostart(arg.split("=", 1)[1] == "on")
-            return
+    commands = [arg for arg in sys.argv[1:] if arg.startswith(("--set-autostart=", "--set-language="))]
+    for arg in commands:
+        name, value = arg[2:].split("=", 1)
+        if name == "set-language":
+            set_language_setting(value)
+        else:
+            set_autostart(value == "on")
+    if commands:
+        return
 
     kernel32 = ctypes.windll.kernel32
     handle = ctypes.c_void_p
