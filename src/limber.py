@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -641,7 +641,7 @@ class App:
             if getattr(self, "toast_text", None):
                 self.toast_text.configure(text=t("updating_install"))
                 self.root.update()
-            updates.install(value)
+            updates.install(value, autostart=system.get_autostart(), language=i18n.get_language())
             self.handle("quit")  # інсталятор (Windows) чи скрипт (macOS) запустить нову версію
         elif kind == "update_failed":
             self.updating = False

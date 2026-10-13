@@ -108,13 +108,24 @@ def download(asset, progress=None, timeout=60):
     return path
 
 
-def install(path):
+def _clean_env():
+    """Середовище для інсталятора й нової версії — без тестових і службових змінних,
+    інакше перезапущена програма знову «вдавала б» стару версію."""
+    return {k: v for k, v in os.environ.items() if k not in ("LIMBER_VERSION_OVERRIDE", "GITHUB_TOKEN")}
+
+
+def install(path, autostart=True, language="uk"):
     """Запускає встановлення окремим процесом. Після виклику програма має завершитися:
     на Windows інсталятор замінить файли й сам запустить нову версію,
-    на macOS скрипт дочекається виходу, замінить Limber.app і відкриє його."""
+    на macOS скрипт дочекається виходу, замінить Limber.app і відкриє його.
+    autostart і language передаються явно: тихий інсталятор не завжди пам'ятає
+    попередній вибір і без цього міг би вимкнути автозапуск чи змінити мову."""
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], creationflags=flags, close_fds=True)
+        args = [path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                "/LANG=" + ("ukrainian" if language == "uk" else "english"),
+                "/MERGETASKS=" + ("autostart" if autostart else "!autostart")]
+        subprocess.Popen(args, creationflags=flags, close_fds=True, env=_clean_env())
     elif sys.platform == "darwin":
         _install_mac(path)
 
@@ -147,4 +158,4 @@ def _install_mac(dmg):
     with open(script, "w") as f:
         f.write(_MAC_SCRIPT)
     subprocess.Popen(["/bin/bash", script, str(os.getpid()), dmg, _app_bundle()],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, env=_clean_env())

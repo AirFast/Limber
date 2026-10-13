@@ -42,7 +42,7 @@ ukrainian.RemoveUserData=Видалити також ваші налаштува
 english.RemoveUserData=Also delete your Limber settings and statistics?%n%nIf you keep them, everything will be restored if you reinstall.
 
 [Tasks]
-Name: "autostart"; Description: "{cm:AutostartTask}"; Flags: checkedonce
+Name: "autostart"; Description: "{cm:AutostartTask}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -62,7 +62,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--op
 Filename: "{app}\{#AppExe}"; Parameters: "--set-language=uk"; Flags: runhidden waituntilterminated; Languages: ukrainian
 Filename: "{app}\{#AppExe}"; Parameters: "--set-language=en"; Flags: runhidden waituntilterminated; Languages: english
 Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=on"; Flags: runhidden waituntilterminated; Tasks: autostart
-Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=off"; Flags: runhidden waituntilterminated; Tasks: not autostart
+; Вимикаємо автозапуск лише за явним вибором у вікні інсталятора. Тихе встановлення — це
+; автооновлення, і стан галочки там ненадійний: автозапуск не чіпаємо
+Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=off"; Flags: runhidden waituntilterminated; Tasks: not autostart; Check: not WizardSilent
 Filename: "{app}\{#AppExe}"; Parameters: "--open"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 ; Тихе встановлення — це автооновлення з програми: запускаємо нову версію замість старої
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
