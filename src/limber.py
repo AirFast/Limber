@@ -28,7 +28,7 @@ import updates
 from i18n import content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_warn, t
 from system import font
 
-__version__ = "1.9.0"
+__version__ = "1.9.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -58,7 +58,8 @@ DEFAULTS = {
     "notified_version": "",  # про яку нову версію вже показали сповіщення
 }
 MAX_GLASSES = 30          # верхня межа ручного введення води за день
-MAX_GLASSES_SHOWN = 16    # скільки склянок уміщається в ряд
+MAX_GLASSES_SHOWN = 24    # більше — не малюємо (три ряди)
+GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
@@ -1096,7 +1097,8 @@ class App:
         glasses = tk.Frame(win, bg=C["panel"])
         glasses.pack(anchor="w", padx=18, pady=(6, 10))
         for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
-            tk.Label(glasses, image=glass_image(18, 24, i < drunk, C["panel"]), bg=C["panel"]).pack(side="left", padx=2)
+            tk.Label(glasses, image=glass_image(18, 24, i < drunk, C["panel"]), bg=C["panel"]).grid(
+                row=i // GLASSES_PER_ROW, column=i % GLASSES_PER_ROW, padx=2, pady=2)
         if done:
             tip = t("water_goal_done")
         else:
@@ -1292,7 +1294,7 @@ class App:
         for text, delta in (("+", 1), ("−", -1)):
             btn = flat_button(row, text, lambda d=delta: self.change_water(d), size=12)
             btn.configure(padx=10, pady=0)
-            btn.pack(side="right", padx=(4, 0))
+            btn.pack(side="right", anchor="n", padx=(4, 0), pady=(4, 0))
 
         today = card(right, t("card_today"))
         today.pack(fill="both", expand=True, pady=(14, 0))
@@ -1643,9 +1645,8 @@ class App:
         for child in frame.winfo_children():
             child.destroy()
         for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
-            size, gap = ((22, 30), 3) if max(goal, drunk) <= 10 else ((16, 22), 1)  # 16 склянок мають уміститися
-            glass = tk.Label(frame, image=glass_image(*size, i < drunk, C["card"]), bg=C["card"], cursor="hand2")
-            glass.pack(side="left", padx=gap)
+            glass = tk.Label(frame, image=glass_image(22, 30, i < drunk, C["card"]), bg=C["card"], cursor="hand2")
+            glass.grid(row=i // GLASSES_PER_ROW, column=i % GLASSES_PER_ROW, padx=3, pady=2)
             # Клік по останній випитій склянці знімає її, по будь-якій іншій — виставляє кількість до неї
             glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(n - 1 if n == drunk else n))
 
