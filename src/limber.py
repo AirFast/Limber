@@ -1159,7 +1159,7 @@ class App:
         self.build_language_switch(other).pack(fill="x", pady=(0, 6))
         Toggle(other, t("sound_toggle"), self.cfg["sound"],
                lambda v: self.set_setting("sound", v)).pack(fill="x", pady=4)
-        Toggle(other, t("autostart_toggle"), system.get_autostart(),
+        Toggle(other, t("autostart_toggle_mac" if system.IS_MAC else "autostart_toggle"), system.get_autostart(),
                self.set_autostart_setting).pack(fill="x", pady=4)
 
         group(right, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
