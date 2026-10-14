@@ -672,6 +672,23 @@ def test_current_stretch_counts_from_the_last_rest():
     assert core.current_stretch([], 9 * 60) == 0
 
 
+def test_settings_file_keeps_the_persons_own_water_values(monkeypatch, tmp_path):
+    """Норма «Чоловік» рахує мету й інтервал, але у файл налаштувань пише власні значення людини."""
+    path = tmp_path / "config.json"
+    monkeypatch.setattr(core, "CONFIG_PATH", str(path))
+    cfg = dict(core.DEFAULTS, water_profile="custom", water_goal=12, water_interval_min=40)
+    core.save_config(cfg)
+    cfg["water_profile"] = "male"
+    core.apply_water_profile(cfg, workday=10 * 60)
+    assert (cfg["water_goal"], cfg["water_interval_min"]) == (8, 75)         # під час роботи — за нормою
+    core.save_config(cfg)
+    saved = core.load_json(str(path), {})
+    assert (saved["water_goal"], saved["water_interval_min"]) == (12, 40)    # у файлі — свої значення
+    cfg["water_profile"] = "custom"
+    core.restore_manual_water(cfg)
+    assert (cfg["water_goal"], cfg["water_interval_min"]) == (12, 40)        # «Вручну» — повертаються вони
+
+
 def test_every_nth_break_is_long():
     s = make_scheduler(long_every=3)
     kinds = []

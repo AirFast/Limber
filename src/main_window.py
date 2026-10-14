@@ -9,9 +9,10 @@ from PIL import ImageTk
 
 import i18n
 import system
-from core import (APP_NAME, average_minute, current_stretch, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
-                  completion_rate, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity, save_json,
-                  setting_value, slider_position, split_balanced, water_interval_for, water_streak)
+from core import (APP_NAME, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats, average_minute, completion_rate,
+                  current_stretch, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity,
+                  restore_manual_water, save_config, setting_value, slider_position, split_balanced,
+                  water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
 from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
@@ -1137,8 +1138,11 @@ class MainWindow:
         if profile == self.cfg["water_profile"]:
             return
         self.cfg["water_profile"] = profile
-        save_json(CONFIG_PATH, self.cfg)
-        self.refresh_water_plan()  # мета й інтервал — за нормою та фактичним робочим днем
+        if profile == "custom":
+            restore_manual_water(self.cfg)  # власні значення людини, а не розраховані нормою
+            self.sched.apply_config()
+        save_config(self.cfg)
+        self.refresh_water_plan()  # норма: мета й інтервал — за нею та фактичним робочим днем
         self.flash_saved()
         self.refresh_water_profile()
 
@@ -1146,7 +1150,7 @@ class MainWindow:
         if code == i18n.get_language():
             return
         self.cfg["language"] = code
-        save_json(CONFIG_PATH, self.cfg)
+        save_config(self.cfg)
         i18n.set_language(code)
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
@@ -1194,7 +1198,7 @@ class MainWindow:
         if self.cfg.get(key) == value:
             return
         self.cfg[key] = value
-        save_json(CONFIG_PATH, self.cfg)
+        save_config(self.cfg)
         self.sched.apply_config()
         if key in ("day_end_at", "day_end_enabled", "workday_start"):
             self.refresh_water_plan()

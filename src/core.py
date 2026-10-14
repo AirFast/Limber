@@ -255,6 +255,28 @@ def load_config():
     return cfg
 
 
+DERIVED_KEYS = ("water_goal", "water_interval_min")  # у нормі «Жінка/Чоловік» — рахуються, а не задаються
+
+
+def save_config(cfg):
+    """Зберігає налаштування людини — і лише їх. Застосунок ніколи не змінює налаштувань замість неї:
+    у нормі «Жінка/Чоловік» мета й інтервал води похідні (рахуються щоразу за робочим днем), тож у файлі
+    лишаються її власні значення для «Вручну», а не розраховані."""
+    data = dict(cfg)
+    if cfg.get("water_profile") in WATER_PROFILES:
+        saved = load_json(CONFIG_PATH, {})
+        for key in DERIVED_KEYS:
+            data[key] = saved.get(key, DEFAULTS[key])
+    save_json(CONFIG_PATH, data)
+
+
+def restore_manual_water(cfg):
+    """Перемкнули на «Вручну» — повертаємо власні значення людини з файлу, а не розраховані нормою."""
+    saved = load_json(CONFIG_PATH, {})
+    for key in DERIVED_KEYS:
+        cfg[key] = saved.get(key, DEFAULTS[key])
+
+
 def set_language_setting(code):
     """--set-language: інсталятор зберігає мову, вибрану під час встановлення."""
     cfg = load_json(CONFIG_PATH, {})

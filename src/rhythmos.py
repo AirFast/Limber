@@ -27,7 +27,7 @@ import updates  # noqa: E402
 from core import (ACTIVE_IDLE_SEC, APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, PAUSE_KINDS,  # noqa: E402
                   STATE_PATH, TYPICAL_START, WORKING, Scheduler, Stats, absence_span, apply_water_profile,
                   at_workday_minute, average_minute, day_minute, fmt_time, load_config, load_json, minute_of_day,
-                  save_json, set_language_setting, work_started, workday_date, workday_span)
+                  save_config, save_json, set_language_setting, work_started, workday_date, workday_span)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
 from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
@@ -214,13 +214,24 @@ class App(Popups, MainWindow):
         end = at_workday_minute(today, self.workday()[1])
         self.sched.update_day(rec["water"], end, rec["work_sec"] + int(self.work_pending))
 
+    def ask_autostart(self):
+        """macOS, перший запуск: запускати під час входу в систему? Вирішує людина."""
+        def enable():
+            try:
+                system.set_autostart(True, __file__)
+            except OSError:
+                traceback.print_exc()
+
+        self.show_toast(t("autostart_ask_title"), t("autostart_ask_text"),
+                        [(t("no"), lambda: None, False), (t("yes"), enable, True)], timeout_ms=10 * 60_000)
+
     def refresh_water_plan(self):
-        """Норма «жінка»/«чоловік»: інтервал води — так, щоб денну мету встигнути за фактичний робочий день."""
+        """Норма «жінка»/«чоловік»: інтервал води — так, щоб денну мету встигнути за фактичний робочий день.
+        Лише під час роботи: у файл налаштувань розраховане не пишеться (save_config)."""
         start, end = self.workday()
         before = (self.cfg["water_goal"], self.cfg["water_interval_min"])
         apply_water_profile(self.cfg, end - start)
         if (self.cfg["water_goal"], self.cfg["water_interval_min"]) != before:
-            save_json(CONFIG_PATH, self.cfg)
             self.sched.apply_config()
         if self.w.get("water_hint"):
             self.refresh_water_profile()
@@ -256,7 +267,7 @@ class App(Popups, MainWindow):
                             [(t("update_now"), self.start_update, True), (t("later"), lambda: None, False)],
                             timeout_ms=60_000)
             self.cfg["notified_version"] = result[0]
-            save_json(CONFIG_PATH, self.cfg)
+            save_config(self.cfg)
         self.refresh_main()
 
     def open_update(self):
@@ -595,7 +606,7 @@ def run_smoke_test(app, out_dir):
         try:
             if index == len(steps):
                 app.cfg["language"] = original_language
-                save_json(CONFIG_PATH, app.cfg)
+                save_config(app.cfg)
                 print("smoke test: OK", file=sys.stderr)
                 app.exit_code = 0
                 app.handle("quit")
@@ -633,16 +644,14 @@ def main():
         return  # уже запущена копія сама покаже вікно
 
     smoke_dir = sys.argv[sys.argv.index("--smoke-test") + 1] if "--smoke-test" in sys.argv else None
-    # macOS: інсталятора немає (програму просто перетягують у «Програми»),
-    # тож автозапуск вмикаємо під час першого запуску; вимкнути можна в налаштуваннях
-    if system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH):
-        try:
-            system.set_autostart(True, __file__)
-        except OSError:
-            traceback.print_exc()
-        save_json(CONFIG_PATH, load_json(CONFIG_PATH, {}))
+    # macOS: інсталятора з галочкою немає (програму просто перетягують у «Програми»), тож під час першого
+    # запуску питаємо про автозапуск — самі його не вмикаємо: налаштування вирішує людина
+    ask_autostart = system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH)
 
     app = App()
+    if ask_autostart:
+        save_config(app.cfg)  # лише щоб не питати вдруге; значення — типові
+        app.root.after(3000, app.ask_autostart)
     app.instance = instance
     if smoke_dir:
         run_smoke_test(app, smoke_dir)

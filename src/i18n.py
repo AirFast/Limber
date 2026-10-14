@@ -245,6 +245,11 @@ STRINGS = {
         "sound_toggle": "Звук на початку й наприкінці",
         "autostart_toggle": "Запускати разом з Windows",
         "autostart_toggle_mac": "Запускати під час входу в систему",
+        "autostart_ask_title": "Запускати Rhythmos під час входу в систему?",
+        "autostart_ask_text": "Тоді нагадування працюватимуть від самого початку дня. Змінити можна будь-коли: "
+                              "«Налаштування» → «Інше».",
+        "yes": "Так",
+        "no": "Ні",
         "updates_toggle": "Перевіряти оновлення",
         "card_sound": "Звук",
         "sound_name_label": "Звук сповіщення",
@@ -526,6 +531,11 @@ STRINGS = {
         "sound_toggle": "Sound at start and end",
         "autostart_toggle": "Start with Windows",
         "autostart_toggle_mac": "Open at login",
+        "autostart_ask_title": "Open Rhythmos at login?",
+        "autostart_ask_text": "Then reminders work from the very start of your day. You can change it any time: "
+                              "Settings → Other.",
+        "yes": "Yes",
+        "no": "No",
         "updates_toggle": "Check for updates",
         "card_sound": "Sound",
         "sound_name_label": "Notification sound",
