@@ -228,6 +228,41 @@ def test_fmt_after_minis():
         "після 11 міні-перерв", "після 21 міні-перерви"]
 
 
+def test_pause_until_morning_after_midnight_ends_the_same_morning():
+    s = make_scheduler()
+    s.pause(None, now=at(0, 30))
+    assert s.paused_until == at(6)                       # о 06:00 цього ж дня, а не завтра
+    s.pause(None, now=at(19))
+    assert s.paused_until == at(6) + dt.timedelta(days=1)
+
+
+def test_snoozes_do_not_carry_over_to_the_next_day():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60, lunch_enabled=True, lunch_at=13 * 60)
+    late = at(23, 50)
+    assert s.tick(1, now=late) == ["day_end"]
+    s.day_end_answered("snooze", now=late)              # нагадати о 00:20 — уже наступна доба
+    after_midnight = late + dt.timedelta(minutes=30)
+    assert s.tick(1, now=after_midnight) == ["day_end"]  # досі працює — нагадуємо, хоч уже нова доба
+    s.day_end_answered("snooze", now=after_midnight)
+    # Комп'ютер заснув і прокинувся вранці — вчорашнє «Ще 30 хв» уже ні до чого
+    assert s.tick(1, now=at(9) + dt.timedelta(days=1)) == []
+    assert s.tick(1, now=at(18) + dt.timedelta(days=1)) == ["day_end"]   # а своє нагадування є
+    s.tick(1, now=at(13))
+    s.meal_answered("snooze", now=at(13))
+    assert s.tick(1, now=at(13, 20) + dt.timedelta(days=1)) == ["meal"]   # лише своє, о 13:00+ наступного дня
+    assert s.meal_snoozed == {}
+
+
+def test_pause_until_morning_cancels_pending_reminders():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60, lunch_enabled=True, lunch_at=13 * 60)
+    s.tick(1, now=at(13))
+    s.meal_answered("snooze", now=at(13))
+    s.pause(None, now=at(13, 5))
+    assert s.meal_snoozed == {} and not s.day_end_open
+    s.resume()
+    assert s.tick(1, now=at(18)) == []                  # день уже завершено — без «робочий день скінчився»
+
+
 def test_every_nth_break_is_long():
     s = make_scheduler(long_every=3)
     kinds = []

@@ -77,7 +77,8 @@ SLIDERS = {
 MEALS = ("breakfast", "lunch", "dinner")
 MEAL_WINDOW_MIN = 60   # комп'ютер прокинувся пізніше, ніж на годину після часу їжі, — нагадування вже ні до чого
 MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
-DAY_END_SNOOZE_MIN = 30  # «Ще 30 хв» — людина ще працює, нагадаємо знову
+DAY_END_SNOOZE_MIN = 30
+MORNING = dt.time(6, 0)  # до коли триває пауза «до ранку»  # «Ще 30 хв» — людина ще працює, нагадаємо знову
 
 # Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
 # близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
@@ -332,6 +333,12 @@ def fmt_hm(seconds):
 
 # ---------- таймер ----------
 
+def stale(due, now):
+    """Відкладене нагадування застаріло: його час минув понад MEAL_WINDOW_MIN тому (комп'ютер спав),
+    і показувати його тепер — зранку чи після обіду — вже недоречно."""
+    return now - due > dt.timedelta(minutes=MEAL_WINDOW_MIN)
+
+
 class Scheduler:
     """Відлік робочого часу. Скидається лише після перерви або на вимогу —
     неактивність і блокування екрана його не обнуляють."""
@@ -407,7 +414,8 @@ class Scheduler:
             events.append("meal")
         elif self.due_day_end(now):
             self.day_end_open = True
-            self.day_end_shown = now.date()
+            if not self.day_end_snoozed:  # «Ще 30 хв» нагадує про той самий день — дату не перезаписуємо
+                self.day_end_shown = now.date()
             self.day_end_snoozed = None
             events.append("day_end")
         return events
@@ -418,7 +426,10 @@ class Scheduler:
                 or (self.paused and self.pause_water)):
             return False
         if self.day_end_snoozed:
-            return now >= self.day_end_snoozed
+            if stale(self.day_end_snoozed, now):
+                self.day_end_snoozed = None  # комп'ютер спав — «Ще 30 хв» уже ні до чого
+            else:
+                return now >= self.day_end_snoozed
         return self.day_end_shown != now.date() and minute_of_day(now) >= self.cfg["day_end_at"]
 
     def day_end_answered(self, answer, now=None):
@@ -438,6 +449,9 @@ class Scheduler:
             if (now.date(), meal) in self.meal_results:
                 continue  # уже з'їли (позначили тарілку заздалегідь) чи пропустили
             snoozed = self.meal_snoozed.get(meal)
+            if snoozed and stale(snoozed, now):
+                del self.meal_snoozed[meal]  # комп'ютер спав — відкладене нагадування застаріло
+                snoozed = None
             if snoozed:
                 if now >= snoozed:
                     del self.meal_snoozed[meal]
@@ -539,13 +553,22 @@ class Scheduler:
         self.water_open = False
         self.water_remaining = self.cfg["water_interval_min"] * 60 if drank else 15 * 60
 
-    def pause(self, minutes):
+    def pause(self, minutes, now=None):
+        """minutes=None — «до ранку»: день завершено, тож відкладені нагадування про їжу й кінець дня
+        теж скасовуються, інакше вони спрацювали б уранці."""
+        now = now or dt.datetime.now()
         self.eating = self.eating_until = None
-        if minutes is None:  # до ранку
-            tomorrow = dt.date.today() + dt.timedelta(days=1)
-            self.paused_until = dt.datetime.combine(tomorrow, dt.time(6, 0))
+        if minutes is None:
+            # До 06:00: після півночі — цього ж дня, а не наступного (інакше пауза тривала б ~30 год)
+            morning = dt.datetime.combine(now.date(), MORNING)
+            self.paused_until = morning if now < morning else morning + dt.timedelta(days=1)
+            self.meal_snoozed.clear()
+            self.meal_open = None
+            self.day_end_open = False
+            self.day_end_snoozed = None
+            self.day_end_shown = now.date()
         else:
-            self.paused_until = dt.datetime.now() + dt.timedelta(minutes=minutes)
+            self.paused_until = now + dt.timedelta(minutes=minutes)
         self.pause_water = minutes is None
 
     def resume(self):

@@ -414,8 +414,7 @@ class Popups:
     def answer_day_end(self, answer):
         self.sched.day_end_answered(answer)
         if answer == "finish":
-            self.stats.set("day_end", minute_of_day(dt.datetime.now()))
-            self.handle(("pause", None))
+            self.handle(("pause", None))  # пауза «до ранку» сама запише, коли завершили день
 
     # --- власні сповіщення ---
 

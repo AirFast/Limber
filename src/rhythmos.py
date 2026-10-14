@@ -24,7 +24,7 @@ import pystray  # noqa: E402 — після перенаправлення stder
 import i18n  # noqa: E402
 import updates  # noqa: E402
 from core import (APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, Scheduler, Stats, fmt_time,  # noqa: E402
-                  load_config, load_json, save_json, set_language_setting)
+                  load_config, load_json, minute_of_day, save_json, set_language_setting)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
 from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
@@ -225,6 +225,8 @@ class App(Popups, MainWindow):
             if self.break_state:
                 self.close_break_windows()
                 self.sched.finish_break()
+            if action[1] is None:  # «до ранку» — те саме, що «Завершити день»
+                self.finish_day()
             self.sched.pause(action[1])
             self.icon.update_menu()
         elif action == "start_update":
@@ -243,6 +245,16 @@ class App(Popups, MainWindow):
                 self.icon.stop()
             self.root.destroy()
 
+
+    def finish_day(self):
+        """День завершено (кнопкою у віконці кінця дня чи паузою «до ранку»): час — у статистику,
+        віконця, що чекали на відповідь, — геть."""
+        if not self.stats.day(dt.date.today())["day_end"]:
+            self.stats.set("day_end", minute_of_day(dt.datetime.now()))
+        if self.toast_kind == "day_end":
+            self.close_toast(dismissed=False)
+        if not self.meal_demo:
+            self.close_meal_window()
 
     def update_tray(self):
         s = self.sched
