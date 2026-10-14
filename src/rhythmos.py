@@ -32,7 +32,7 @@ from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
 from popups import Popups  # noqa: E402
 
-__version__ = "2.9.0"
+__version__ = "2.10.0"
 
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # щогодини: раз на добу нова версія могла чекати до завтра
