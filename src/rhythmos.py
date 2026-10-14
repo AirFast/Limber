@@ -315,9 +315,15 @@ def split_balanced(heights, columns, gap=14):
         nonlocal best
         if left == 1:
             groups = groups + [list(range(start, n))]
-            worst = max(height(g) for g in groups)
-            if best is None or worst < best[0]:
-                best = (worst, groups)
+            heights_now = [height(g) for g in groups]
+            worst = max(heights_now)
+            # Спершу — найнижча найвища колонка. Далі — найменше порожнього місця на одну картку:
+            # коротші колонки розтягують свої картки до висоти найвищої, і краще, щоб запас ділили
+            # кілька карток, ніж щоб одна картка стояла з великим порожнім низом
+            slack = max((worst - h) / len(g) for h, g in zip(heights_now, groups))
+            score = (worst, slack)
+            if best is None or score < best[0]:
+                best = (score, groups)
             return
         for end in range(start + 1, n - left + 2):
             search(end, left - 1, groups + [list(range(start, end))])
@@ -1778,8 +1784,11 @@ class App:
     def set_meal_eaten(self, meal, eaten):
         """Позначка «з'їдено» для їжі за сьогодні: з нагадування («Йду їсти») або тарілкою на «Стані»."""
         today = dt.date.today()
+        now = dt.datetime.now()
         self.stats.set(f"ate_{meal}", int(eaten))
         self.stats.set("meals", sum(self.stats.day(today)[f"ate_{m}"] for m in MEALS))
+        # Коли насправді поїли — на шкалі дня тарілка стоїть у цей момент, а не в запланований
+        self.stats.set_times(f"ate_{meal}_at", [now.hour * 60 + now.minute] if eaten else [])
         if eaten:
             self.sched.meal_results[(today, meal)] = "eat"
             self.sched.meal_snoozed.pop(meal, None)
@@ -2155,7 +2164,7 @@ class App:
         for meal in enabled:
             state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
             states.append("done" if today[f"ate_{meal}"] else ("later" if state == "done" else state))
-        key = (tuple(enabled), tuple(states), tuple(self.cfg[f"{m}_at"] for m in enabled))
+        key = (tuple(enabled), tuple(states), tuple(self.meal_time(m, now.date()) for m in enabled))
         if self.w.get("plates_key") == key:
             return
         self.w["plates_key"] = key
@@ -2183,8 +2192,8 @@ class App:
             plate.pack()
             name = tk.Label(cell, text=t(f"meal_{meal}"), bg=C["card"], fg=C["muted"], font=font(9), cursor="hand2")
             name.pack()
-            at = tk.Label(cell, text=fmt_clock(self.cfg[f"{meal}_at"]), bg=C["card"], fg=C["dim"], font=font(8),
-                          cursor="hand2")
+            at = tk.Label(cell, text=fmt_clock(self.meal_time(meal, now.date())), bg=C["card"], fg=C["dim"],
+                          font=font(8), cursor="hand2")
             at.pack()
             for widget in (cell, plate, name, at):
                 widget.bind("<Button-1>", lambda e, m=meal, done=state == "done": self.set_meal_eaten(m, not done))
@@ -2192,15 +2201,27 @@ class App:
                 widget.bind("<Leave>", lambda e: preview(None))
             plates.append(plate)
 
+    def meal_time(self, meal, date):
+        """Хвилина дня для їжі: коли насправді поїли (якщо позначено), інакше — запланований час."""
+        if self.stats.day(date)[f"ate_{meal}"]:
+            eaten_at = self.stats.times(date, f"ate_{meal}_at")
+            if eaten_at:
+                return eaten_at[0]
+        return self.cfg[f"{meal}_at"]
+
     def timeline_marks(self, now):
-        """Позначки шкали дня: (хвилина, назва, колір, стан) — їжа ("done"/"now"/"later"/"skip") і кінець дня."""
+        """Позначки шкали дня: (хвилина, назва, колір, стан) — їжа ("done"/"now"/"later"/"skip") і кінець дня.
+        З'їдене стоїть у момент, коли поїли, — так на шкалі видно, наскільки регулярно це відбувається."""
         today = self.stats.day(now.date())
         marks = []
         for meal in MEALS:
-            if self.cfg[f"{meal}_enabled"]:
-                state = "done" if today[f"ate_{meal}"] else PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
-                marks.append((self.cfg[f"{meal}_at"], t(f"meal_{meal}"), C["meal"], "later" if state == "done" and
-                              not today[f"ate_{meal}"] else state))
+            if self.cfg[f"{meal}_enabled"] or today[f"ate_{meal}"]:
+                if today[f"ate_{meal}"]:
+                    state = "done"
+                else:
+                    state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
+                    state = "later" if state == "done" else state
+                marks.append((self.meal_time(meal, now.date()), t(f"meal_{meal}"), C["meal"], state))
         if self.cfg["day_end_enabled"]:
             finished = today["day_end"]
             marks.append((finished or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
@@ -2589,8 +2610,10 @@ class App:
 
     def build_settings_page(self, parent):
         """Картки в логічному порядку: перерви → довгі перерви → відкладання й пауза → вода → їжа →
-        кінець дня → звук → інше → перегляд. Колонок стільки, скільки вміщує екран; картки заповнюють
-        їх по черзі згори вниз, а межі підібрані так, щоб колонки були якомога рівнішими."""
+        кінець дня → звук → інше. Колонок стільки, скільки вміщує екран; картки заповнюють їх по черзі
+        згори вниз, межі підібрані так, щоб колонки були якомога рівнішими, а решту висоти картки
+        колонки ділять порівну — усі колонки закінчуються на одній лінії. «Перегляд» — дія, а не
+        налаштування: окремим рядком на всю ширину внизу."""
         page = tk.Frame(parent, bg=C["bg"])
         count = self.layout["columns"]
         # Колонки — раніше за картки: картки кладемо в них через pack(in_=…), а показується лише те,
@@ -2643,31 +2666,33 @@ class App:
                self.set_autostart_setting).pack(fill="x", pady=4)
         toggle(other, t("updates_toggle"), "check_updates", pady=4)
 
-        preview = card(page, t("card_preview"))
-        tk.Label(preview, text=t("preview_hint"), bg=C["card"],
-                 fg=C["muted"], font=font(10)).pack(anchor="w", pady=(0, 8))
+        cards = [breaks, long_box, postpone, water, meals, day_end, sound, other]
+        page.update_idletasks()
+        for column, group in zip(columns, split_balanced([c.winfo_reqheight() for c in cards], count)):
+            for j, index in enumerate(group):
+                # expand: коротша колонка розтягує свої картки до висоти найвищої
+                cards[index].pack(in_=column, fill="both", expand=True, pady=(0 if j == 0 else 14, 0))
+
+        # «Перегляд» — рядок на всю ширину: підказка й п'ять кнопок поруч
+        preview = card(page)
+        preview.grid(row=1, column=0, columnspan=count, sticky="ew", pady=(14, 0))
+        head = tk.Frame(preview, bg=C["card"])
+        head.pack(side="left", fill="y", padx=(0, 16))
+        tk.Label(head, text=t("card_preview").upper(), bg=C["card"], fg=C["accent"],
+                 font=font(9, "semibold")).pack(anchor="w")
+        tk.Label(head, text=t("preview_hint"), bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
         row = tk.Frame(preview, bg=C["card"])
-        row.pack(fill="x")
+        row.pack(side="left", fill="x", expand=True)
         previews = ((t("preview_mini"), lambda: self.show_demo_break("mini")),
                     (t("preview_long"), lambda: self.show_demo_break("long")),
                     (t("preview_water"), lambda: self.show_water(demo=True)),
                     (t("preview_meal"), lambda: self.show_meal("lunch", demo=True)),
                     (t("preview_day_end"), lambda: self.show_day_end(demo=True)))
-        per_row = 3  # п'ять кнопок у вузькій колонці — у два ряди
         for i, (text, action) in enumerate(previews):
             btn = flat_button(row, text, action, size=10)
             btn.configure(padx=4, pady=7)
-            column = i % per_row
-            btn.grid(row=i // per_row, column=column, sticky="ew", pady=(0 if i < per_row else 6, 0),
-                     padx=(0 if column == 0 else 3, 0 if column == per_row - 1 else 3))
-        for column in range(per_row):
-            row.columnconfigure(column, weight=1, uniform="preview")
-
-        cards = [breaks, long_box, postpone, water, meals, day_end, sound, other, preview]
-        page.update_idletasks()
-        for column, group in zip(columns, split_balanced([c.winfo_reqheight() for c in cards], count)):
-            for j, index in enumerate(group):
-                cards[index].pack(in_=column, fill="x", pady=(0 if j == 0 else 14, 0))
+            btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 3, 0 if i == len(previews) - 1 else 3))
+            row.columnconfigure(i, weight=1, uniform="preview")
         return page
 
     def build_meals_card(self, parent):
