@@ -78,7 +78,9 @@ MEALS = ("breakfast", "lunch", "dinner")
 MEAL_WINDOW_MIN = 60   # комп'ютер прокинувся пізніше, ніж на годину після часу їжі, — нагадування вже ні до чого
 MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
 DAY_END_SNOOZE_MIN = 30
-MORNING = dt.time(6, 0)  # до коли триває пауза «до ранку»  # «Ще 30 хв» — людина ще працює, нагадаємо знову
+MORNING = dt.time(6, 0)  # до коли триває пауза «до ранку»
+EARLIEST_START = dt.time(4, 0)  # раніше — це ще вчорашня ніч, а не початок робочого дня
+ACTIVE_IDLE_SEC = 60            # людина за комп'ютером, якщо миша чи клавіатура були не довше хвилини тому  # «Ще 30 хв» — людина ще працює, нагадаємо знову
 
 # Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
 # близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
@@ -222,6 +224,21 @@ def at_minute(date, minutes):
     return dt.datetime.combine(date, dt.time()) + dt.timedelta(minutes=minutes)
 
 
+def work_started(now, idle_seconds):
+    """Хвилина дня, коли почали працювати, або None: людина за комп'ютером (миша чи клавіатура щойно),
+    і вже не ніч. Момент — остання дія, а не цей тік."""
+    started = now - dt.timedelta(seconds=idle_seconds)
+    if idle_seconds > ACTIVE_IDLE_SEC or started.time() < EARLIEST_START or started.date() != now.date():
+        return None
+    return minute_of_day(started)
+
+
+def average_minute(minutes):
+    """Середній час дня (хвилини від півночі) для днів, де він є; None — якщо таких днів немає."""
+    minutes = [m for m in minutes if m]
+    return round(sum(minutes) / len(minutes)) if minutes else None
+
+
 def fmt_time(seconds):
     seconds = max(0, int(round(seconds)))
     h, rest = divmod(seconds, 3600)
@@ -232,9 +249,11 @@ def fmt_time(seconds):
 class Stats:
     # work_sec — час за комп'ютером (таймер іде: не пауза, не перерва, не їжа), active_sec — час на перервах,
     # meals — скільки разів поїли (сума ate_*), ate_<їжа> — 1, якщо цю їжу сьогодні з'їдено («Йду їсти»
-    # або тарілка на «Стані»), day_end — о котрій (хв від півночі) натиснули «Завершити день»; 0 — не завершували
-    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals", "day_end",
-            "ate_breakfast", "ate_lunch", "ate_dinner")
+    # або тарілка на «Стані»); day_start — коли почали працювати (перша дія з мишею чи клавіатурою),
+    # day_end — коли завершили день; обидва — хвилини від півночі, 0 — ще не було
+    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals",
+            "day_start", "day_end", "ate_breakfast", "ate_lunch", "ate_dinner")
+    MOMENTS = ("day_start", "day_end")  # час дня, а не лічильник: не підсумовуються
 
     def __init__(self):
         self.data = load_json(STATS_PATH, {})

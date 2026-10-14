@@ -64,8 +64,8 @@ def test_pause_until_morning_stops_water_too():
     assert tick(s, 60) == ["break"]     # після «Продовжити» все знову рахується
 
 
-def at(hour, minute=0):
-    return dt.datetime(2026, 10, 14, hour, minute)
+def at(hour, minute=0, second=0):
+    return dt.datetime(2026, 10, 14, hour, minute, second)
 
 
 def tick_at(s, start, seconds):
@@ -261,6 +261,18 @@ def test_pause_until_morning_cancels_pending_reminders():
     assert s.meal_snoozed == {} and not s.day_end_open
     s.resume()
     assert s.tick(1, now=at(18)) == []                  # день уже завершено — без «робочий день скінчився»
+
+
+def test_work_started_needs_recent_input_and_morning():
+    assert core.work_started(at(8, 42, 30), 20) == 8 * 60 + 42          # остання дія — 8:42
+    assert core.work_started(at(8, 42), 5 * 60) is None                  # людини немає вже 5 хв
+    assert core.work_started(at(3, 30), 0) is None                       # ще ніч
+    assert core.work_started(at(4, 0, 30), 45) is None                   # дія була до 4:00
+
+
+def test_average_minute_skips_days_without_data():
+    assert core.average_minute([8 * 60, 0, 9 * 60]) == 8 * 60 + 30
+    assert core.average_minute([0, 0]) is None
 
 
 def test_every_nth_break_is_long():

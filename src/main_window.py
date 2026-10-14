@@ -8,7 +8,7 @@ from PIL import ImageTk
 
 import i18n
 import system
-from core import (APP_NAME, at_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
+from core import (APP_NAME, at_minute, average_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
                   apply_water_profile, completion_rate, fmt_hm, fmt_time, main_layout, save_json,
                   split_balanced, water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, dot_image,
@@ -330,6 +330,8 @@ class MainWindow:
                     state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
                     state = "later" if state == "done" else state
                 marks.append((self.meal_time(meal, now.date()), t(f"meal_{meal}"), C["meal"], state))
+        if today["day_start"]:
+            marks.append((today["day_start"], t("sch_day_start"), C["accent"], "done"))
         if self.cfg["day_end_enabled"]:
             finished = today["day_end"]
             marks.append((finished or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
@@ -420,18 +422,29 @@ class MainWindow:
         for hour in range(-(-start // (60 * step)) * step, end // 60 + 1, step):
             place(c.create_text(x_of(hour * 60), y + 20, text=f"{hour}:00", fill=C["dim"], font=font(8)),
                   x_of(hour * 60))
-        # Підписи позначок над смугою у два яруси: якщо підпис налазить на сусіда — вище
+        # Підписи позначок над смугою у два яруси: якщо підпис налазить на сусіда — вище; якщо тісно
+        # в обох ярусах — у нижчому, але зсунутий праворуч за сусіда (позначки йдуть за часом)
         placed = {0: [], 1: []}
+
+        def clash(box, tier):
+            return [b for b in placed[tier] if not (box[0] > b[2] + 8 or box[2] < b[0] - 8)]
+
         for m, name, color, state in marks:
             x = x_of(m)
             fill = color if state in ("now", "done") else C["muted"]
+            item, tier = None, 0
             for tier in (0, 1):
                 item = c.create_text(x, y - 18 - tier * 16, text=f"{name} {fmt_clock(m)}", font=font(9), fill=fill)
                 box = place(item, x)
-                if tier == 1 or all(box[0] > b[2] + 8 or box[2] < b[0] - 8 for b in placed[0]):
-                    placed[tier].append(box)
+                if not clash(box, tier):
                     break
-                c.delete(item)
+                if tier == 0:
+                    c.delete(item)
+            others = clash(box, tier)
+            if others:
+                c.move(item, max(b[2] for b in others) + 8 - box[0], 0)
+                box = place(item, x)
+            placed[tier].append(box)
 
     def schedule_rows(self, now):
         """Рядки розкладу на сьогодні: (ключ, назва, стан, підсвітити?). Їжа — у власній картці поруч з водою."""
@@ -439,6 +452,9 @@ class MainWindow:
         timed = []  # (хвилина дня, рядок) — події з часом ідуть за ним
         left = s.breaks_until_long()
         long_row = ("long", t("sch_long"), t("long_next") if left == 1 else fmt_after_minis(left - 1), left == 1)
+        started = self.stats.day(now.date())["day_start"]
+        if started:
+            timed.append((started, ("day_start", t("sch_day_start"), fmt_clock(started), False)))
         if cfg["day_end_enabled"]:
             finished = self.stats.day(now.date())["day_end"]
             at = at_minute(now.date(), cfg["day_end_at"])
@@ -629,7 +645,7 @@ class MainWindow:
 
     def draw_range_totals(self, n, days, records):
         """Підсумки за період трьома рядками: перерви й рух; вода; їжа й робота."""
-        total = {k: sum(r[k] for r in records) for k in Stats.KEYS if k != "day_end"}
+        total = {k: sum(r[k] for r in records) for k in Stats.KEYS if k not in Stats.MOMENTS}
         rate = completion_rate(total)
         best = max(range(n), key=lambda i: records[i]["mini_done"] + records[i]["long_done"])
         best_breaks = records[best]["mini_done"] + records[best]["long_done"]
@@ -642,8 +658,10 @@ class MainWindow:
         self.w["range_water"].configure(text=t(
             "range_water", glasses=fmt_glasses(total["water"]), avg=fmt_volume(avg_liters / i18n.GLASS_LITERS),
             streak=fmt_days(water_streak(self.stats, self.cfg["water_goal"], dt.date.today()))))
+        start = average_minute(r["day_start"] for r in records)
         self.w["range_day"].configure(text=t(
-            "range_day", meals=total["meals"], work=fmt_minutes(total["work_sec"] // 60)))
+            "range_day", meals=total["meals"], work=fmt_minutes(total["work_sec"] // 60))
+            + (t("range_start", time=fmt_clock(start)) if start is not None else ""))
 
     def show_stats_day(self, index):
         """Картки нагорі: дані одного дня з графіка (останній — сьогодні)."""
@@ -660,14 +678,22 @@ class MainWindow:
             "day_breaks": (rec["mini_done"] + rec["long_done"], t("done_rate", pct=rate) if rate is not None else ""),
             "day_skipped": (rec["skipped"], t("postponed_n", n=rec["postponed"]) if rec["postponed"] else ""),
             "day_water": (rec["water"], fmt_volume(rec["water"])),
-            "day_work": (fmt_hm(rec["work_sec"]),
-                         t("day_end_at_tip", time=fmt_clock(rec["day_end"])) if rec["day_end"] else ""),
+            "day_work": (fmt_hm(rec["work_sec"]), self.work_span(rec)),
             "day_active": (rec["active_sec"] // 60, ""),
             "day_meals": (rec["meals"], ""),
         }
         for key, (value, sub) in values.items():
             self.w[key].configure(text=value)
             self.w[f"{key}_sub"].configure(text=sub)
+
+    def work_span(self, rec):
+        """«08:42 – 18:05» (початок і кінець дня), «з 08:42», якщо день ще триває, або «» — даних немає."""
+        start, end = rec["day_start"], rec["day_end"]
+        if start and end:
+            return t("work_span", start=fmt_clock(start), end=fmt_clock(end))
+        if start:
+            return t("work_from", start=fmt_clock(start))
+        return t("day_end_at_tip", time=fmt_clock(end)) if end else ""
 
     def on_chart_motion(self, event):
         info = self.chart_info
@@ -702,6 +728,8 @@ class MainWindow:
             f"{t('tip_meals')}: {rec['meals']}",
             f"{t('tip_work')}: {fmt_minutes(rec['work_sec'] // 60)}",
         ]
+        if rec["day_start"]:
+            lines.append(f"{t('tip_day_start')}: {fmt_clock(rec['day_start'])}")
         if rec["day_end"]:
             lines.append(f"{t('tip_day_end')}: {fmt_clock(rec['day_end'])}")
         text = c.create_text(0, 0, text="\n".join(lines), anchor="nw", fill=C["text"], font=font(10), tags="hover")

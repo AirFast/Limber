@@ -124,6 +124,31 @@ def monitors():
     return []
 
 
+def idle_seconds():
+    """Скільки секунд не було ні миші, ні клавіатури. 0 — якщо ОС не відповіла (тоді вважаємо, що людина тут)."""
+    try:
+        if IS_WINDOWS:
+            import ctypes
+
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+            info = LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                return 0.0
+            # Обидва лічильники — 32-бітні мілісекунди від старту системи, тож різниця — по модулю 2^32
+            return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000
+        if IS_MAC:
+            from Quartz import (CGEventSourceSecondsSinceLastEventType, kCGAnyInputEventType,
+                                kCGEventSourceStateCombinedSessionState)
+            return float(CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState,
+                                                                kCGAnyInputEventType))
+    except Exception:
+        pass
+    return 0.0
+
+
 def work_area(root):
     """Робоча область основного екрана (без панелі завдань / рядка меню й Dock): (l, t, r, b)."""
     screens = monitors()

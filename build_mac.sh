@@ -17,6 +17,7 @@ python3 -m PyInstaller --noconfirm --clean --windowed \
     --icon "$PWD/assets/rhythmos.icns" \
     --osx-bundle-identifier com.airfast.rhythmos \
     --hidden-import pystray._darwin \
+    --hidden-import Quartz \
     --distpath dist --workpath build --specpath build \
     src/rhythmos.py
 

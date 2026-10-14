@@ -4,6 +4,7 @@
 Логіка — у core.py, малювання — у graphics.py, віджети — у widgets.py,
 вікна поверх роботи — у popups.py, головне вікно — у main_window.py."""
 import datetime as dt
+import importlib
 import os
 import queue
 import sys
@@ -24,7 +25,7 @@ import pystray  # noqa: E402 — після перенаправлення stder
 import i18n  # noqa: E402
 import updates  # noqa: E402
 from core import (APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, Scheduler, Stats, fmt_time,  # noqa: E402
-                  load_config, load_json, minute_of_day, save_json, set_language_setting)
+                  load_config, load_json, minute_of_day, save_json, set_language_setting, work_started)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
 from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
@@ -76,6 +77,7 @@ class App(Popups, MainWindow):
         self.stats_range = 7  # графік статистики: 7 чи 30 днів
         self.work_pending = 0.0  # час за комп'ютером, ще не записаний у статистику (пишемо раз на хвилину)
         self.updating = False  # завантажується й встановлюється оновлення
+        self.day_start_noted = None  # дата, для якої початок робочого дня вже записано
         # Сповіщення в куті (popups.show_toast): одне за раз
         self.toast_win = self.toast_text = self.toast_kind = self.toast_after = self.toast_on_dismiss = None
         # Головне вікно (main_window): сторінки, кеші перемальовування, позначка «Збережено»
@@ -303,6 +305,7 @@ class App(Popups, MainWindow):
                 self.show_day_end()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
+        self.note_day_start()
         s = self.sched
         if not (s.in_break or s.eating or s.paused):
             self.work_pending += delta
@@ -312,6 +315,19 @@ class App(Popups, MainWindow):
         self.update_tray()
         self.refresh_main()
         self.root.after(1000, self.loop)
+
+    def note_day_start(self):
+        """Перша дія з мишею чи клавіатурою сьогодні — початок робочого дня (раз на день)."""
+        today = dt.date.today()
+        if self.day_start_noted == today:
+            return
+        if self.stats.day(today)["day_start"]:
+            self.day_start_noted = today
+            return
+        minute = work_started(dt.datetime.now(), system.idle_seconds())
+        if minute is not None:
+            self.stats.set("day_start", minute)
+            self.day_start_noted = today
 
     def flush_work_time(self):
         seconds = int(self.work_pending)
@@ -327,6 +343,17 @@ def current_version():
     """Версія для порівняння з релізами. RHYTHMOS_VERSION_OVERRIDE — лише для перевірки
     самооновлення в CI: зібрана програма «вдає» стару версію й оновлюється до останнього релізу."""
     return os.environ.get("RHYTHMOS_VERSION_OVERRIDE") or __version__
+
+
+def quartz_available():
+    """Для smoke-тесту: чи є в збірці Quartz (без нього на macOS не видно бездіяльності)."""
+    if not system.IS_MAC:
+        return "n/a"
+    try:
+        importlib.import_module("Quartz")
+        return "yes"
+    except ImportError:
+        return "MISSING"
 
 
 def run_smoke_test(app, out_dir):
@@ -359,6 +386,9 @@ def run_smoke_test(app, out_dir):
         (app.open_main, None),
         (lambda: note(f"main window {app.main_win.winfo_width()}x{app.main_win.winfo_height()}, "
                       f"screen {app.root.winfo_screenwidth()}x{app.root.winfo_screenheight()}"), None),
+        # Бездіяльність (для початку робочого дня): на macOS — через Quartz, який має потрапити в збірку
+        (lambda: note(f"idle {system.idle_seconds():.1f} s, day start {app.stats.day(dt.date.today())['day_start']}, "
+                      f"quartz {quartz_available()}"), None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
         (lambda: app.set_stats_range(30), "stats_30"),
