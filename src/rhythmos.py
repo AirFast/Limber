@@ -94,6 +94,8 @@ C = {
     "dim": "#5f7b65",
     "water": "#4aa3df",
     "on_water": "#0b2233",
+    "meal": "#f2a65a",       # їжа — теплий бурштиновий, щоб не плутати з водою й перервами
+    "on_meal": "#2e1803",
 }
 
 
@@ -731,6 +733,45 @@ def glass_picture(width, height, filled, bg):
 
 
 _dot_cache = {}
+_plate_cache = {}
+
+# Стан їжі (Scheduler.meal_state) → як малювати тарілку у віконці їжі
+PLATE_STATES = {"eat": "done", "skip": "skip", "missed": "skip", "upcoming": "later", "snoozed": "later",
+                "eating": "now", "open": "now", "due": "now"}
+
+
+def plate_picture(size, state, bg):
+    """Тарілка згори (два кола). "done" — з'їдено (заповнена), "now" — час їсти (яскравий контур),
+    "later" — ще буде (сірий контур), "skip" — пропущено (сірий контур, перекреслено)."""
+    meal = C["meal"]
+
+    def paint(d, s):
+        w = size * s
+        stroke = max(1.5, size * 0.07) * s
+        pad = stroke / 2 + 0.5 * s
+        outer = (pad, pad, w - pad, w - pad)
+        inset = size * 0.24 * s
+        inner = (inset, inset, w - inset, w - inset)
+        if state == "done":
+            d.ellipse(outer, fill=rgba(meal))
+            d.ellipse(inner, outline=rgba(lighten(meal, 0.45)), width=int(stroke))
+        elif state == "now":
+            d.ellipse(outer, fill=rgba(blend(meal, bg, 0.78)), outline=rgba(meal), width=int(stroke))
+            d.ellipse(inner, outline=rgba(blend(meal, bg, 0.4)), width=int(stroke * 0.8))
+        else:
+            d.ellipse(outer, outline=rgba(C["dim"]), width=int(stroke))
+            d.ellipse(inner, outline=rgba(blend(C["dim"], bg, 0.5)), width=int(stroke * 0.8))
+            if state == "skip":
+                d.line((w * 0.24, w * 0.76, w * 0.76, w * 0.24), fill=rgba(C["dim"]), width=int(stroke))
+
+    return smooth_image(size, size, paint, bg)
+
+
+def plate_image(size, state, bg):
+    key = (size, state, bg)
+    if key not in _plate_cache:
+        _plate_cache[key] = ImageTk.PhotoImage(plate_picture(size, state, bg))
+    return _plate_cache[key]
 
 
 def dot_image(size, color, filled, bg):
@@ -948,6 +989,8 @@ class App:
         self.break_state = None
         self.water_win = None
         self.water_demo = False
+        self.meal_win = None
+        self.meal_demo = False
         self.last_tick = time.monotonic()
         self.icon_key = None
         self.tooltip = None
@@ -1089,8 +1132,7 @@ class App:
             self.sched.reset()
         elif action == "resume":
             if self.sched.eating:
-                if getattr(self, "toast_kind", None) == "meal":
-                    self.close_toast(dismissed=False)
+                self.close_meal_window()  # «Продовжуємо?» більше не потрібне
                 self.sched.finish_meal()
             self.sched.resume()
             self.icon.update_menu()
@@ -1416,19 +1458,15 @@ class App:
             self.water_win.destroy()  # справжнє нагадування важливіше за демо
             self.water_win = None
         self.water_demo = demo
-        screens = system.monitors()
-        if screens:
-            _l, _t, right, bottom = screens[0][4]
-        else:
-            right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
-        # Обидва віконця живуть у тому самому куті: попередження про перерву й нагадування
-        # про їжу чи кінець дня лишаємо й ставимо воду над ними, решту сповіщень закриваємо
-        if getattr(self, "toast_kind", None) in ("warning", "meal", "day_end") and self.toast_win:
-            bottom = self.toast_win.winfo_rooty()
-        else:
+        # Віконця живуть у тому самому куті: попередження про перерву, кінець дня й віконце їжі
+        # лишаємо й ставимо воду над ними, решту сповіщень закриваємо
+        keep = self.toast_win if getattr(self, "toast_kind", None) in ("warning", "day_end") else None
+        if not keep:
             self.close_toast()
+        right, bottom = self.corner(self.meal_win, keep)
         width = 420
-        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=C["water"])
+        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2,
+                         highlightbackground=C["water"], highlightcolor=C["water"])  # рамка однакова й у фокусі
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         self.water_win = win
@@ -1475,24 +1513,108 @@ class App:
 
     def show_meal(self, meal, demo=False):
         """«Час обідати»: «Йду їсти» ставить перерви й воду на паузу, «Через 15 хв» — нагадає ще раз."""
-        answer = (lambda _answer: None) if demo else self.sched.meal_answered
-        actions = [(t("skip"), lambda: answer("skip"), False),
-                   (t("meal_snooze", min=MEAL_SNOOZE_MIN), lambda: answer("snooze"), False),
-                   (t("meal_go"), (lambda: None) if demo else self.go_eat, True)]
-        title = t(f"meal_title_{meal}") + (f"  ·  {t('demo_tag')}" if demo else "")
-        # Без тайм-ауту: людина могла відійти; якщо віконце витіснить інше сповіщення — нагадаємо пізніше
-        self.show_toast(title, t("meal_text", time=fmt_minutes(self.cfg["meal_pause_min"])), actions,
-                        timeout_ms=60_000 if demo else 3 * 60 * 60_000, kind="meal",
-                        on_dismiss=None if demo else lambda: answer("snooze"))
-        self.beep()
+        self.show_meal_window(meal, "remind", demo)
 
     def show_meal_over(self):
         """Пауза на їжу скінчилась — питаємо, чи продовжувати. Без відповіді перерви так і стоять."""
-        actions = [(t("meal_more", min=MEAL_SNOOZE_MIN), self.sched.extend_meal, False),
-                   (t("resume"), self.finish_meal, True)]
-        self.show_toast(t("meal_over_title"), t("meal_over_text"), actions, timeout_ms=3 * 60 * 60_000,
-                        kind="meal", on_dismiss=self.sched.extend_meal)
+        self.show_meal_window(self.sched.eating, "over")
+
+    def show_meal_window(self, meal, mode, demo=False):
+        """Віконце їжі за зразком води: тарілки за день, текст, порада й кнопки.
+        mode: "remind" — час їсти, "over" — «Продовжуємо?». Само не зникає: людина могла відійти."""
+        if self.meal_win:
+            if demo and not self.meal_demo:
+                return  # справжнє нагадування важливіше за демо
+            self.meal_win.destroy()
+            self.meal_win = None
+        self.meal_demo = demo
+        keep = self.toast_win if getattr(self, "toast_kind", None) in ("warning", "day_end") else None
+        if not keep:
+            self.close_toast()
+        right, bottom = self.corner(self.water_win, keep)
+        width = 440
+        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2,
+                         highlightbackground=C["meal"], highlightcolor=C["meal"])  # рамка однакова й у фокусі
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        self.meal_win = win
+
+        now = dt.datetime.now()
+        meals = [m for m in MEALS if self.cfg[f"{m}_enabled"] or m == meal]
+        head = tk.Frame(win, bg=C["panel"])
+        head.pack(fill="x", padx=20, pady=(16, 0))
+        title = t(f"meal_title_{meal}") if mode == "remind" else t("meal_over_title")
+        tk.Label(head, text=title, bg=C["panel"], fg=C["meal"], font=font(16, "semibold")).pack(side="left")
+        tk.Label(head, text=t("x_of_y", a=meals.index(meal) + 1, b=len(meals)), bg=C["panel"],
+                 fg=C["muted"], font=font(11)).pack(side="right")
+        if demo:
+            tk.Label(head, text=t("demo_tag"), bg=C["panel"], fg=C["dim"],
+                     font=font(9, "semibold")).pack(side="right", padx=8)
+            win.bind("<Escape>", lambda e: self.close_meal_window())
+        # Тарілки за день: з'їдено / зараз / ще буде / пропущено — як склянки у воді
+        plates = tk.Frame(win, bg=C["panel"])
+        plates.pack(anchor="w", padx=18, pady=(8, 10))
+        for i, m in enumerate(meals):
+            if m == meal:
+                state = "done" if mode == "over" else "now"
+            else:
+                state = PLATE_STATES.get(self.sched.meal_state(m, now)[0], "later")
+            cell = tk.Frame(plates, bg=C["panel"])
+            cell.grid(row=0, column=i, padx=(2, 16))
+            tk.Label(cell, image=plate_image(30, state, C["panel"]), bg=C["panel"]).pack()
+            tk.Label(cell, text=t(f"meal_{m}"), bg=C["panel"], fg=C["text"] if m == meal else C["muted"],
+                     font=font(9)).pack()
+            tk.Label(cell, text=fmt_clock(self.cfg[f"{m}_at"]), bg=C["panel"], fg=C["dim"], font=font(8)).pack()
+        if mode == "remind":
+            text = t("meal_text", time=fmt_minutes(self.cfg["meal_pause_min"]))
+        else:
+            text = t("meal_over_text")
+        tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(11),
+                 wraplength=width - 44, justify="left").pack(anchor="w", padx=20)
+        if mode == "remind":
+            tk.Label(win, text=random.choice(content("meal_tips")), bg=C["panel"], fg=C["muted"], font=font(10),
+                     wraplength=width - 44, justify="left").pack(anchor="w", padx=20, pady=(6, 0))
+        buttons = tk.Frame(win, bg=C["panel"])
+        buttons.pack(anchor="e", padx=16, pady=14)
+        if mode == "remind":
+            actions = ((t("skip"), "skip", False), (t("meal_snooze", min=MEAL_SNOOZE_MIN), "snooze", False),
+                       (t("meal_go"), "eat", True))
+        else:
+            actions = ((t("meal_more", min=MEAL_SNOOZE_MIN), "more", False), (t("resume"), "continue", True))
+        for label, answer, primary in actions:
+            flat_button(buttons, label, lambda a=answer: self.answer_meal(a), size=11,
+                        bg=C["meal"] if primary else C["bg"], fg=C["on_meal"] if primary else C["text"],
+                        image=check_mark(16, C["on_meal"]) if primary else None).pack(side="left", padx=4)
+        win.update_idletasks()
+        width = max(width, win.winfo_reqwidth())
+        height = win.winfo_reqheight()
+        win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
+        if demo:
+            win.after(60_000, lambda: self.close_meal_window() if self.meal_win is win else None)
+            win.focus_force()
         self.beep()
+
+    def close_meal_window(self):
+        if self.meal_win:
+            self.meal_win.destroy()
+            self.meal_win = None
+        if self.meal_demo and self.main_win:
+            self.main_win.focus_force()
+        self.meal_demo = False
+
+    def answer_meal(self, answer):
+        demo = self.meal_demo
+        self.close_meal_window()
+        if demo:
+            return
+        if answer in ("skip", "snooze"):
+            self.sched.meal_answered(answer)
+        elif answer == "eat":
+            self.go_eat()
+        elif answer == "more":
+            self.sched.extend_meal()
+        elif answer == "continue":
+            self.finish_meal()
 
     def go_eat(self):
         if self.break_state and not self.break_state["demo"]:  # перерва почалась, поки висіло нагадування
@@ -1529,6 +1651,19 @@ class App:
 
     # --- власні сповіщення ---
 
+    def corner(self, *below):
+        """Правий нижній кут робочої області (без панелі завдань) для нового віконця;
+        якщо там уже стоять віконця з `below` — над ними."""
+        screens = system.monitors()
+        if screens:
+            _l, _t, right, bottom = screens[0][4]
+        else:
+            right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
+        for win in below:
+            if win:
+                bottom = min(bottom, win.winfo_rooty())
+        return right, bottom
+
     def show_toast(self, title, text, actions=(), timeout_ms=10_000, kind="info", on_dismiss=None):
         """Спливаюче віконце в куті екрана. Не покладаємося на системні сповіщення:
         користувач міг їх вимкнути (на Windows вони тоді просто мовчки зникають),
@@ -1536,15 +1671,10 @@ class App:
         actions: [(напис, функція, головна_кнопка?)]; on_dismiss — якщо віконце зникло без натискання кнопки
         (тайм-аут або його витіснило інше сповіщення)."""
         self.close_toast()
-        screens = system.monitors()
-        if screens:
-            _l, _t, right, bottom = screens[0][4]
-        else:
-            right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
-        if self.water_win:  # не перекриваємо нагадування про воду
-            bottom = self.water_win.winfo_rooty()
+        right, bottom = self.corner(self.water_win, self.meal_win)  # не перекриваємо воду й їжу
         width = 380
-        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=C["accent"])
+        win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2,
+                         highlightbackground=C["accent"], highlightcolor=C["accent"])  # рамка однакова й у фокусі
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         tk.Label(win, text=title, bg=C["panel"], fg=C["accent"],
@@ -1804,7 +1934,7 @@ class App:
                 widgets[key].grid(row=i, column=1, sticky="e", pady=3)
             frame.columnconfigure(1, weight=1)
         for key, _name, text, hot in rows:
-            widgets[key].configure(text=text, fg=C["accent"] if hot else C["text"])
+            widgets[key].configure(text=text, fg=(C["meal"] if key in MEALS else C["accent"]) if hot else C["text"])
 
     def toggle_pause(self):
         busy = self.sched.paused or self.sched.eating
@@ -2409,7 +2539,7 @@ def run_smoke_test(app, out_dir):
         (lambda: app.show_water(demo=True), "water"),
         (lambda: app.end_water(False), None),
         (lambda: app.show_meal("lunch", demo=True), "meal"),
-        (app.close_toast, None),
+        (app.close_meal_window, None),
         (lambda: app.show_day_end(demo=True), "day_end"),
         (app.close_toast, None),
         (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
