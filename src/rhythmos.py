@@ -29,7 +29,7 @@ from i18n import (content, fmt_clock, fmt_glasses, fmt_intensity, fmt_minutes, f
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
@@ -74,7 +74,8 @@ MAX_GLASSES_SHOWN = 24    # більше — не малюємо (три ряд�
 GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
 MAIN_MIN_WIDTH = 1080     # головне вікно: ширше й нижче — налаштування в три колонки
 UPDATE_CHECK_DELAY_MS = 30_000
-UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # щогодини: раз на добу нова версія могла чекати до завтра
+UPDATE_RECHECK_ON_OPEN_SEC = 10 * 60        # відкриття головного вікна теж перевіряє, але не частіше
 
 C = {
     # Весняна зелень під іконку-листок; темне тло — з легким зеленим відтінком, вода — синя
@@ -875,6 +876,7 @@ class App:
         self.tooltip = None
         self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
         self.update_info = None  # (версія, адреса релізу), якщо на GitHub є новіша версія
+        self.last_update_check = None  # time.monotonic() останньої перевірки
 
         self.icon = system.make_tray_icon(pystray, "Rhythmos", make_icon(0, False), APP_NAME, self.build_menu())
         system.start_tray(self.icon, self.root)
@@ -886,11 +888,20 @@ class App:
 
     # --- оновлення ---
 
-    def check_updates(self):
-        """Раз на добу питає GitHub про останній реліз; мережа — у фоновому потоці."""
-        if self.cfg["check_updates"]:
+    def check_updates(self, repeat=True):
+        """Щогодини питає GitHub про останній реліз; мережа — у фоновому потоці.
+        repeat=False — позачергова перевірка (відкриття головного вікна), без нового розкладу."""
+        if self.cfg["check_updates"] and not getattr(self, "updating", False):
+            self.last_update_check = time.monotonic()
             threading.Thread(target=lambda: self.queue.put(("update", updates.fetch_latest())), daemon=True).start()
-        self.root.after(UPDATE_CHECK_INTERVAL_MS, self.check_updates)
+        if repeat:
+            self.root.after(UPDATE_CHECK_INTERVAL_MS, self.check_updates)
+
+    def recheck_updates_soon(self):
+        """Відкрили головне вікно — варто знати про нову версію, не чекаючи щогодинної перевірки."""
+        last = self.last_update_check
+        if last is not None and time.monotonic() - last >= UPDATE_RECHECK_ON_OPEN_SEC:
+            self.check_updates(repeat=False)
 
     def on_update_result(self, result, install_now=False):
         if not result or not updates.is_newer(result[0], current_version()):
@@ -1492,6 +1503,7 @@ class App:
 
     def open_main(self):
         system.activate_app()  # macOS: інакше вікно програми рядка меню відкривається позаду інших
+        self.recheck_updates_soon()
         if self.main_win:
             self.main_win.deiconify()
             self.main_win.lift()
