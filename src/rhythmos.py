@@ -2021,8 +2021,13 @@ class App:
         for page in self.pages.values():
             page.pack_forget()
         self.current_page = key
-        self.pages[key].pack(fill="both", expand=True)
-        self.pages[key].canvas.yview_moveto(0)
+        area = self.pages[key]
+        area.pack(fill="both", expand=True)
+        # Одразу розкласти вміст за справжнім розміром полотна: на macOS перша сторінка інакше
+        # лишалась порожньою, доки не спрацює щосекундне оновлення
+        self.main_win.update_idletasks()
+        area.relayout()
+        area.canvas.yview_moveto(0)
         for k, btn in self.tab_buttons.items():
             active = k == key
             btn.configure(bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
@@ -2938,6 +2943,10 @@ def run_smoke_test(app, out_dir):
     def page(name):
         app.show_page(name)
         app.main_win.lift()
+        area = app.pages[name]
+        note(f"page {name}: canvas {area.canvas.winfo_width()}x{area.canvas.winfo_height()}, "
+             f"content {area.inner.winfo_width()}x{area.inner.winfo_height()} "
+             f"(asks {area.inner.winfo_reqwidth()}x{area.inner.winfo_reqheight()})")
 
     def note(text):
         """Рядок у журнал і в info.txt поруч зі знімками: на macOS stderr зібраної програми не зберігається."""
