@@ -635,8 +635,14 @@ def blend(color, other, amount):
 
 def glass_picture(width, height, filled, bg):
     """Абстрактна склянка з рідиною: хвиляста поверхня й відблиск на гребені.
-    Випита — синя вода й синій контур; ще не випита — сіра рідина й сірий контур."""
-    if filled:
+    filled: True — випита (синя вода й синій контур), False — ще ні (сіра рідина й контур);
+    при наведенні — що зробить клік: "add" — додасться (синій контур, бліда вода),
+    "remove" — зніметься (сірий контур, ледь помітна вода)."""
+    if filled == "add":
+        edge, liquid, shine = lighten(C["water"], 0.35), blend(C["water"], bg, 0.6), blend(C["water"], bg, 0.3)
+    elif filled == "remove":
+        edge, liquid, shine = C["dim"], blend(C["water"], bg, 0.7), blend(C["water"], bg, 0.5)
+    elif filled:
         edge, liquid, shine = lighten(C["water"], 0.35), C["water"], lighten(C["water"], 0.6)
     else:
         edge, liquid, shine = C["dim"], blend(C["dim"], bg, 0.55), blend(C["dim"], bg, 0.15)
@@ -2061,6 +2067,9 @@ class App:
         self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
         today = self.stats.day(dt.date.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
+        hover = self.w.get("glass_hover")
+        if hover is not None:  # курсор на склянці — що буде після кліку
+            progress += f"  →  {hover} · {fmt_volume(hover)}"
         self.w["today_water_caption"].configure(text=f"{t('m_water')} · {fmt_volume(today['water'])}")
         if not self.cfg["water_enabled"]:
             self.w["water"].configure(text="—")
@@ -2081,14 +2090,32 @@ class App:
         if self.w.get("glasses_key") == (drunk, goal):
             return
         self.w["glasses_key"] = (drunk, goal)
+        self.w["glass_hover"] = None
         frame = self.w["glasses"]
         for child in frame.winfo_children():
             child.destroy()
+        glasses = []
+
+        def target(n):
+            # Клік по останній випитій склянці знімає її, по будь-якій іншій — виставляє кількість до неї
+            return n - 1 if n == drunk else n
+
+        def preview(count):
+            """Наведення: показуємо, які склянки клік додасть, а які зніме; None — звичайний вигляд."""
+            self.w["glass_hover"] = count
+            for i, glass in enumerate(glasses):
+                was, will = i < drunk, count is not None and i < count
+                state = was if count is None or was == will else ("add" if will else "remove")
+                glass.configure(image=glass_image(22, 30, state, C["card"]))
+            self.refresh_main()
+
         for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
             glass = tk.Label(frame, image=glass_image(22, 30, i < drunk, C["card"]), bg=C["card"], cursor="hand2")
             glass.grid(row=i // GLASSES_PER_ROW, column=i % GLASSES_PER_ROW, padx=3, pady=2)
-            # Клік по останній випитій склянці знімає її, по будь-якій іншій — виставляє кількість до неї
-            glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(n - 1 if n == drunk else n))
+            glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(target(n)))
+            glass.bind("<Enter>", lambda e, n=i + 1: preview(target(n)))
+            glass.bind("<Leave>", lambda e: preview(None))
+            glasses.append(glass)
 
     def change_water(self, delta):
         self.set_water(self.stats.day(dt.date.today())["water"] + delta)
