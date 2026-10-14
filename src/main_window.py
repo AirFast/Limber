@@ -558,6 +558,8 @@ class MainWindow:
             subtitle = t("ring_paused", time=f"{s.paused_until:%H:%M}")
         elif s.in_break:
             subtitle = t("ring_break")
+        elif s.held is not None:
+            subtitle = t("ring_held")  # перерва настала, але чекає, поки людина зайнята
         else:
             subtitle = t(f"ring_{s.next_kind()}")
         c.create_text(size / 2, size / 2 - 10, text=fmt_time(s.remaining), fill=C["text"],

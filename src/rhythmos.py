@@ -77,6 +77,7 @@ class App(Popups, MainWindow):
         self.stats_range = 7  # графік статистики: 7 чи 30 днів
         self.work_pending = 0.0  # час за комп'ютером, ще не записаний у статистику (пишемо раз на хвилину)
         self.updating = False  # завантажується й встановлюється оновлення
+        self.busy = None  # чому перерва чекає: "fullscreen" / "camera" / "microphone" (system.busy_reason)
         self.day_start_noted = None  # дата, для якої початок робочого дня вже записано
         # Сповіщення в куті (popups.show_toast): одне за раз
         self.toast_win = self.toast_text = self.toast_kind = self.toast_after = self.toast_on_dismiss = None
@@ -137,9 +138,16 @@ class App(Popups, MainWindow):
         return workday_span(start, self.cfg["day_end_at"] if self.cfg["day_end_enabled"] else None)
 
     def is_busy(self):
-        """Людина на дзвінку чи показує екран — перерва почекає (Scheduler.tick(busy=…)).
-        Гачок: поки що завжди False; сюди під'єднається system.busy_reason()."""
-        return False
+        """Людина на дзвінку, показує екран чи дивиться щось на весь екран — перерва почекає
+        (Scheduler.tick(busy=…)). Питаємо ОС лише тоді, коли це має значення: попередження чи перерва
+        от-от, або перерва вже чекає; на macOS перевірка звертається до аудіо- й відеосистеми."""
+        s = self.sched
+        warn = self.cfg["warn_before_sec"]
+        if not s.in_break and (s.held is not None or s.remaining <= max(warn, 0) + 2):
+            self.busy = system.busy_reason()
+        else:
+            self.busy = None
+        return self.busy is not None
 
     def sync_day(self):
         """Передає планувальнику, що відомо про сьогодні: склянки, кінець робочого дня, час роботи."""
@@ -340,6 +348,9 @@ class App(Popups, MainWindow):
         elif s.in_break:
             title = t("tip_break", app=APP_NAME)
             key = ("break",)
+        elif s.held is not None:  # перерва настала, але людина зайнята — чекає
+            title = t("tip_held", app=APP_NAME)
+            key = ("run", 24)
         else:
             title = t(f"tip_next_{s.next_kind()}", app=APP_NAME, time=fmt_time(s.remaining))
             if self.cfg["water_enabled"] and not s.water_open and not s.water_done:
@@ -480,6 +491,8 @@ def run_smoke_test(app, out_dir):
         # Бездіяльність (для початку робочого дня): на macOS — через Quartz, який має потрапити в збірку
         (lambda: note(f"idle {system.idle_seconds():.1f} s, day start {app.stats.day(app.today())['day_start']}, "
                       f"quartz {quartz_available()}"), None),
+        # Зайнятість (дзвінок, повний екран): на macOS — справжні виклики CoreAudio, CoreMediaIO й Quartz
+        (lambda: note(f"busy {system.busy_reason()}"), None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
         (lambda: app.set_stats_range(30), "stats_30"),
