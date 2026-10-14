@@ -6,7 +6,7 @@ import tkinter as tk
 
 import exercises
 import system
-from core import (DAY_END_SNOOZE_MIN, minute_of_day, MEALS, MEAL_SNOOZE_MIN, build_break, fmt_time, regroup_workout,
+from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZE_MIN, build_break, fmt_time, regroup_workout,
                   single_break_step)
 from graphics import C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, glass_image, plate_image
 from i18n import content, fmt_clock, fmt_minutes, fmt_volume, t
@@ -241,7 +241,7 @@ class Popups:
             self.beep()
         elif result == "skip":
             self.stats.add("skipped")
-            self.sched.finish_break()
+            self.sched.finish_break(skipped=True)  # пропущена довга повернеться наступною перервою
         elif result == "postpone":
             self.stats.add("postponed")
             self.sched.postpone()
@@ -259,7 +259,7 @@ class Popups:
         right, bottom = self.corner(self.meal_win, keep)
         width = 420
         win = self.water_win = self.corner_window(C["water"])
-        drunk = self.stats.day(dt.date.today())["water"]
+        drunk = self.stats.day(self.today())["water"]
         goal = self.cfg["water_goal"]
         done = drunk >= goal
         self.popup_head(win, t("water_title"), C["water"], t("x_of_y", a=drunk if done else drunk + 1, b=goal),
@@ -382,20 +382,14 @@ class Popups:
 
     def set_meal_eaten(self, meal, eaten):
         """Позначка «з'їдено» для їжі за сьогодні: з нагадування («Йду їсти») або тарілкою на «Стані»."""
-        today = dt.date.today()
+        today = self.today()
         now = dt.datetime.now()
         self.stats.set(f"ate_{meal}", int(eaten))
         self.stats.set("meals", sum(self.stats.day(today)[f"ate_{m}"] for m in MEALS))
         # Коли насправді поїли — на шкалі дня тарілка стоїть у цей момент, а не в запланований
         self.stats.set_times(f"ate_{meal}_at", [minute_of_day(now)] if eaten else [])
-        if eaten:
-            self.sched.meal_results[(today, meal)] = "eat"
-            self.sched.meal_snoozed.pop(meal, None)
-            if self.sched.meal_open == meal and not self.meal_demo:  # нагадування більше не потрібне
-                self.sched.meal_open = None
-                self.close_meal_window()
-        elif self.sched.meal_results.get((today, meal)) == "eat":
-            del self.sched.meal_results[(today, meal)]
+        if self.sched.mark_meal(meal, eaten, now) and not self.meal_demo:  # нагадування більше не потрібне
+            self.close_meal_window()
         self.refresh_main()
 
     def finish_meal(self):
@@ -406,7 +400,7 @@ class Popups:
 
     def show_day_end(self, demo=False):
         """«Робочий день скінчився» з підсумком дня. «Завершити день» — пауза до ранку."""
-        today = self.stats.day(dt.date.today())
+        today = self.stats.day(self.today())
         text = t("day_end_text", breaks=today["mini_done"] + today["long_done"], volume=fmt_volume(today["water"]))
         answer = (lambda _answer: None) if demo else self.answer_day_end
         actions = [(t("day_end_snooze", min=DAY_END_SNOOZE_MIN), lambda: answer("snooze"), False),
@@ -419,6 +413,26 @@ class Popups:
         self.sched.day_end_answered(answer)
         if answer == "finish":
             self.handle(("pause", None))  # пауза «до ранку» сама запише, коли завершили день
+
+    def show_overwork(self, demo=False):
+        """Сьогоднішній час за комп'ютером дійшов до ліміту (max_work_hours): «Завершити день» чи «Пізніше».
+        Стоїть у куті, як і кінець дня (kind="day_end"), — завершення дня прибирає обидва."""
+        if demo:  # у демо — сам ліміт (чи типові 9 год, якщо його вимкнено)
+            seconds = (self.cfg["max_work_hours"] or DEFAULTS["max_work_hours"]) * 3600
+        else:
+            seconds = self.stats.day(self.today())["work_sec"] + self.work_pending
+        worked = fmt_minutes(int(seconds) // 60)
+        answer = (lambda _answer: None) if demo else self.answer_overwork
+        actions = [(t("later"), lambda: answer("later"), False), (t("day_end_finish"), lambda: answer("finish"), True)]
+        self.show_toast(t("overwork_title"), t("overwork_text", time=worked), actions,
+                        timeout_ms=60_000 if demo else 60 * 60_000, kind="day_end",
+                        on_dismiss=None if demo else lambda: answer("later"), demo=demo)
+        self.beep()
+
+    def answer_overwork(self, answer):
+        self.sched.overwork_answered(answer)
+        if answer == "finish":
+            self.handle(("pause", None))
 
     # --- власні сповіщення ---
 
@@ -533,11 +547,12 @@ class Popups:
         if drank:
             self.stats.add("water")
             self.log_water_times(1)
+        self.sync_day()  # темп наступної склянки — з урахуванням щойно випитої
         self.sched.water_answered(drank)
 
     def log_water_times(self, delta):
         """Час кожної склянки — для шкали дня: додані склянки — «зараз», зняті — останні з кінця."""
-        today = dt.date.today()
+        today = self.today()
         times = self.stats.times(today, "water_at")
         if delta > 0:
             times += [minute_of_day(dt.datetime.now())] * delta
