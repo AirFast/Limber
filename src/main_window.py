@@ -241,6 +241,11 @@ class MainWindow:
         self.w["plates"].pack(anchor="w", pady=(4, 0))
         self.w["plates_key"] = None
 
+    def set_headline(self, key, text, countdown=False):
+        """Великий підпис картки «Вода» чи «Їжа»: відлік — великим шрифтом, а текстове повідомлення
+        («Час пити!», «Нагадувань більше немає») — меншим, щоб уміщалося й у вузькій картці."""
+        self.w[key].configure(text=text, font=font(28 if countdown else 20, "light"))
+
     def refresh_meal_card(self, now):
         """Картка «Їжа»: відлік до наступної їжі, «сьогодні 1 з 3» і тарілки увімкнених прийомів їжі."""
         s, today = self.sched, self.stats.day(now.date())
@@ -265,7 +270,7 @@ class MainWindow:
         else:
             # Більше нагадувань сьогодні не буде: «усе» — лише якщо справді все з'їли
             value, sub = t("meals_done" if eaten >= len(enabled) else "meals_no_more"), progress
-        self.w["meal"].configure(text=value)
+        self.set_headline("meal", value, countdown=bool(upcoming and upcoming[1]) and not s.eating)
         self.w["meal_sub"].configure(text=sub)
         self.render_plates(enabled, now)
 
@@ -1055,16 +1060,16 @@ class MainWindow:
         if hover is not None:  # курсор на склянці — що буде після кліку
             progress += f"  →  {hover}{SEP}{fmt_volume(hover)}"
         if not self.cfg["water_enabled"]:
-            self.w["water"].configure(text="—")
+            self.set_headline("water", "—")
             self.w["water_sub"].configure(text=t("water_off"))
         elif s.water_done:  # мету досягнуто — до завтра без нагадувань
-            self.w["water"].configure(text=t("water_goal_reached"))
+            self.set_headline("water", t("water_goal_reached"))
             self.w["water_sub"].configure(text=progress)
         elif s.water_open:
-            self.w["water"].configure(text=t("water_now"))
+            self.set_headline("water", t("water_now"))
             self.w["water_sub"].configure(text=progress)
         else:
-            self.w["water"].configure(text=fmt_time(s.water_remaining))
+            self.set_headline("water", fmt_time(s.water_remaining), countdown=True)
             self.w["water_sub"].configure(text=t("water_next", progress=progress))
         rate = completion_rate(today)
         work = today["work_sec"] + int(self.work_pending)  # ще не записане теж показуємо — наживо
