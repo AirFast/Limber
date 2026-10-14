@@ -44,6 +44,23 @@ def test_timer_is_frozen_during_break_and_pause():
     assert s.tick(1000) == [] and s.remaining == 60
 
 
+def test_timed_pause_stops_breaks_but_not_water():
+    s = make_scheduler(mini_interval_min=1, water_interval_min=5, warn_before_sec=0)
+    s.pause(30)
+    events = tick(s, 5 * 60)
+    assert events == ["water"]          # вода нагадала, хоча перерви на паузі
+    assert s.remaining == 60            # відлік до перерви стоїть
+
+
+def test_pause_until_morning_stops_water_too():
+    s = make_scheduler(mini_interval_min=1, water_interval_min=5, warn_before_sec=0)
+    s.pause(None)
+    assert tick(s, 10 * 60) == []
+    assert s.water_remaining == 5 * 60
+    s.resume()
+    assert tick(s, 60) == ["break"]     # після «Продовжити» все знову рахується
+
+
 def test_every_nth_break_is_long():
     s = make_scheduler(long_every=3)
     kinds = []

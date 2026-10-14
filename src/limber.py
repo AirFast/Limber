@@ -29,7 +29,7 @@ from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds,
                   fmt_warn, t)
 from system import font
 
-__version__ = "1.11.0"
+__version__ = "1.11.1"
 
 APP_NAME = "Limber"
 DATA_DIR = system.data_dir()
@@ -242,6 +242,7 @@ class Scheduler:
         self.postpones = 0
         self.in_break = False
         self.paused_until = None
+        self.pause_water = False  # пауза «до ранку» зупиняє й нагадування про воду
         self.warned = False
         self.water_open = False
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
@@ -255,6 +256,7 @@ class Scheduler:
     def paused(self):
         if self.paused_until and dt.datetime.now() >= self.paused_until:
             self.paused_until = None
+            self.pause_water = False
         return self.paused_until is not None
 
     def next_kind(self):
@@ -262,17 +264,21 @@ class Scheduler:
 
     def tick(self, seconds):
         events = []
-        if self.in_break or self.paused:
+        if self.in_break:
             return events
-        self.remaining -= seconds
-        warn = self.cfg["warn_before_sec"]
-        if warn and not self.warned and 0 < self.remaining <= warn:
-            self.warned = True
-            events.append("warn")
-        if self.remaining <= 0:
-            self.in_break = True
-            events.append("break")
-        if self.cfg["water_enabled"] and not self.water_open:
+        paused = self.paused
+        if not paused:
+            self.remaining -= seconds
+            warn = self.cfg["warn_before_sec"]
+            if warn and not self.warned and 0 < self.remaining <= warn:
+                self.warned = True
+                events.append("warn")
+            if self.remaining <= 0:
+                self.in_break = True
+                events.append("break")
+        # Пауза зупиняє лише перерви; вода — тільки під час паузи «до ранку» (робочий день скінчився)
+        water_paused = paused and self.pause_water
+        if self.cfg["water_enabled"] and not self.water_open and not water_paused:
             self.water_remaining -= seconds
             if self.water_remaining <= 0 and not self.in_break:
                 self.water_open = True
@@ -310,9 +316,11 @@ class Scheduler:
             self.paused_until = dt.datetime.combine(tomorrow, dt.time(6, 0))
         else:
             self.paused_until = dt.datetime.now() + dt.timedelta(minutes=minutes)
+        self.pause_water = minutes is None
 
     def resume(self):
         self.paused_until = None
+        self.pause_water = False
 
     def apply_config(self):
         interval = self.cfg["mini_interval_min"] * 60
