@@ -52,6 +52,11 @@ def fmt_times(v):
     return f"{v} {'time' if v == 1 else 'times'}"
 
 
+def fmt_clock(v):
+    """Хвилини від півночі → «08:00»."""
+    return f"{v // 60:02d}:{v % 60:02d}"
+
+
 def fmt_warn(v):
     return t("off") if v == 0 else fmt_seconds(v)
 
@@ -244,6 +249,28 @@ STRINGS = {
         "intensity_2": "середньо",
         "intensity_3": "енергійно",
         "autostart_error": "Не вдалося змінити автозапуск: {e}",
+        # харчування
+        "card_meals": "Харчування",
+        "meal_breakfast": "Сніданок",
+        "meal_lunch": "Обід",
+        "meal_dinner": "Вечеря",
+        "s_breakfast_at": "Нагадати о",
+        "s_lunch_at": "Нагадати о",
+        "s_dinner_at": "Нагадати о",
+        "s_meal_pause_min": "Пауза на їжу",
+        "meal_title_breakfast": "Час снідати",
+        "meal_title_lunch": "Час обідати",
+        "meal_title_dinner": "Час вечеряти",
+        "meal_text": "Відійдіть від екрана й поїжте спокійно — перерви й вода стануть на паузу на {time}.",
+        "meal_go": "Йду їсти",
+        "meal_snooze": "Через {min} хв",
+        "meal_over_title": "Смачного було? Продовжуємо?",
+        "meal_over_text": "Таймери перерв і води почнуть відлік з початку.",
+        "meal_more": "Ще {min} хв",
+        "meal_until_breakfast": "сніданок до {time}",
+        "meal_until_lunch": "обід до {time}",
+        "meal_until_dinner": "вечеря до {time}",
+        "preview_meal": "Їжа",
         # одиниці
         "u_min": "{n} хв",
         "u_h": "{h} год",
@@ -413,6 +440,27 @@ STRINGS = {
         "intensity_2": "moderate",
         "intensity_3": "vigorous",
         "autostart_error": "Could not change autostart: {e}",
+        "card_meals": "Meals",
+        "meal_breakfast": "Breakfast",
+        "meal_lunch": "Lunch",
+        "meal_dinner": "Dinner",
+        "s_breakfast_at": "Remind at",
+        "s_lunch_at": "Remind at",
+        "s_dinner_at": "Remind at",
+        "s_meal_pause_min": "Meal pause",
+        "meal_title_breakfast": "Time for breakfast",
+        "meal_title_lunch": "Time for lunch",
+        "meal_title_dinner": "Time for dinner",
+        "meal_text": "Step away from the screen and enjoy your meal — breaks and water pause for {time}.",
+        "meal_go": "Going to eat",
+        "meal_snooze": "In {min} min",
+        "meal_over_title": "Enjoyed your meal? Shall we continue?",
+        "meal_over_text": "Break and water timers will start over.",
+        "meal_more": "{min} more min",
+        "meal_until_breakfast": "breakfast until {time}",
+        "meal_until_lunch": "lunch until {time}",
+        "meal_until_dinner": "dinner until {time}",
+        "preview_meal": "Meal",
         "u_min": "{n} min",
         "u_h": "{h} h",
         "u_h_min": "{h} h {m} min",

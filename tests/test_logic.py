@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import sys
 
@@ -19,7 +20,9 @@ def ukrainian():
 
 
 def make_scheduler(**overrides):
-    return rhythmos.Scheduler(dict(rhythmos.DEFAULTS, **overrides))
+    # Їжа прив'язана до годинника — у тестах вона вимкнена, якщо її не ввімкнути явно
+    meals_off = {f"{meal}_enabled": False for meal in rhythmos.MEALS}
+    return rhythmos.Scheduler({**rhythmos.DEFAULTS, **meals_off, **overrides})
 
 
 def tick(s, seconds):
@@ -59,6 +62,71 @@ def test_pause_until_morning_stops_water_too():
     assert s.water_remaining == 5 * 60
     s.resume()
     assert tick(s, 60) == ["break"]     # після «Продовжити» все знову рахується
+
+
+def at(hour, minute=0):
+    return dt.datetime(2026, 10, 14, hour, minute)
+
+
+def tick_at(s, start, seconds):
+    """Тікає по секунді, рухаючи й годинник."""
+    events = []
+    for i in range(seconds):
+        events += s.tick(1, now=start + dt.timedelta(seconds=i))
+    return events
+
+
+def test_lunch_reminds_once_at_its_time():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
+    assert s.tick(1, now=at(12, 59)) == []
+    assert s.tick(1, now=at(13, 0)) == ["meal"] and s.meal_open == "lunch"
+    s.meal_answered("skip", now=at(13, 1))
+    assert s.tick(1, now=at(13, 2)) == []   # сьогодні вже нагадали
+
+
+def test_meal_is_not_shown_long_after_its_time():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
+    assert s.tick(1, now=at(14, 5)) == []   # комп'ютер прокинувся через годину з лишком
+
+
+def test_disabled_meal_and_pause_until_morning_stay_silent():
+    assert make_scheduler(lunch_enabled=False).tick(1, now=at(13)) == []
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
+    s.pause(None)
+    assert s.tick(1, now=at(13)) == []
+
+
+def test_meal_snooze_reminds_again():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
+    s.tick(1, now=at(13))
+    s.meal_answered("snooze", now=at(13))
+    assert s.tick(1, now=at(13, 10)) == []
+    assert s.tick(1, now=at(13, 15)) == ["meal"]
+
+
+def test_eating_freezes_timers_and_asks_to_continue():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_pause_min=30, mini_interval_min=20,
+                       water_interval_min=60, warn_before_sec=0)
+    s.tick(1, now=at(13))
+    remaining, water = s.remaining, s.water_remaining
+    s.meal_answered("eat", now=at(13))
+    assert tick_at(s, at(13), 29 * 60) == []
+    assert (s.remaining, s.water_remaining) == (remaining, water)   # перерви й вода заморожені
+    assert tick_at(s, at(13, 30), 10 * 60) == ["meal_over"]         # питаємо один раз і чекаємо відповіді
+    assert s.eating == "lunch"
+    s.extend_meal(now=at(13, 40))
+    assert tick_at(s, at(13, 40), 15 * 60 + 1) == ["meal_over"]
+    s.finish_meal()
+    assert not s.eating and s.remaining == 20 * 60 and s.water_remaining == 60 * 60
+    assert s.tick(1, now=at(13, 56)) == []
+
+
+def test_going_to_eat_cancels_timed_pause():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
+    s.pause(30)
+    assert s.tick(1, now=at(13)) == ["meal"]    # звичайна пауза їжі не заважає
+    s.meal_answered("eat", now=at(13))
+    assert s.paused_until is None and s.eating == "lunch"
 
 
 def test_every_nth_break_is_long():

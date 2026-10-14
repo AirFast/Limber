@@ -25,11 +25,11 @@ from PIL import Image, ImageDraw, ImageTk
 import exercises
 import i18n
 import updates
-from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_volume,
+from i18n import (content, fmt_clock, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_volume,
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
@@ -50,6 +50,13 @@ DEFAULTS = {
     "water_interval_min": 60,
     "water_goal": 8,
     "water_profile": "custom",  # "female" / "male" — мета й інтервал за рекомендацією; "custom" — вручну
+    "breakfast_enabled": False,  # сніданок і вечеря часто не за комп'ютером — за замовчуванням вимкнені
+    "breakfast_at": 8 * 60,      # хвилини від півночі
+    "lunch_enabled": True,
+    "lunch_at": 13 * 60,
+    "dinner_enabled": False,
+    "dinner_at": 18 * 60 + 30,
+    "meal_pause_min": 45,    # на скільки «Йду їсти» ставить перерви й воду на паузу
     "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
     "intensity": 2,
     "workout_enabled": True,
@@ -63,6 +70,7 @@ DEFAULTS = {
 MAX_GLASSES = 30          # верхня межа ручного введення води за день
 MAX_GLASSES_SHOWN = 24    # більше — не малюємо (три ряди)
 GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
+MAIN_MIN_WIDTH = 1080     # головне вікно: ширше й нижче — налаштування в три колонки
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
@@ -98,7 +106,15 @@ SLIDERS = {
     "water_goal": (4, 16, 1, fmt_glasses),
     "intensity": (1, 3, 1, fmt_intensity),
     "pause_min": (15, 240, 15, fmt_minutes),
+    "breakfast_at": (6 * 60, 11 * 60, 15, fmt_clock),
+    "lunch_at": (11 * 60, 16 * 60, 15, fmt_clock),
+    "dinner_at": (16 * 60, 22 * 60, 15, fmt_clock),
+    "meal_pause_min": (15, 90, 15, fmt_minutes),
 }
+
+MEALS = ("breakfast", "lunch", "dinner")
+MEAL_WINDOW_MIN = 60   # комп'ютер прокинувся пізніше, ніж на годину після часу їжі, — нагадування вже ні до чого
+MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
 
 # Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
 # близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
@@ -278,6 +294,12 @@ class Scheduler:
         self.water_open = False
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
         self.water_remaining = self.cfg["water_interval_min"] * 60
+        self.meal_open = None       # про яку їжу зараз висить нагадування
+        self.meals_shown = set()    # (дата, їжа), про які вже нагадали сьогодні
+        self.meal_snoozed = {}      # їжа → коли нагадати знову («Через 15 хв»)
+        self.eating = None          # «Йду їсти»: яка їжа; перерви й вода заморожені, поки не натиснуть «Продовжити»
+        self.eating_until = None
+        self.meal_over_asked = False
 
     def _set_countdown(self, seconds):
         self.remaining = self.period = seconds
@@ -293,8 +315,15 @@ class Scheduler:
     def next_kind(self):
         return "long" if (self.breaks_taken + 1) % max(1, self.cfg["long_every"]) == 0 else "mini"
 
-    def tick(self, seconds):
+    def tick(self, seconds, now=None):
+        now = now or dt.datetime.now()
         events = []
+        if self.eating:
+            # Пауза на їжу не закінчується сама: після неї питаємо, чи продовжувати
+            if not self.meal_over_asked and now >= self.eating_until:
+                self.meal_over_asked = True
+                events.append("meal_over")
+            return events
         if self.in_break:
             return events
         paused = self.paused
@@ -314,7 +343,60 @@ class Scheduler:
             if self.water_remaining <= 0 and not self.in_break:
                 self.water_open = True
                 events.append("water")
+        meal = self.due_meal(now)
+        if meal:
+            self.meal_open = meal
+            self.meals_shown.add((now.date(), meal))
+            events.append("meal")
         return events
+
+    def due_meal(self, now):
+        """Їжа, про яку час нагадати: її година настала, але минуло не більше MEAL_WINDOW_MIN."""
+        if self.meal_open or self.in_break or (self.paused and self.pause_water):
+            return None
+        minutes = now.hour * 60 + now.minute
+        for meal in MEALS:
+            if not self.cfg[f"{meal}_enabled"]:
+                continue
+            snoozed = self.meal_snoozed.get(meal)
+            if snoozed:
+                if now >= snoozed:
+                    del self.meal_snoozed[meal]
+                    return meal
+                continue
+            at = self.cfg[f"{meal}_at"]
+            if (now.date(), meal) not in self.meals_shown and at <= minutes < at + MEAL_WINDOW_MIN:
+                return meal
+        return None
+
+    def meal_answered(self, answer, now=None):
+        """answer: "eat" — пауза на їжу, "snooze" — нагадати через 15 хв, "skip" — не нагадувати."""
+        now = now or dt.datetime.now()
+        meal, self.meal_open = self.meal_open, None
+        if not meal:
+            return
+        if answer == "snooze":
+            self.meal_snoozed[meal] = now + dt.timedelta(minutes=MEAL_SNOOZE_MIN)
+        elif answer == "eat":
+            self.paused_until = None  # їжа важливіша за звичайну паузу
+            self.pause_water = False
+            self.eating = meal
+            self.eating_until = now + dt.timedelta(minutes=self.cfg["meal_pause_min"])
+            self.meal_over_asked = False
+
+    def extend_meal(self, now=None):
+        """«Ще 15 хв» після паузи на їжу."""
+        if self.eating:
+            self.eating_until = (now or dt.datetime.now()) + dt.timedelta(minutes=MEAL_SNOOZE_MIN)
+            self.meal_over_asked = False
+
+    def finish_meal(self):
+        """«Продовжити»: їжа вже була довгою перервою, тож обидва таймери — з початку."""
+        self.eating = self.eating_until = None
+        self.meal_over_asked = False
+        self.postpones = 0
+        self._set_countdown(self.cfg["mini_interval_min"] * 60)
+        self.water_remaining = self.cfg["water_interval_min"] * 60
 
     def start_break(self):
         self.in_break = True
@@ -342,6 +424,7 @@ class Scheduler:
         self.water_remaining = self.cfg["water_interval_min"] * 60 if drank else 15 * 60
 
     def pause(self, minutes):
+        self.eating = self.eating_until = None
         if minutes is None:  # до ранку
             tomorrow = dt.date.today() + dt.timedelta(days=1)
             self.paused_until = dt.datetime.combine(tomorrow, dt.time(6, 0))
@@ -645,7 +728,8 @@ class Slider(tk.Frame):
         self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
                                     font=font(11, "semibold"))
         self.value_label.pack(side="right")
-        self.canvas = tk.Canvas(self, height=26, bg=bg, highlightthickness=0, cursor="hand2")
+        # Явна мала ширина: інакше Canvas просить типові ~380 px і роздуває колонки налаштувань
+        self.canvas = tk.Canvas(self, width=160, height=26, bg=bg, highlightthickness=0, cursor="hand2")
         self.canvas.pack(fill="x", pady=(2, 0))
         self.canvas.bind("<Configure>", lambda e: self.draw())
         self.canvas.bind("<Button-1>", self.drag)
@@ -862,7 +946,8 @@ class App:
                 item(t("pause_120"), post(("pause", 120))),
                 item(t("pause_morning"), post(("pause", None))),
             )),
-            item(t("resume"), post("resume"), visible=lambda i: self.sched.paused_until is not None),
+            item(t("resume"), post("resume"),
+                 visible=lambda i: self.sched.paused_until is not None or bool(self.sched.eating)),
             pystray.Menu.SEPARATOR,
             item(t("quit"), post("quit")),
         )
@@ -886,6 +971,10 @@ class App:
         elif action == "reset":
             self.sched.reset()
         elif action == "resume":
+            if self.sched.eating:
+                if getattr(self, "toast_kind", None) == "meal":
+                    self.close_toast(dismissed=False)
+                self.sched.finish_meal()
             self.sched.resume()
             self.icon.update_menu()
         elif isinstance(action, tuple) and action[0] == "pause":
@@ -912,7 +1001,10 @@ class App:
 
     def update_tray(self):
         s = self.sched
-        if s.paused:
+        if s.eating:
+            title = f"{APP_NAME}: " + t(f"meal_until_{s.eating}", time=f"{s.eating_until:%H:%M}")
+            key = ("paused",)
+        elif s.paused:
             title = t("tip_paused", app=APP_NAME, time=f"{s.paused_until:%H:%M}")
             key = ("paused",)
         elif s.in_break:
@@ -946,6 +1038,10 @@ class App:
                 self.show_break(self.sched.next_kind())
             elif event == "water":
                 self.show_water()
+            elif event == "meal":
+                self.show_meal(self.sched.meal_open)
+            elif event == "meal_over":
+                self.show_meal_over()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
         self.update_break_warning()
@@ -1190,9 +1286,9 @@ class App:
             _l, _t, right, bottom = screens[0][4]
         else:
             right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
-        # Обидва віконця живуть у тому самому куті: попередження про перерву лишаємо
-        # й ставимо воду над ним, решту сповіщень закриваємо
-        if getattr(self, "toast_kind", None) == "warning" and self.toast_win:
+        # Обидва віконця живуть у тому самому куті: попередження про перерву й нагадування
+        # про їжу лишаємо й ставимо воду над ними, решту сповіщень закриваємо
+        if getattr(self, "toast_kind", None) in ("warning", "meal") and self.toast_win:
             bottom = self.toast_win.winfo_rooty()
         else:
             self.close_toast()
@@ -1240,13 +1336,48 @@ class App:
             win.focus_force()
         self.beep()
 
+    # --- харчування ---
+
+    def show_meal(self, meal, demo=False):
+        """«Час обідати»: «Йду їсти» ставить перерви й воду на паузу, «Через 15 хв» — нагадає ще раз."""
+        answer = (lambda _answer: None) if demo else self.sched.meal_answered
+        actions = [(t("skip"), lambda: answer("skip"), False),
+                   (t("meal_snooze", min=MEAL_SNOOZE_MIN), lambda: answer("snooze"), False),
+                   (t("meal_go"), (lambda: None) if demo else self.go_eat, True)]
+        title = t(f"meal_title_{meal}") + (f"  ·  {t('demo_tag')}" if demo else "")
+        # Без тайм-ауту: людина могла відійти; якщо віконце витіснить інше сповіщення — нагадаємо пізніше
+        self.show_toast(title, t("meal_text", time=fmt_minutes(self.cfg["meal_pause_min"])), actions,
+                        timeout_ms=60_000 if demo else 3 * 60 * 60_000, kind="meal",
+                        on_dismiss=None if demo else lambda: answer("snooze"))
+        self.beep()
+
+    def show_meal_over(self):
+        """Пауза на їжу скінчилась — питаємо, чи продовжувати. Без відповіді перерви так і стоять."""
+        actions = [(t("meal_more", min=MEAL_SNOOZE_MIN), self.sched.extend_meal, False),
+                   (t("resume"), self.finish_meal, True)]
+        self.show_toast(t("meal_over_title"), t("meal_over_text"), actions, timeout_ms=3 * 60 * 60_000,
+                        kind="meal", on_dismiss=self.sched.extend_meal)
+        self.beep()
+
+    def go_eat(self):
+        if self.break_state and not self.break_state["demo"]:  # перерва почалась, поки висіло нагадування
+            self.close_break_windows()
+            self.sched.finish_break()
+        self.sched.meal_answered("eat")
+        self.icon.update_menu()
+
+    def finish_meal(self):
+        self.sched.finish_meal()
+        self.icon.update_menu()
+
     # --- власні сповіщення ---
 
-    def show_toast(self, title, text, actions=(), timeout_ms=10_000, kind="info"):
+    def show_toast(self, title, text, actions=(), timeout_ms=10_000, kind="info", on_dismiss=None):
         """Спливаюче віконце в куті екрана. Не покладаємося на системні сповіщення:
         користувач міг їх вимкнути (на Windows вони тоді просто мовчки зникають),
         а на macOS вони ненадійні для програм без підпису Apple.
-        actions: [(напис, функція, головна_кнопка?)]."""
+        actions: [(напис, функція, головна_кнопка?)]; on_dismiss — якщо віконце зникло без натискання кнопки
+        (тайм-аут або його витіснило інше сповіщення)."""
         self.close_toast()
         screens = system.monitors()
         if screens:
@@ -1268,7 +1399,7 @@ class App:
             row = tk.Frame(win, bg=C["panel"])
             row.pack(anchor="e", padx=14, pady=12)
             for label, command, primary in actions:
-                btn = flat_button(row, label, lambda c=command: (self.close_toast(), c()), size=10,
+                btn = flat_button(row, label, lambda c=command: (self.close_toast(dismissed=False), c()), size=10,
                                   bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"])
                 btn.configure(padx=14)
                 btn.pack(side="left", padx=3)
@@ -1281,17 +1412,22 @@ class App:
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
         self.toast_win = win
         self.toast_kind = kind
+        self.toast_on_dismiss = on_dismiss
         self.toast_after = self.root.after(timeout_ms, self.close_toast)
 
-    def close_toast(self):
+    def close_toast(self, dismissed=True):
         if getattr(self, "toast_after", None):
             self.root.after_cancel(self.toast_after)
             self.toast_after = None
         if getattr(self, "toast_win", None):
+            on_dismiss = self.toast_on_dismiss if dismissed else None
             self.toast_win.destroy()
             self.toast_win = None
             self.toast_text = None
             self.toast_kind = None
+            self.toast_on_dismiss = None
+            if on_dismiss:
+                on_dismiss()
 
     def end_water(self, drank):
         if self.water_win:
@@ -1315,7 +1451,6 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.geometry("800x895")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
@@ -1355,7 +1490,19 @@ class App:
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.tab_buttons[key] = btn
+        self.fit_main_window(header)
         self.show_page("status")
+
+    def fit_main_window(self, header):
+        """Вікно під найбільшу сторінку (зазвичай «Налаштування»): розмір залежить від мови, шрифтів
+        і масштабу екрана, тому не задаємо його числами."""
+        win = self.main_win
+        win.update_idletasks()
+        width = max(MAIN_MIN_WIDTH, *(page.winfo_reqwidth() + 48 for page in self.pages.values()))
+        # Відступи заголовка (18 + 10) і тіла (4 + 20). Підказки до розкладки переносяться вужче, ніж потім,
+        # тож висота з запасом — нічого не обріжеться
+        height = header.winfo_reqheight() + 28 + 24 + max(page.winfo_reqheight() for page in self.pages.values())
+        win.geometry(f"{width}x{height}")
 
     def close_main(self):
         self.main_win.destroy()
@@ -1436,22 +1583,26 @@ class App:
         return page
 
     def toggle_pause(self):
-        self.handle("resume" if self.sched.paused else ("pause", self.cfg["pause_min"]))
+        busy = self.sched.paused or self.sched.eating
+        self.handle("resume" if busy else ("pause", self.cfg["pause_min"]))
 
     def draw_ring(self):
         c, s = self.w["ring"], self.sched
         c.delete("all")
         size = 270
         fraction = 1 - s.remaining / max(s.period, 1)
-        color = rgba(C["dim"] if s.paused else C["accent"])
-        key = (round(fraction, 3), s.paused)
+        idle = s.paused or bool(s.eating)
+        color = rgba(C["dim"] if idle else C["accent"])
+        key = (round(fraction, 3), idle)
         if key != getattr(self, "_ring_key", None):
             self._ring_key = key
             self.ring_photo = ImageTk.PhotoImage(smooth_image(
                 size, size, lambda d, k: draw_progress_ring(d, k, size, 18, 14, fraction, rgba(C["track"]), color),
                 C["card"]))
         c.create_image(0, 0, anchor="nw", image=self.ring_photo)
-        if s.paused:
+        if s.eating:
+            subtitle = t(f"meal_until_{s.eating}", time=f"{s.eating_until:%H:%M}")
+        elif s.paused:
             subtitle = t("ring_paused", time=f"{s.paused_until:%H:%M}")
         elif s.in_break:
             subtitle = t("ring_break")
@@ -1607,10 +1758,11 @@ class App:
 
     def build_settings_page(self, parent):
         page = tk.Frame(parent, bg=C["bg"])
-        left = tk.Frame(page, bg=C["bg"])
-        right = tk.Frame(page, bg=C["bg"])
-        left.pack(side="left", fill="both", expand=True, padx=(0, 7))
-        right.pack(side="left", fill="both", expand=True, padx=(7, 0))
+        # Три однакові колонки: перерви · довгі перерви й вода · їжа та загальне
+        left, middle, right = (tk.Frame(page, bg=C["bg"]) for _ in range(3))
+        for i, column in enumerate((left, middle, right)):
+            column.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == 2 else 7))
+            page.columnconfigure(i, weight=1, uniform="settings")
 
         def group(column, title, keys):
             box = card(column, title)
@@ -1624,25 +1776,26 @@ class App:
             self.add_slider(breaks, key)
         Toggle(breaks, t("group_buttons_toggle"), self.cfg["group_buttons"],
                lambda v: self.set_setting("group_buttons", v)).pack(fill="x", pady=(2, 0))
-        # Ліва колонка — усе про перерви; права — довгі перерви, вода та загальне
         group(left, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
-        sound = card(left, t("card_sound"))
-        sound.pack(fill="x")
-        Toggle(sound, t("sound_toggle"), self.cfg["sound"],
-               lambda v: self.set_setting("sound", v)).pack(fill="x", pady=(0, 8))
-        self.add_sound_slider(sound)
 
-        long_box = card(right, t("card_long"))
+        long_box = card(middle, t("card_long"))
         long_box.pack(fill="x", pady=(0, 14))
         self.add_slider(long_box, "long_every")
         self.add_slider(long_box, "long_duration_min")
         Toggle(long_box, t("workout_toggle"), self.cfg["workout_enabled"],
                lambda v: self.set_setting("workout_enabled", v)).pack(fill="x", pady=(2, 0))
-        water = card(right, t("card_water"))
+        water = card(middle, t("card_water"))
         water.pack(fill="x")
         Toggle(water, t("water_toggle"), self.cfg["water_enabled"],
                lambda v: self.set_setting("water_enabled", v)).pack(fill="x", pady=(0, 8))
         self.build_water_profile(water)
+        sound = card(middle, t("card_sound"))
+        sound.pack(fill="x", pady=(14, 0))
+        Toggle(sound, t("sound_toggle"), self.cfg["sound"],
+               lambda v: self.set_setting("sound", v)).pack(fill="x", pady=(0, 8))
+        self.add_sound_slider(sound)
+
+        self.build_meals_card(right).pack(fill="x")
         other = card(right, t("card_other"))
         other.pack(fill="x", pady=(14, 0))
         self.build_language_switch(other).pack(fill="x", pady=(0, 6))
@@ -1657,14 +1810,34 @@ class App:
                  fg=C["muted"], font=font(10)).pack(anchor="w", pady=(0, 8))
         row = tk.Frame(preview, bg=C["card"])
         row.pack(fill="x")
-        for i, (text, action) in enumerate(((t("preview_mini"), lambda: self.show_demo_break("mini")),
-                                            (t("preview_long"), lambda: self.show_demo_break("long")),
-                                            (t("preview_water"), lambda: self.show_water(demo=True)))):
+        previews = ((t("preview_mini"), lambda: self.show_demo_break("mini")),
+                    (t("preview_long"), lambda: self.show_demo_break("long")),
+                    (t("preview_water"), lambda: self.show_water(demo=True)),
+                    (t("preview_meal"), lambda: self.show_meal("lunch", demo=True)))
+        for i, (text, action) in enumerate(previews):
             btn = flat_button(row, text, action, size=10)
-            btn.configure(padx=6, pady=7)
-            btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 4, 0 if i == 2 else 4))
+            btn.configure(padx=4, pady=7)
+            btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 3, 0 if i == len(previews) - 1 else 3))
             row.columnconfigure(i, weight=1, uniform="preview")
         return page
+
+    def build_meals_card(self, parent):
+        """Сніданок, обід, вечеря: перемикач і час для кожного; повзунок часу неактивний, поки їжу вимкнено."""
+        box = card(parent, t("card_meals"))
+        for meal in MEALS:
+            lo, hi, step, fmt = SLIDERS[f"{meal}_at"]
+            slider = Slider(box, t(f"s_{meal}_at"), lo, hi, step, self.cfg[f"{meal}_at"], fmt,
+                            lambda v, k=f"{meal}_at": self.set_setting(k, v))
+
+            def toggle(value, meal=meal, slider=slider):
+                self.set_setting(f"{meal}_enabled", value)
+                slider.set_enabled(value)
+
+            Toggle(box, t(f"meal_{meal}"), self.cfg[f"{meal}_enabled"], toggle).pack(fill="x", pady=(0, 2))
+            slider.pack(fill="x", pady=(0, 8))
+            slider.set_enabled(self.cfg[f"{meal}_enabled"])
+        self.add_slider(box, "meal_pause_min")
+        return box
 
     def build_language_switch(self, parent):
         """Рядок «Мова» з перемикачем-сегментом між мовами."""
@@ -1693,7 +1866,9 @@ class App:
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.set_water_profile(c))
             self.w["water_profile"][code] = btn
-        hint = tk.Label(parent, bg=parent["bg"], fg=C["muted"], font=font(9), justify="left", anchor="w")
+        # Початковий перенос — вужчий за колонку, щоб довгий рядок не роздував вікно; далі — за шириною
+        hint = tk.Label(parent, bg=parent["bg"], fg=C["muted"], font=font(9), justify="left", anchor="w",
+                        wraplength=240)
         hint.pack(fill="x", pady=(0, 10))
         hint.bind("<Configure>", lambda e: hint.configure(wraplength=e.width))
         self.w["water_hint"] = hint
@@ -1805,7 +1980,7 @@ class App:
         s = self.sched
         self.draw_ring()
         self.w["update"].configure(text=t("update_banner", version=self.update_info[0]) if self.update_info else "")
-        self.w["pause_btn"].configure(text=t("resume") if s.paused else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
+        self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
         today = self.stats.day(dt.date.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         self.w["today_water_caption"].configure(text=f"{t('m_water')} · {fmt_volume(today['water'])}")
@@ -1894,6 +2069,8 @@ def run_smoke_test(app, out_dir):
         (lambda: app.end_break("skip"), None),
         (lambda: app.show_water(demo=True), "water"),
         (lambda: app.end_water(False), None),
+        (lambda: app.show_meal("lunch", demo=True), "meal"),
+        (app.close_toast, None),
         (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
                                 [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),
         (app.close_toast, None),
