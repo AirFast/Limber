@@ -271,6 +271,16 @@ STRINGS = {
         "meal_until_lunch": "обід до {time}",
         "meal_until_dinner": "вечеря до {time}",
         "preview_meal": "Їжа",
+        # кінець робочого дня
+        "card_day_end": "Кінець робочого дня",
+        "day_end_toggle": "Нагадувати, що час відпочивати",
+        "s_day_end_at": "Робочий день до",
+        "day_end_title": "Робочий день скінчився",
+        "day_end_text": "Час відпочити! Сьогодні перерв: {breaks}, води: {volume}. "
+                        "«Завершити день» поставить Rhythmos на паузу до ранку.",
+        "day_end_finish": "Завершити день",
+        "day_end_snooze": "Ще {min} хв",
+        "preview_day_end": "Кінець дня",
         # одиниці
         "u_min": "{n} хв",
         "u_h": "{h} год",
@@ -461,6 +471,15 @@ STRINGS = {
         "meal_until_lunch": "lunch until {time}",
         "meal_until_dinner": "dinner until {time}",
         "preview_meal": "Meal",
+        "card_day_end": "End of workday",
+        "day_end_toggle": "Remind me it's time to rest",
+        "s_day_end_at": "Workday ends at",
+        "day_end_title": "The workday is over",
+        "day_end_text": "Time to rest! Today: {breaks} breaks, {volume} of water. "
+                        "“Finish the day” pauses Rhythmos until morning.",
+        "day_end_finish": "Finish the day",
+        "day_end_snooze": "{min} more min",
+        "preview_day_end": "Day end",
         "u_min": "{n} min",
         "u_h": "{h} h",
         "u_h_min": "{h} h {m} min",

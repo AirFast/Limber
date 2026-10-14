@@ -29,7 +29,7 @@ from i18n import (content, fmt_clock, fmt_glasses, fmt_intensity, fmt_minutes, f
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
@@ -57,6 +57,8 @@ DEFAULTS = {
     "dinner_enabled": False,
     "dinner_at": 18 * 60 + 30,
     "meal_pause_min": 45,    # на скільки «Йду їсти» ставить перерви й воду на паузу
+    "day_end_enabled": True,     # нагадування «робочий день скінчився»
+    "day_end_at": 18 * 60,
     "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
     "intensity": 2,
     "workout_enabled": True,
@@ -110,11 +112,13 @@ SLIDERS = {
     "lunch_at": (11 * 60, 16 * 60, 15, fmt_clock),
     "dinner_at": (16 * 60, 22 * 60, 15, fmt_clock),
     "meal_pause_min": (15, 90, 15, fmt_minutes),
+    "day_end_at": (15 * 60, 23 * 60, 15, fmt_clock),
 }
 
 MEALS = ("breakfast", "lunch", "dinner")
 MEAL_WINDOW_MIN = 60   # комп'ютер прокинувся пізніше, ніж на годину після часу їжі, — нагадування вже ні до чого
 MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
+DAY_END_SNOOZE_MIN = 30  # «Ще 30 хв» — людина ще працює, нагадаємо знову
 
 # Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
 # близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
@@ -300,6 +304,9 @@ class Scheduler:
         self.eating = None          # «Йду їсти»: яка їжа; перерви й вода заморожені, поки не натиснуть «Продовжити»
         self.eating_until = None
         self.meal_over_asked = False
+        self.day_end_open = False   # висить нагадування «робочий день скінчився»
+        self.day_end_shown = None   # дата, коли про кінець дня вже нагадали
+        self.day_end_snoozed = None
 
     def _set_countdown(self, seconds):
         self.remaining = self.period = seconds
@@ -348,7 +355,27 @@ class Scheduler:
             self.meal_open = meal
             self.meals_shown.add((now.date(), meal))
             events.append("meal")
+        elif self.due_day_end(now):
+            self.day_end_open = True
+            self.day_end_shown = now.date()
+            self.day_end_snoozed = None
+            events.append("day_end")
         return events
+
+    def due_day_end(self, now):
+        """Час кінця робочого дня настав (або минуло «Ще 30 хв»), а людина досі за комп'ютером."""
+        if (not self.cfg["day_end_enabled"] or self.day_end_open or self.meal_open or self.in_break
+                or (self.paused and self.pause_water)):
+            return False
+        if self.day_end_snoozed:
+            return now >= self.day_end_snoozed
+        return self.day_end_shown != now.date() and now.hour * 60 + now.minute >= self.cfg["day_end_at"]
+
+    def day_end_answered(self, answer, now=None):
+        """answer: "snooze" — нагадати через 30 хв, "finish" — день завершено (паузу ставить App)."""
+        self.day_end_open = False
+        if answer == "snooze":
+            self.day_end_snoozed = (now or dt.datetime.now()) + dt.timedelta(minutes=DAY_END_SNOOZE_MIN)
 
     def due_meal(self, now):
         """Їжа, про яку час нагадати: її година настала, але минуло не більше MEAL_WINDOW_MIN."""
@@ -1042,6 +1069,8 @@ class App:
                 self.show_meal(self.sched.meal_open)
             elif event == "meal_over":
                 self.show_meal_over()
+            elif event == "day_end":
+                self.show_day_end()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
         self.update_break_warning()
@@ -1287,8 +1316,8 @@ class App:
         else:
             right, bottom = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
         # Обидва віконця живуть у тому самому куті: попередження про перерву й нагадування
-        # про їжу лишаємо й ставимо воду над ними, решту сповіщень закриваємо
-        if getattr(self, "toast_kind", None) in ("warning", "meal") and self.toast_win:
+        # про їжу чи кінець дня лишаємо й ставимо воду над ними, решту сповіщень закриваємо
+        if getattr(self, "toast_kind", None) in ("warning", "meal", "day_end") and self.toast_win:
             bottom = self.toast_win.winfo_rooty()
         else:
             self.close_toast()
@@ -1369,6 +1398,25 @@ class App:
     def finish_meal(self):
         self.sched.finish_meal()
         self.icon.update_menu()
+
+    # --- кінець робочого дня ---
+
+    def show_day_end(self, demo=False):
+        """«Робочий день скінчився» з підсумком дня. «Завершити день» — пауза до ранку."""
+        today = self.stats.day(dt.date.today())
+        text = t("day_end_text", breaks=today["mini_done"] + today["long_done"], volume=fmt_volume(today["water"]))
+        answer = (lambda _answer: None) if demo else self.answer_day_end
+        actions = [(t("day_end_snooze", min=DAY_END_SNOOZE_MIN), lambda: answer("snooze"), False),
+                   (t("day_end_finish"), lambda: answer("finish"), True)]
+        title = t("day_end_title") + (f"  ·  {t('demo_tag')}" if demo else "")
+        self.show_toast(title, text, actions, timeout_ms=60_000 if demo else 3 * 60 * 60_000, kind="day_end",
+                        on_dismiss=None if demo else lambda: answer("snooze"))
+        self.beep()
+
+    def answer_day_end(self, answer):
+        self.sched.day_end_answered(answer)
+        if answer == "finish":
+            self.handle(("pause", None))
 
     # --- власні сповіщення ---
 
@@ -1777,6 +1825,19 @@ class App:
         Toggle(breaks, t("group_buttons_toggle"), self.cfg["group_buttons"],
                lambda v: self.set_setting("group_buttons", v)).pack(fill="x", pady=(2, 0))
         group(left, t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
+        day_end = card(left, t("card_day_end"))
+        day_end.pack(fill="x")
+        lo, hi, step, fmt = SLIDERS["day_end_at"]
+        day_end_slider = Slider(day_end, t("s_day_end_at"), lo, hi, step, self.cfg["day_end_at"], fmt,
+                                lambda v: self.set_setting("day_end_at", v))
+
+        def toggle_day_end(value):
+            self.set_setting("day_end_enabled", value)
+            day_end_slider.set_enabled(value)
+
+        Toggle(day_end, t("day_end_toggle"), self.cfg["day_end_enabled"], toggle_day_end).pack(fill="x", pady=(0, 6))
+        day_end_slider.pack(fill="x")
+        day_end_slider.set_enabled(self.cfg["day_end_enabled"])
 
         long_box = card(middle, t("card_long"))
         long_box.pack(fill="x", pady=(0, 14))
@@ -1813,12 +1874,17 @@ class App:
         previews = ((t("preview_mini"), lambda: self.show_demo_break("mini")),
                     (t("preview_long"), lambda: self.show_demo_break("long")),
                     (t("preview_water"), lambda: self.show_water(demo=True)),
-                    (t("preview_meal"), lambda: self.show_meal("lunch", demo=True)))
+                    (t("preview_meal"), lambda: self.show_meal("lunch", demo=True)),
+                    (t("preview_day_end"), lambda: self.show_day_end(demo=True)))
+        per_row = 3  # п'ять кнопок у вузькій колонці — у два ряди
         for i, (text, action) in enumerate(previews):
             btn = flat_button(row, text, action, size=10)
             btn.configure(padx=4, pady=7)
-            btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 3, 0 if i == len(previews) - 1 else 3))
-            row.columnconfigure(i, weight=1, uniform="preview")
+            column = i % per_row
+            btn.grid(row=i // per_row, column=column, sticky="ew", pady=(0 if i < per_row else 6, 0),
+                     padx=(0 if column == 0 else 3, 0 if column == per_row - 1 else 3))
+        for column in range(per_row):
+            row.columnconfigure(column, weight=1, uniform="preview")
         return page
 
     def build_meals_card(self, parent):
@@ -2070,6 +2136,8 @@ def run_smoke_test(app, out_dir):
         (lambda: app.show_water(demo=True), "water"),
         (lambda: app.end_water(False), None),
         (lambda: app.show_meal("lunch", demo=True), "meal"),
+        (app.close_toast, None),
+        (lambda: app.show_day_end(demo=True), "day_end"),
         (app.close_toast, None),
         (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
                                 [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),

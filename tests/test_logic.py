@@ -20,9 +20,9 @@ def ukrainian():
 
 
 def make_scheduler(**overrides):
-    # Їжа прив'язана до годинника — у тестах вона вимкнена, якщо її не ввімкнути явно
+    # Їжа й кінець дня прив'язані до годинника — у тестах вимкнені, якщо їх не ввімкнути явно
     meals_off = {f"{meal}_enabled": False for meal in rhythmos.MEALS}
-    return rhythmos.Scheduler({**rhythmos.DEFAULTS, **meals_off, **overrides})
+    return rhythmos.Scheduler({**rhythmos.DEFAULTS, **meals_off, "day_end_enabled": False, **overrides})
 
 
 def tick(s, seconds):
@@ -127,6 +127,28 @@ def test_going_to_eat_cancels_timed_pause():
     assert s.tick(1, now=at(13)) == ["meal"]    # звичайна пауза їжі не заважає
     s.meal_answered("eat", now=at(13))
     assert s.paused_until is None and s.eating == "lunch"
+
+
+def test_day_end_reminds_and_snoozes():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    assert s.tick(1, now=at(17, 59)) == []
+    assert s.tick(1, now=at(18)) == ["day_end"]
+    assert s.tick(1, now=at(18, 1)) == []          # поки висить — вдруге не показуємо
+    s.day_end_answered("snooze", now=at(18, 1))
+    assert s.tick(1, now=at(18, 20)) == []
+    assert s.tick(1, now=at(18, 31)) == ["day_end"]
+    s.day_end_answered("finish")
+    assert s.tick(1, now=at(19)) == []             # сьогодні вже завершено
+
+
+def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60, dinner_enabled=True, dinner_at=18 * 60)
+    assert s.tick(1, now=at(18)) == ["meal"]
+    s.meal_answered("skip", now=at(18))
+    assert s.tick(1, now=at(18, 1)) == ["day_end"]
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    s.pause(None)
+    assert s.tick(1, now=at(18)) == []
 
 
 def test_every_nth_break_is_long():
