@@ -1791,7 +1791,6 @@ class App:
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
         win.title(f"{APP_NAME} {__version__}")
-        win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
         win.iconphoto(False, self.window_icon)
@@ -1843,6 +1842,9 @@ class App:
         # тож висота з запасом — нічого не обріжеться
         height = header.winfo_reqheight() + 28 + 24 + max(page.winfo_reqheight() for page in self.pages.values())
         win.geometry(f"{width}x{height}")
+        # Лише після розміру: на macOS resizable(False, False) фіксує поточний розмір як мінімальний
+        # і максимальний — увімкнене раніше, воно лишало вікно таким, яким його вперше показали (сама шапка)
+        win.resizable(False, False)
 
     def close_main(self):
         self.main_win.destroy()
@@ -2728,6 +2730,8 @@ def run_smoke_test(app, out_dir):
 
     steps = [
         (app.open_main, None),
+        (lambda: print(f"smoke test: main window {app.main_win.winfo_width()}x{app.main_win.winfo_height()}, "
+                       f"screen {app.root.winfo_screenwidth()}x{app.root.winfo_screenheight()}", file=sys.stderr), None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
         (lambda: app.set_stats_range(30), "stats_30"),
