@@ -356,10 +356,14 @@ class MainWindow:
         start = logged.get("day_start") or today["day_start"]
         if start:
             marks.append((start, t("sch_day_start"), C["accent"], "done", "day"))
+        # Запланований кінець дня (з налаштувань) лишається на своєму місці: до нього — порожній кружечок,
+        # після, якщо день триває, — приглушений, «пропущений». Справжнє завершення — окрема заповнена позначка
+        if self.cfg["day_end_enabled"] and planned:
+            passed = self.minute(now) >= self.cfg["day_end_at"]
+            marks.append((self.cfg["day_end_at"], t("sch_day_end"), C["accent"], "skip" if passed else "later", "day"))
         end = logged.get("day_end") or today["day_end"]
-        if end or (self.cfg["day_end_enabled"] and planned):
-            marks.append((end or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
-                          "done" if end else "later", "day"))
+        if end:
+            marks.append((end, t("tl_day_finished"), C["accent"], "done", "day"))
         return sorted(marks, key=lambda mark: mark[0])
 
     def draw_timeline(self, force=False):
@@ -609,7 +613,7 @@ class MainWindow:
                 text, hot = t("sch_in", time=fmt_clock(cfg["day_end_at"]), left=fmt_minutes(left_min)), False
             else:
                 text, hot = t("sch_rest", time=fmt_clock(cfg["day_end_at"])), True
-            timed.append((cfg["day_end_at"], ("day_end", t("sch_day_end"), text, hot)))
+            timed.append((finished or cfg["day_end_at"], ("day_end", t("sch_day_end"), text, hot)))
         return [long_row] + [row for _minute, row in sorted(timed, key=lambda item: item[0])]
 
     def refresh_schedule(self):

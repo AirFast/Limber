@@ -24,7 +24,7 @@ import pystray  # noqa: E402 — після перенаправлення stder
 
 import i18n  # noqa: E402
 import updates  # noqa: E402
-from core import (ACTIVE_IDLE_SEC, APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, PAUSE_KINDS,  # noqa: E402
+from core import (APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, PAUSE_KINDS,  # noqa: E402
                   STATE_PATH, TYPICAL_START, WORKING, Scheduler, Stats, absence_span, apply_water_profile,
                   at_workday_minute, average_minute, day_minute, fmt_time, load_config, load_json, minute_of_day,
                   save_config, save_json, set_language_setting, work_started, workday_date, workday_span)
@@ -464,6 +464,9 @@ class App(Popups, MainWindow):
                 self.stats.log("overwork", self.minute())
                 self.show_overwork()
             elif event == "day_continued":
+                # День триває — він не завершений: прибираємо час завершення, кнопка «Завершити день» повертається
+                self.stats.set("day_end", 0)
+                self.stats.unlog("day_end")
                 self.icon.update_menu()
             elif event == "back":
                 self.log_away()
@@ -473,7 +476,6 @@ class App(Popups, MainWindow):
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
         self.note_day_start(idle)
-        self.note_day_end(idle)
         if self.sched.state == WORKING:  # перерва, їжа, пауза, відсутність — не робота
             self.work_pending += delta
             if self.work_pending >= 60:
@@ -499,17 +501,6 @@ class App(Popups, MainWindow):
             self.stats.log("day_start", minute, replace=())
             self.day_start_noted = today
             self.refresh_water_plan()  # відомий початок дня — точніший інтервал води
-
-    def note_day_end(self, idle):
-        """День завершили, а людина працює далі — кінцем дня стає її остання дія, а не натискання кнопки."""
-        now = dt.datetime.now()
-        if not self.sched.day_finished(now) or idle >= ACTIVE_IDLE_SEC:
-            return
-        last = now - dt.timedelta(seconds=idle)
-        minute = minute_of_day(last)
-        if minute > self.stats.day(self.today())["day_end"]:
-            self.stats.set("day_end", minute)
-            self.stats.log("day_end", self.minute(last), replace=())
 
     def flush_work_time(self):
         seconds = int(self.work_pending)

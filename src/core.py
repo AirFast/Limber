@@ -320,6 +320,21 @@ def work_started(now, idle_seconds):
     return minute_of_day(started)
 
 
+ACTIVITY_EVENTS = ("water", "meal", "break", "day_start")
+
+
+def first_activity(rec):
+    """Початок дня — найраніша відома дія: записаний day_start, склянки, їжа, перерви з журналу.
+    Визначення першої дії могло з'явитися посеред дня (оновлення) — тоді раніші склянки чи їжа точніші.
+    Вночі (до EARLIEST_START) — не початок дня."""
+    earliest = EARLIEST_START.hour * 60 + EARLIEST_START.minute
+    times = [rec.get("day_start", 0)] + list(rec.get("water_at", []))
+    times += [m for meal in MEALS for m in rec.get(f"ate_{meal}_at", [])]
+    times += [e["at"] for e in rec.get("events", []) if e.get("type") in ACTIVITY_EVENTS]
+    times = [m for m in times if m and earliest <= m < 24 * 60]
+    return min(times) if times else 0
+
+
 def average_minute(minutes):
     """Середній час дня (хвилини від півночі) для днів, де він є; None — якщо таких днів немає."""
     minutes = [m for m in minutes if m]
@@ -359,7 +374,9 @@ class Stats:
 
     def day(self, date):
         rec = self.data.get(date.isoformat(), {})
-        return {k: rec.get(k, 0) for k in self.KEYS}
+        day = {k: rec.get(k, 0) for k in self.KEYS}
+        day["day_start"] = first_activity(rec)
+        return day
 
     def times(self, date, key):
         """Список моментів події за день (хвилини від півночі), наприклад water_at — коли пили воду."""
@@ -868,6 +885,7 @@ class Scheduler:
         self.until = None          # кінець паузи, «до ранку» чи паузи на їжу
         self.meal = None           # яку їжу їдять (EATING)
         self.finished_at = None    # коли натиснули «Завершити день» (паузу «до ранку»)
+        self.active_since = None   # з якого моменту людина безперервно працює після «Завершити день»
         self.away = False          # людини немає за комп'ютером (див. away_after)
         self.away_idle = 0.0       # найдовша бездіяльність за цю відсутність
         self.last_away = 0.0       # скільки секунд тривала остання відсутність (для журналу на подію "back")
@@ -997,11 +1015,17 @@ class Scheduler:
         events = []
         if self.mode in (PAUSED, FINISHED) and now >= self.until:
             self.mode, self.until = WORKING, None  # пауза скінчилась сама
-        # День завершили, а людина працює далі — день триває: таймери знову йдуть (без повторного питання)
-        if (self.mode == FINISHED and idle < ACTIVE_IDLE_SEC and self.day_finished(now)
-                and now - self.finished_at >= dt.timedelta(minutes=FINISH_GRACE_MIN)):
-            self.mode, self.until = WORKING, None
-            events.append("day_continued")
+        # День завершили, а людина працює далі (FINISH_GRACE_MIN без перерв у діях, а не мить глянути в
+        # пошту) — день триває й більше не завершений: таймери йдуть, «Завершити день» знову доступне,
+        # а про кінець дня вже не питаємо. Так само й після перезапуску, коли «завершено» відновилося зі статистики
+        if self.day_finished(now) and self.mode in (FINISHED, WORKING) and idle < ACTIVE_IDLE_SEC:
+            if self.active_since is None:
+                self.active_since = now
+            elif now - max(self.active_since, self.finished_at) >= dt.timedelta(minutes=FINISH_GRACE_MIN):
+                self.mode, self.until, self.finished_at, self.active_since = WORKING, None, None, None
+                events.append("day_continued")
+        else:
+            self.active_since = None
         # Людини немає довше за довгу перерву — це природна перерва: таймери стоять, а коли повернеться,
         # відлік до перерви почнеться з початку
         if idle >= self.away_after() and self.mode not in (BREAK, EATING):

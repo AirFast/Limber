@@ -353,7 +353,7 @@ def test_restore_day_from_stats():
     s.restore_day(at(10).date(), eaten=["lunch"], finished_minute=17 * 60 + 30)   # день завершили о 17:30
     assert s.finished_at == at(17, 30)
     assert s.meal_state("lunch", at(13)) == ("eat", None)
-    assert s.tick(1, now=at(13)) == [] and s.tick(1, now=at(18)) == []
+    assert s.tick(1, now=at(13)) == [] and "day_end" not in s.tick(1, now=at(18))   # не питаємо вдруге
 
 
 def test_slider_zero_positions():
@@ -645,10 +645,36 @@ def test_finished_day_is_not_asked_again_and_continues_if_still_working():
     s.pause(None, now=at(18, 1))
     assert s.paused_until is not None and s.day_finished(at(18, 2))
     assert s.tick(1, now=at(18, 2), idle=0) == []            # щойно натиснув — ще не «працює далі»
+    assert s.tick(1, now=at(18, 4), idle=0) == []            # 2 хв роботи — ще мало
     assert s.tick(1, now=at(18, 5), idle=0) == ["day_continued"]
     assert s.paused_until is None                            # таймери знову йдуть
-    assert s.tick(1, now=at(19), idle=0) == []               # і про кінець дня вже не питаємо
-    assert not s.day_finished(at(9) + dt.timedelta(days=1))  # нова доба — новий день
+    assert not s.day_finished(at(18, 5))                     # і день знову не завершений
+    assert s.tick(1, now=at(19), idle=0) == []               # про кінець дня вже не питаємо
+
+
+def test_a_quick_look_after_finishing_does_not_continue_the_day():
+    s = make_scheduler()
+    s.pause(None, now=at(18))
+    s.tick(1, now=at(20), idle=0)                             # глянув у пошту
+    s.tick(1, now=at(20, 1), idle=0)
+    assert s.tick(1, now=at(20, 2), idle=5 * 60) == []        # і пішов
+    assert "day_continued" not in s.tick(1, now=at(21), idle=0) and s.day_finished(at(21))
+    assert s.tick(1, now=at(21, 3), idle=0) == ["day_continued"]   # а тепер справді працює
+
+
+def test_restored_finished_day_continues_when_working():
+    s = make_scheduler()
+    s.restore_day(at(10).date(), finished_minute=18 * 60)    # після перезапуску: «завершено о 18:00»
+    assert s.day_finished(at(20)) and s.mode == core.WORKING
+    s.tick(1, now=at(20), idle=0)
+    assert s.tick(1, now=at(20, 3), idle=0) == ["day_continued"] and not s.day_finished(at(20, 3))
+
+
+def test_day_start_is_the_earliest_known_activity():
+    stats = core.Stats.__new__(core.Stats)
+    stats.data = {"2026-10-14": {"day_start": 18 * 60 + 42, "water_at": [16 * 60 + 15, 18 * 60],
+                                 "ate_dinner_at": [17 * 60], "events": [{"type": "break", "at": 3 * 60}]}}
+    assert stats.day(dt.date(2026, 10, 14))["day_start"] == 16 * 60 + 15   # 03:00 — ніч, не рахуємо
 
 
 def test_water_interval_follows_the_actual_workday():
