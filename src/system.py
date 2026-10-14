@@ -124,6 +124,14 @@ def monitors():
     return []
 
 
+def work_area(root):
+    """Робоча область основного екрана (без панелі завдань / рядка меню й Dock): (l, t, r, b)."""
+    screens = monitors()
+    if screens:
+        return screens[0][4]
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight() - 48
+
+
 def _monitors_windows():
     import ctypes
     user32 = ctypes.windll.user32

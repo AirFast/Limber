@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 import exercises  # noqa: E402
 import i18n  # noqa: E402
-import rhythmos  # noqa: E402
+import core  # noqa: E402
 import updates  # noqa: E402
 
 
@@ -21,8 +21,8 @@ def ukrainian():
 
 def make_scheduler(**overrides):
     # Їжа й кінець дня прив'язані до годинника — у тестах вимкнені, якщо їх не ввімкнути явно
-    meals_off = {f"{meal}_enabled": False for meal in rhythmos.MEALS}
-    return rhythmos.Scheduler({**rhythmos.DEFAULTS, **meals_off, "day_end_enabled": False, **overrides})
+    meals_off = {f"{meal}_enabled": False for meal in core.MEALS}
+    return core.Scheduler({**core.DEFAULTS, **meals_off, "day_end_enabled": False, **overrides})
 
 
 def tick(s, seconds):
@@ -154,39 +154,39 @@ def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
 def test_split_balanced_keeps_order_and_evens_columns():
     heights = [275, 212, 310, 330, 390, 130, 125, 150, 150]
     for columns in (2, 3, 4):
-        groups = rhythmos.split_balanced(heights, columns)
+        groups = core.split_balanced(heights, columns)
         assert len(groups) == columns
         assert [i for g in groups for i in g] == list(range(len(heights)))   # порядок карток не змінюється
-    groups = rhythmos.split_balanced(heights, 4)
+    groups = core.split_balanced(heights, 4)
     tallest = max(sum(heights[i] for i in g) + 14 * (len(g) - 1) for g in groups)
     assert tallest == 310 + 330 + 14                                          # найкраще можливе: «пауза + вода»
-    assert rhythmos.split_balanced([100, 100], 3) == [[0], [1]]               # колонок не більше, ніж карток
+    assert core.split_balanced([100, 100], 3) == [[0], [1]]               # колонок не більше, ніж карток
 
 
 def test_main_layout_follows_screen_width():
-    assert rhythmos.main_layout(2520)["columns"] == 4
-    assert rhythmos.main_layout(1240)["columns"] == 3
-    assert rhythmos.main_layout(984) == {"columns": 2, "stat_cards": 3, "width": 900}
+    assert core.main_layout(2520)["columns"] == 4
+    assert core.main_layout(1240)["columns"] == 3
+    assert core.main_layout(984) == {"columns": 2, "stat_cards": 3, "width": 900}
 
 
 def test_completion_rate():
     rec = {"mini_done": 6, "long_done": 2, "skipped": 2}
-    assert rhythmos.completion_rate(rec) == 80
-    assert rhythmos.completion_rate({"mini_done": 0, "long_done": 0, "skipped": 0}) is None
+    assert core.completion_rate(rec) == 80
+    assert core.completion_rate({"mini_done": 0, "long_done": 0, "skipped": 0}) is None
 
 
 def test_water_streak_counts_from_yesterday_until_goal_is_met_today():
-    stats = rhythmos.Stats.__new__(rhythmos.Stats)
+    stats = core.Stats.__new__(core.Stats)
     today = dt.date(2026, 10, 14)
     water = {12: 8, 13: 9, 11: 3}   # 11-го норму не виконано — серія переривається
     stats.data = {dt.date(2026, 10, d).isoformat(): {"water": n} for d, n in water.items()}
-    assert rhythmos.water_streak(stats, 8, today) == 2          # сьогодні ще не випито — рахуємо від учора
+    assert core.water_streak(stats, 8, today) == 2          # сьогодні ще не випито — рахуємо від учора
     stats.data[today.isoformat()] = {"water": 8}
-    assert rhythmos.water_streak(stats, 8, today) == 3
+    assert core.water_streak(stats, 8, today) == 3
 
 
 def test_fmt_hm_and_days():
-    assert rhythmos.fmt_hm(6 * 3600 + 5 * 60 + 59) == "6:05"
+    assert core.fmt_hm(6 * 3600 + 5 * 60 + 59) == "6:05"
     assert [i18n.fmt_days(n) for n in (1, 3, 5, 21)] == ["1 день", "3 дні", "5 днів", "21 день"]
 
 
@@ -249,24 +249,24 @@ def test_postpone_limit():
 @pytest.mark.parametrize("minutes", [2, 3, 5, 7, 10, 15, 30])
 @pytest.mark.parametrize("level", [1, 2, 3])
 def test_workout_fills_exact_duration(minutes, level):
-    steps = rhythmos.build_workout(minutes * 60, level)
+    steps = core.build_workout(minutes * 60, level)
     assert sum(step["secs"] for step in steps) == minutes * 60
     assert steps[0]["kind"] == "warmup" and steps[-1]["kind"] == "cooldown"
 
 
 def test_long_break_without_workout_is_single_step():
-    cfg = dict(rhythmos.DEFAULTS, workout_enabled=False)
-    assert [s["kind"] for s in rhythmos.build_break("long", cfg)] == ["list"]
+    cfg = dict(core.DEFAULTS, workout_enabled=False)
+    assert [s["kind"] for s in core.build_break("long", cfg)] == ["list"]
 
 
 @pytest.mark.parametrize("value, text", [(1, "1 раз"), (2, "2 рази"), (5, "5 разів"), (0, "не можна")])
 def test_fmt_times(value, text):
-    assert rhythmos.fmt_times(value) == text
+    assert core.fmt_times(value) == text
 
 
 @pytest.mark.parametrize("value, text", [(1, "1 склянка (≈0,25 л)"), (4, "4 склянки (≈1 л)"), (8, "8 склянок (≈2 л)")])
 def test_fmt_glasses(value, text):
-    assert rhythmos.fmt_glasses(value) == text
+    assert core.fmt_glasses(value) == text
 
 
 def test_both_languages_have_the_same_strings():
@@ -301,11 +301,11 @@ def test_every_group_has_exercises_for_every_break(group, level):
 
 
 def test_regroup_replaces_only_upcoming_work_steps():
-    steps = rhythmos.build_workout(300, 2)
+    steps = core.build_workout(300, 2)
     first_work = next(i for i, s in enumerate(steps) if s["kind"] == "work")
     before = steps[first_work]["title"]
     start = first_work + 1
-    rhythmos.regroup_workout(steps, start, 2, "legs")
+    core.regroup_workout(steps, start, 2, "legs")
     legs = {title for title, _, _ in exercises.workout_pool(2, "legs")}
     assert steps[first_work]["title"] == before
     assert all(s["title"] in legs for s in steps[start:] if s["kind"] == "work")
@@ -316,44 +316,44 @@ def test_regroup_replaces_only_upcoming_work_steps():
 
 
 def test_single_step_for_group_avoids_current_exercise():
-    cfg = dict(rhythmos.DEFAULTS)
-    current = rhythmos.single_break_step("mini", cfg, "eyes")["title"]
+    cfg = dict(core.DEFAULTS)
+    current = core.single_break_step("mini", cfg, "eyes")["title"]
     for _ in range(20):
-        assert rhythmos.single_break_step("mini", cfg, "eyes", avoid=current)["title"] != current
+        assert core.single_break_step("mini", cfg, "eyes", avoid=current)["title"] != current
 
 
 @pytest.mark.parametrize("profile, goal, interval", [("female", 7, 65), ("male", 8, 60)])
 def test_water_profile_sets_goal_and_reachable_interval(profile, goal, interval):
-    cfg = dict(rhythmos.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
-    rhythmos.apply_water_profile(cfg)
+    cfg = dict(core.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
+    core.apply_water_profile(cfg)
     assert (cfg["water_goal"], cfg["water_interval_min"]) == (goal, interval)
-    assert goal * interval <= rhythmos.WORKDAY_MIN  # мету встигаємо за робочий день
+    assert goal * interval <= core.WORKDAY_MIN  # мету встигаємо за робочий день
 
 
 def test_custom_or_unknown_water_profile_keeps_manual_values():
     for profile in ("custom", "child"):
-        cfg = dict(rhythmos.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
-        rhythmos.apply_water_profile(cfg)
+        cfg = dict(core.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
+        core.apply_water_profile(cfg)
         assert (cfg["water_profile"], cfg["water_goal"], cfg["water_interval_min"]) == ("custom", 12, 180)
 
 
 def test_water_interval_stays_within_slider_range():
-    lo, hi, _step, _fmt = rhythmos.SLIDERS["water_interval_min"]
+    lo, hi, _step, _fmt = core.SLIDERS["water_interval_min"]
     for goal in range(1, 40):
-        assert lo <= rhythmos.water_interval_for(goal) <= hi
+        assert lo <= core.water_interval_for(goal) <= hi
 
 
 def test_every_slider_has_a_label_in_both_languages():
     for lang in i18n.LANGUAGES:
         i18n.set_language(lang)
-        for key in rhythmos.SLIDERS:
+        for key in core.SLIDERS:
             assert i18n.t(f"s_{key}")
 
 
 @pytest.mark.parametrize("fmt, value, text", [
-    (rhythmos.fmt_times, 1, "1 time"), (rhythmos.fmt_times, 3, "3 times"), (rhythmos.fmt_times, 0, "not allowed"),
-    (rhythmos.fmt_glasses, 1, "1 glass (≈0.25 L)"), (rhythmos.fmt_glasses, 8, "8 glasses (≈2 L)"),
-    (rhythmos.fmt_minutes, 90, "1 h 30 min"), (rhythmos.fmt_seconds, 75, "1 min 15 s"), (rhythmos.fmt_warn, 0, "off"),
+    (core.fmt_times, 1, "1 time"), (core.fmt_times, 3, "3 times"), (core.fmt_times, 0, "not allowed"),
+    (core.fmt_glasses, 1, "1 glass (≈0.25 L)"), (core.fmt_glasses, 8, "8 glasses (≈2 L)"),
+    (core.fmt_minutes, 90, "1 h 30 min"), (core.fmt_seconds, 75, "1 min 15 s"), (core.fmt_warn, 0, "off"),
 ])
 def test_english_formatting(fmt, value, text):
     i18n.set_language("en")
@@ -362,7 +362,7 @@ def test_english_formatting(fmt, value, text):
 
 def test_workout_is_built_in_the_current_language():
     i18n.set_language("en")
-    steps = rhythmos.build_workout(300, 2)
+    steps = core.build_workout(300, 2)
     assert steps[0]["phase"] == "WARM-UP" and steps[-1]["phase"] == "COOL-DOWN"
     english_titles = {en[0] for kind, _g, level, _uk, en in exercises.EXERCISES if kind == "workout" and level in (1, 2)}
     assert all(s["title"] in english_titles for s in steps if s["kind"] == "work")
