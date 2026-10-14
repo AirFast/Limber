@@ -155,6 +155,27 @@ def test_single_step_for_group_avoids_current_exercise():
         assert rhythmos.single_break_step("mini", cfg, "eyes", avoid=current)["title"] != current
 
 
+@pytest.mark.parametrize("profile, goal, interval", [("female", 7, 65), ("male", 8, 60)])
+def test_water_profile_sets_goal_and_reachable_interval(profile, goal, interval):
+    cfg = dict(rhythmos.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
+    rhythmos.apply_water_profile(cfg)
+    assert (cfg["water_goal"], cfg["water_interval_min"]) == (goal, interval)
+    assert goal * interval <= rhythmos.WORKDAY_MIN  # мету встигаємо за робочий день
+
+
+def test_custom_or_unknown_water_profile_keeps_manual_values():
+    for profile in ("custom", "child"):
+        cfg = dict(rhythmos.DEFAULTS, water_profile=profile, water_goal=12, water_interval_min=180)
+        rhythmos.apply_water_profile(cfg)
+        assert (cfg["water_profile"], cfg["water_goal"], cfg["water_interval_min"]) == ("custom", 12, 180)
+
+
+def test_water_interval_stays_within_slider_range():
+    lo, hi, _step, _fmt = rhythmos.SLIDERS["water_interval_min"]
+    for goal in range(1, 40):
+        assert lo <= rhythmos.water_interval_for(goal) <= hi
+
+
 def test_every_slider_has_a_label_in_both_languages():
     for lang in i18n.LANGUAGES:
         i18n.set_language(lang)

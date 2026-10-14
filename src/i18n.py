@@ -132,7 +132,9 @@ STRINGS = {
         "demo_tag": "демо",
         "water_goal_done": "Денну мету виконано! Пити можна й далі — особливо в спеку чи після руху.",
         "later": "Пізніше",
-        "drank": "Випив",
+        "drank_female": "Випила",
+        "drank_male": "Випив",
+        "drank_custom": "Готово",  # стать не вказано — нейтрально
         # головне вікно
         "tab_status": "Стан",
         "tab_stats": "Статистика",
@@ -229,6 +231,14 @@ STRINGS = {
         "s_warn_before_sec": "Попередження перед перервою",
         "s_water_interval_min": "Нагадувати кожні",
         "s_water_goal": "Мета на день",
+        "water_profile": "Норма",
+        "water_profile_female": "Жінка",
+        "water_profile_male": "Чоловік",
+        "water_profile_custom": "Вручну",
+        "water_hint_auto": "За рекомендацією EFSA — {volume} напоїв на день (ще близько 20% води дає їжа). "
+                           "Нагадування кожні {interval} — щоб устигнути за 8 годин за комп'ютером.",
+        "water_hint_custom": "Орієнтир EFSA: жінкам {female}, чоловікам {male} напоїв на день. "
+                             "Щоб випити {goal} за 8 годин, нагадуйте щонайменше кожні {interval}.",
         "s_intensity": "Інтенсивність вправ",
         "intensity_1": "легко",
         "intensity_2": "середньо",
@@ -294,7 +304,9 @@ STRINGS = {
         "demo_tag": "demo",
         "water_goal_done": "Daily goal reached! Feel free to keep drinking — especially in the heat or after exercise.",
         "later": "Later",
-        "drank": "Done",
+        "drank_female": "Done",
+        "drank_male": "Done",
+        "drank_custom": "Done",
         "tab_status": "Status",
         "tab_stats": "Statistics",
         "tab_settings": "Settings",
@@ -388,6 +400,14 @@ STRINGS = {
         "s_warn_before_sec": "Warning before a break",
         "s_water_interval_min": "Remind every",
         "s_water_goal": "Daily goal",
+        "water_profile": "Intake",
+        "water_profile_female": "Female",
+        "water_profile_male": "Male",
+        "water_profile_custom": "Custom",
+        "water_hint_auto": "EFSA recommends {volume} of drinks a day (food provides about 20% more). "
+                           "A reminder every {interval} spreads it over 8 hours at the computer.",
+        "water_hint_custom": "EFSA guideline: {female} of drinks a day for women, {male} for men. "
+                             "To drink {goal} in 8 hours, get a reminder at least every {interval}.",
         "s_intensity": "Exercise intensity",
         "intensity_1": "light",
         "intensity_2": "moderate",

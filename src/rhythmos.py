@@ -29,7 +29,7 @@ from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds,
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
@@ -49,6 +49,7 @@ DEFAULTS = {
     "water_enabled": True,
     "water_interval_min": 60,
     "water_goal": 8,
+    "water_profile": "custom",  # "female" / "male" — мета й інтервал за рекомендацією; "custom" — вручну
     "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
     "intensity": 2,
     "workout_enabled": True,
@@ -93,11 +94,37 @@ SLIDERS = {
     "postpone_min": (1, 30, 1, fmt_minutes),
     "postpone_limit": (0, 5, 1, fmt_times),
     "warn_before_sec": (0, 120, 5, fmt_warn),
-    "water_interval_min": (15, 240, 15, fmt_minutes),
+    "water_interval_min": (15, 240, 5, fmt_minutes),
     "water_goal": (4, 16, 1, fmt_glasses),
     "intensity": (1, 3, 1, fmt_intensity),
     "pause_min": (15, 240, 15, fmt_minutes),
 }
+
+# Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
+# близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
+WATER_PROFILES = {"female": 7, "male": 8}
+WORKDAY_MIN = 8 * 60  # нагадування розподіляють денну мету на 8 годин за комп'ютером
+
+
+def water_interval_for(goal):
+    """Найбільший інтервал (кратний кроку повзунка), з яким `goal` склянок встигаємо за робочий день."""
+    lo, hi, step, _fmt = SLIDERS["water_interval_min"]
+    return min(max(WORKDAY_MIN // goal // step * step, lo), hi)
+
+
+def water_plan(profile):
+    """(мета, інтервал у хв) для профілю або None, якщо налаштування ручні."""
+    goal = WATER_PROFILES.get(profile)
+    return (goal, water_interval_for(goal)) if goal else None
+
+
+def apply_water_profile(cfg):
+    """Профіль «жінка»/«чоловік» перекриває мету й інтервал рекомендованими значеннями."""
+    if cfg["water_profile"] not in WATER_PROFILES:
+        cfg["water_profile"] = "custom"
+    plan = water_plan(cfg["water_profile"])
+    if plan:
+        cfg["water_goal"], cfg["water_interval_min"] = plan
 
 WORK_SEC, REST_SEC, WARMUP_SEC = 40, 15, 30
 
@@ -193,6 +220,7 @@ def load_config():
     cfg = dict(DEFAULTS)
     saved = load_json(CONFIG_PATH, {})
     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
+    apply_water_profile(cfg)
     i18n.set_language(cfg["language"] or system.system_language())
     return cfg
 
@@ -610,6 +638,7 @@ class Slider(tk.Frame):
         super().__init__(parent, bg=bg)
         self.lo, self.hi, self.step, self.fmt, self.on_change = lo, hi, step, fmt, on_change
         self.value = self.snap(value)
+        self.enabled = True
         head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
         tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10)).pack(side="left")
@@ -621,7 +650,7 @@ class Slider(tk.Frame):
         self.canvas.bind("<Configure>", lambda e: self.draw())
         self.canvas.bind("<Button-1>", self.drag)
         self.canvas.bind("<B1-Motion>", self.drag)
-        self.canvas.bind("<ButtonRelease-1>", lambda e: self.on_change(self.value))
+        self.canvas.bind("<ButtonRelease-1>", lambda e: self.on_change(self.value) if self.enabled else None)
         self.canvas.bind("<MouseWheel>", self.wheel)
 
     def snap(self, v):
@@ -629,12 +658,24 @@ class Slider(tk.Frame):
         return min(max(v, self.lo), self.hi)
 
     def drag(self, event):
+        if not self.enabled:
+            return
         width = max(self.canvas.winfo_width() - 2 * self.PAD, 1)
         self.set(self.snap(self.lo + (event.x - self.PAD) / width * (self.hi - self.lo)))
 
     def wheel(self, event):
+        if not self.enabled:
+            return
         self.set(self.snap(self.value + (self.step if event.delta > 0 else -self.step)))
         self.on_change(self.value)
+
+    def set_enabled(self, enabled):
+        """Заблокований повзунок лише показує значення (наприклад, розраховане за профілем води)."""
+        if enabled != self.enabled:
+            self.enabled = enabled
+            self.canvas.configure(cursor="hand2" if enabled else "arrow")
+            self.value_label.configure(fg=C["text"] if enabled else C["muted"])
+            self.draw()
 
     def set(self, value):
         if value != self.value:
@@ -648,13 +689,15 @@ class Slider(tk.Frame):
             return
         x0, x1 = self.PAD, width - self.PAD
         xv = x0 + (x1 - x0) * (self.value - self.lo) / (self.hi - self.lo)
+        fill = rgba(C["accent"] if self.enabled else C["dim"])
+        knob = rgba(C["text"] if self.enabled else C["muted"])
 
         def paint(d, s):
             y, r = 13 * s, 3 * s
             d.rounded_rectangle((x0 * s - r, y - r, x1 * s + r, y + r), radius=r, fill=rgba(C["track"]))
-            d.rounded_rectangle((x0 * s - r, y - r, xv * s + r, y + r), radius=r, fill=rgba(C["accent"]))
-            d.ellipse(((xv - 10) * s, y - 10 * s, (xv + 10) * s, y + 10 * s), fill=rgba(C["accent"]))
-            d.ellipse(((xv - 7) * s, y - 7 * s, (xv + 7) * s, y + 7 * s), fill=rgba(C["text"]))
+            d.rounded_rectangle((x0 * s - r, y - r, xv * s + r, y + r), radius=r, fill=fill)
+            d.ellipse(((xv - 10) * s, y - 10 * s, (xv + 10) * s, y + 10 * s), fill=fill)
+            d.ellipse(((xv - 7) * s, y - 7 * s, (xv + 7) * s, y + 7 * s), fill=knob)
 
         self.photo = ImageTk.PhotoImage(smooth_image(width, 26, paint, self["bg"]))
         self.canvas.delete("all")
@@ -1186,8 +1229,9 @@ class App:
         buttons = tk.Frame(win, bg=C["panel"])
         buttons.pack(anchor="e", padx=16, pady=14)
         flat_button(buttons, t("later"), lambda: self.end_water(False), bg=C["bg"], size=11).pack(side="left", padx=4)
-        flat_button(buttons, t("drank"), lambda: self.end_water(True), bg=C["water"], fg=C["on_water"],
-                    size=11, image=check_mark(16, C["on_water"])).pack(side="left", padx=4)
+        drank = t(f"drank_{self.cfg['water_profile']}")  # «Випила» / «Випив» / нейтральне «Готово»
+        flat_button(buttons, drank, lambda: self.end_water(True), bg=C["water"], fg=C["on_water"], size=11,
+                    image=check_mark(16, C["on_water"])).pack(side="left", padx=4)
         win.update_idletasks()
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
@@ -1598,8 +1642,7 @@ class App:
         water.pack(fill="x")
         Toggle(water, t("water_toggle"), self.cfg["water_enabled"],
                lambda v: self.set_setting("water_enabled", v)).pack(fill="x", pady=(0, 8))
-        self.add_slider(water, "water_interval_min")
-        self.add_slider(water, "water_goal")
+        self.build_water_profile(water)
         other = card(right, t("card_other"))
         other.pack(fill="x", pady=(14, 0))
         self.build_language_switch(other).pack(fill="x", pady=(0, 6))
@@ -1636,6 +1679,63 @@ class App:
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.change_language(c))
         return row
+
+    def build_water_profile(self, parent):
+        """Перемикач «Норма: жінка / чоловік / вручну», підказка-рекомендація і повзунки води."""
+        row = tk.Frame(parent, bg=parent["bg"])
+        row.pack(fill="x", pady=(0, 4))
+        tk.Label(row, text=t("water_profile"), bg=parent["bg"], fg=C["text"], font=font(11)).pack(side="left")
+        segments = tk.Frame(row, bg=C["panel"])
+        segments.pack(side="right")
+        self.w["water_profile"] = {}
+        for code in (*WATER_PROFILES, "custom"):
+            btn = tk.Label(segments, text=t(f"water_profile_{code}"), font=font(10), padx=10, pady=3, cursor="hand2")
+            btn.pack(side="left", padx=2, pady=2)
+            btn.bind("<Button-1>", lambda e, c=code: self.set_water_profile(c))
+            self.w["water_profile"][code] = btn
+        hint = tk.Label(parent, bg=parent["bg"], fg=C["muted"], font=font(9), justify="left", anchor="w")
+        hint.pack(fill="x", pady=(0, 10))
+        hint.bind("<Configure>", lambda e: hint.configure(wraplength=e.width))
+        self.w["water_hint"] = hint
+        self.w["water_sliders"] = {}
+        for key in ("water_interval_min", "water_goal"):
+            lo, hi, step, fmt = SLIDERS[key]
+
+            def change(v, k=key):
+                self.set_setting(k, v)
+                self.refresh_water_profile()  # підказка для ручного режиму залежить від мети
+
+            slider = Slider(parent, t(f"s_{key}"), lo, hi, step, self.cfg[key], fmt, change)
+            slider.pack(fill="x", pady=(0, 10))
+            self.w["water_sliders"][key] = slider
+        self.refresh_water_profile()
+
+    def refresh_water_profile(self):
+        profile = self.cfg["water_profile"]
+        for code, btn in self.w["water_profile"].items():
+            active = code == profile
+            btn.configure(bg=C["water"] if active else C["panel"], fg=C["on_water"] if active else C["muted"])
+        for key, slider in self.w["water_sliders"].items():
+            slider.set(self.cfg[key])
+            slider.set_enabled(profile == "custom")
+        goal = self.cfg["water_goal"]
+        if profile == "custom":
+            text = t("water_hint_custom", female=fmt_volume(WATER_PROFILES["female"]),
+                     male=fmt_volume(WATER_PROFILES["male"]), goal=fmt_glasses(goal),
+                     interval=fmt_minutes(water_interval_for(goal)))
+        else:
+            text = t("water_hint_auto", volume=fmt_volume(goal), interval=fmt_minutes(self.cfg["water_interval_min"]))
+        self.w["water_hint"].configure(text=text)
+
+    def set_water_profile(self, profile):
+        if profile == self.cfg["water_profile"]:
+            return
+        self.cfg["water_profile"] = profile
+        apply_water_profile(self.cfg)
+        save_json(CONFIG_PATH, self.cfg)
+        self.sched.apply_config()
+        self.flash_saved()
+        self.refresh_water_profile()
 
     def change_language(self, code):
         if code == i18n.get_language():
