@@ -2730,6 +2730,8 @@ def run_smoke_test(app, out_dir):
         (app.open_main, None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
+        (lambda: app.set_stats_range(30), "stats_30"),
+        (lambda: app.set_stats_range(7), None),
         (lambda: page("settings"), "settings"),
         (lambda: app.change_language("en" if i18n.get_language() == "uk" else "uk"), None),
         (lambda: None, "settings_other_language"),

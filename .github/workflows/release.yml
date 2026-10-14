@@ -38,6 +38,25 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '' }
           if ($version) { ./build.ps1 -Version $version } else { ./build.ps1 }
 
+      # Запускає зібраний Rhythmos.exe, проходить усі вікна й робить знімки екрана (як і на macOS)
+      - name: Smoke test (UI screenshots)
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $smoke = Join-Path $PWD "smoke"
+          $p = Start-Process dist/Rhythmos/Rhythmos.exe -ArgumentList "--smoke-test", "`"$smoke`"" -PassThru -Wait
+          New-Item -ItemType Directory -Force $smoke | Out-Null
+          Copy-Item "$env:APPDATA/Rhythmos/rhythmos.log" $smoke -ErrorAction SilentlyContinue
+          Get-Content "$smoke/rhythmos.log" -Tail 20 -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "smoke test exit code $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-smoke
+          path: smoke/
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v7
         with:
           name: windows
