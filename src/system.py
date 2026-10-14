@@ -212,6 +212,264 @@ def screenshot(path):
         ImageGrab.grab(all_screens=True).save(path)
 
 
+# ---------- зайнятість: повноекранні програми й дзвінки ----------
+
+def busy_reason():
+    """Чи не можна зараз перебивати людину повноекранною перервою.
+
+    None — можна; інакше коротка причина: "fullscreen" (гра, відео, презентація на весь екран),
+    "camera" або "microphone" (найімовірніше — дзвінок). Дешева (кілька мілісекунд), тож її можна
+    викликати хоч щосекунди; на macOS — з головного потоку (NSScreen). Ніколи не кидає винятків:
+    якщо ОС не відповіла — вважаємо, що людина не зайнята."""
+    if IS_WINDOWS:
+        checks = (("fullscreen", _fullscreen_windows),
+                  ("camera", lambda: _device_in_use(_consent_apps("webcam"))),
+                  ("microphone", lambda: _device_in_use(_consent_apps("microphone"))))
+    elif IS_MAC:
+        checks = (("fullscreen", _fullscreen_mac), ("camera", _camera_in_use_mac),
+                  ("microphone", _microphone_in_use_mac))
+    else:
+        return None
+    for reason, check in checks:
+        try:
+            if check():
+                return reason
+        except Exception:
+            pass
+    return None
+
+
+def _covers_monitor(window_rect, monitor_rect):
+    """Чи закриває вікно весь монітор. Обидва прямокутники — (left, top, right, bottom).
+    Розгорнуте вікно сюди не потрапляє: воно закінчується над панеллю завдань / Dock."""
+    left, top, right, bottom = window_rect
+    m_left, m_top, m_right, m_bottom = monitor_rect
+    return (m_right > m_left and m_bottom > m_top
+            and left <= m_left and top <= m_top and right >= m_right and bottom >= m_bottom)
+
+
+# Windows: робочий стіл і панель завдань теж «вікна на весь екран» — їх пропускаємо
+_SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+
+
+def _is_fullscreen_window(class_name, pid, own_pid, rect, monitor, maximized_with_title=False):
+    """Windows: чи є активне вікно повноекранною програмою.
+    Власні вікна не рахуємо — екран перерви Rhythmos сам повноекранний. Розгорнуте вікно із
+    заголовком при автоприховуванні панелі завдань теж закриває монітор, але це не повний екран."""
+    if pid == own_pid or class_name in _SHELL_CLASSES or maximized_with_title:
+        return False
+    return _covers_monitor(rect, monitor)
+
+
+def _device_in_use(apps):
+    """apps — значення реєстру ConsentStore для кожної програми (словники).
+    Пристрій зайнятий, якщо якась програма почала ним користуватися (LastUsedTimeStart ≠ 0)
+    і ще не закінчила (LastUsedTimeStop = 0)."""
+    return any(app.get("LastUsedTimeStart") and app.get("LastUsedTimeStop") == 0 for app in apps)
+
+
+# macOS: системні вікна, які можуть займати весь екран, але не означають, що людина зайнята
+_MAC_SYSTEM_OWNERS = {"Dock", "Window Server", "SystemUIServer", "Control Center", "Notification Center",
+                      "WindowManager"}
+
+
+def _fullscreen_in(windows, screens, own_pid):
+    """macOS: чи є серед вікон (словники CGWindowListCopyWindowInfo) звичайне (шар 0) непрозоре
+    вікно іншої програми, що закриває якийсь екран. screens — [(left, top, right, bottom)] у
+    координатах Quartz (від верхнього лівого кута основного екрана)."""
+    for window in windows:
+        if window.get("kCGWindowLayer") != 0 or window.get("kCGWindowOwnerPID") == own_pid:
+            continue
+        if window.get("kCGWindowOwnerName") in _MAC_SYSTEM_OWNERS or float(window.get("kCGWindowAlpha", 1)) <= 0:
+            continue
+        bounds = window.get("kCGWindowBounds") or {}
+        x, y = float(bounds.get("X", 0)), float(bounds.get("Y", 0))
+        rect = (x, y, x + float(bounds.get("Width", 0)), y + float(bounds.get("Height", 0)))
+        if any(_covers_monitor(rect, screen) for screen in screens):
+            return True
+    return False
+
+
+_user32 = None
+
+
+def _user32_api():
+    """Окремий екземпляр user32 з точними типами (дескриптори 64-бітні), щоб не змінювати
+    спільний ctypes.windll.user32, яким користується решта модуля."""
+    global _user32
+    if _user32 is None:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32")
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        for fn in (user32.IsWindowVisible, user32.IsZoomed):
+            fn.argtypes, fn.restype = [wintypes.HWND], wintypes.BOOL
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.MonitorFromWindow.restype = wintypes.HMONITOR
+        user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.c_void_p]
+        _user32 = user32
+    return _user32
+
+
+def _fullscreen_windows():
+    """Windows: активне вікно іншої програми закриває весь свій монітор (разом із панеллю завдань)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD)]
+
+    user32 = _user32_api()
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd or not user32.IsWindowVisible(hwnd):
+        return False  # заблокований екран, перемикання вікон
+    name = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, name, 64)
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+    if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return False
+    titled = (user32.GetWindowLongW(hwnd, -16) & 0x00C00000) == 0x00C00000  # GWL_STYLE, WS_CAPTION
+    m = info.rcMonitor
+    return _is_fullscreen_window(name.value, pid.value, os.getpid(), (rect.left, rect.top, rect.right, rect.bottom),
+                                 (m.left, m.top, m.right, m.bottom),
+                                 maximized_with_title=titled and bool(user32.IsZoomed(hwnd)))
+
+
+_CONSENT_STORE = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+
+
+def _consent_apps(capability):
+    """Windows: значення LastUsedTimeStart/Stop кожної програми, що зверталася до пристрою
+    (webcam або microphone) — ті самі дані, з яких Windows показує значок камери/мікрофона в треї.
+    Програми з Microsoft Store — прямо під ключем пристрою, звичайні — під «NonPackaged».
+    Генератор: busy_reason зупиняється на першій програмі, що зараз користується пристроєм."""
+    import winreg
+    for path in (rf"{_CONSENT_STORE}\{capability}", rf"{_CONSENT_STORE}\{capability}\NonPackaged"):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, path)
+        except OSError:
+            continue
+        with key:
+            index = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(key, index)
+                except OSError:
+                    break
+                index += 1
+                values = {}
+                try:
+                    with winreg.OpenKey(key, name) as app:
+                        for value in ("LastUsedTimeStop", "LastUsedTimeStart"):
+                            try:
+                                values[value] = winreg.QueryValueEx(app, value)[0]
+                            except OSError:
+                                pass
+                except OSError:
+                    continue
+                yield values
+
+
+def _fullscreen_mac():
+    """macOS: вікно іншої програми на весь екран (повноекранний режим, відео, презентація).
+    Список вікон і їхні межі доступні без дозволу «Запис екрана» — потрібні лише назви вікон."""
+    from Quartz import (CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
+                        kCGWindowListOptionOnScreenOnly)
+    screens = [(x, y, x + w, y + h) for x, y, w, h, _work, _main in _monitors_mac()]
+    windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+                                         kCGNullWindowID) or []
+    return _fullscreen_in(windows, screens, os.getpid())
+
+
+# macOS: CoreAudio і CoreMediaIO викликаємо через ctypes — без додаткових пакетів pyobjc
+_mac_frameworks = {}
+
+
+def _fourcc(code):
+    """Чотирисимвольний код Apple ('dIn ') → UInt32."""
+    return int.from_bytes(code.encode("ascii"), "big")
+
+
+def _mac_property_api(framework):
+    """(GetPropertyDataSize, GetPropertyData, структура адреси властивості) для CoreAudio або CoreMediaIO.
+    Обидві мають однакову модель «об'єкт → властивість {selector, scope, element}»."""
+    if framework not in _mac_frameworks:
+        import ctypes
+
+        class PropertyAddress(ctypes.Structure):
+            _fields_ = [("selector", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("element", ctypes.c_uint32)]
+
+        lib = ctypes.CDLL(f"/System/Library/Frameworks/{framework}.framework/{framework}")
+        prefix = "AudioObject" if framework == "CoreAudio" else "CMIOObject"
+        size_fn, data_fn = getattr(lib, prefix + "GetPropertyDataSize"), getattr(lib, prefix + "GetPropertyData")
+        common = [ctypes.c_uint32, ctypes.POINTER(PropertyAddress), ctypes.c_uint32, ctypes.c_void_p]
+        size_fn.argtypes = common + [ctypes.POINTER(ctypes.c_uint32)]
+        if framework == "CoreAudio":  # (…, UInt32 *ioDataSize, void *outData)
+            data_fn.argtypes = common + [ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+        else:  # CMIO: (…, UInt32 dataSize, UInt32 *dataUsed, void *data)
+            data_fn.argtypes = common + [ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+        size_fn.restype = data_fn.restype = ctypes.c_int32
+        _mac_frameworks[framework] = (size_fn, data_fn, PropertyAddress)
+    return _mac_frameworks[framework]
+
+
+def _mac_property(framework, obj, selector, as_list=False):
+    """Значення UInt32-властивості об'єкта (або список, якщо as_list). None — якщо ОС не відповіла
+    (зокрема, властивості немає в цій версії macOS)."""
+    import ctypes
+    size_fn, data_fn, PropertyAddress = _mac_property_api(framework)
+    address = PropertyAddress(_fourcc(selector), _fourcc("glob"), 0)  # scope global, element main
+    size = ctypes.c_uint32(4)
+    if as_list and size_fn(obj, ctypes.byref(address), 0, None, ctypes.byref(size)):
+        return None
+    data = (ctypes.c_uint32 * max(1, size.value // 4))()
+    if framework == "CoreAudio":
+        status = data_fn(obj, ctypes.byref(address), 0, None, ctypes.byref(size), data)
+    else:
+        status = data_fn(obj, ctypes.byref(address), 0, None, size.value, ctypes.byref(size), data)
+    if status:
+        return None
+    return list(data[:size.value // 4]) if as_list else data[0]
+
+
+def _microphone_in_use_mac():
+    """macOS: хтось записує звук із мікрофона — та сама ознака, що й помаранчева крапка в рядку меню.
+    macOS 14+: перебираємо аудіопроцеси (kAudioHardwarePropertyProcessObjectList) і дивимося, чи
+    котрийсь (не ми) має активний вхід. Старіші версії: чи працює стандартний пристрій введення
+    (kAudioDevicePropertyDeviceIsRunningSomewhere) — менш точно: USB-гарнітура з одним пристроєм на
+    вхід і вихід «працює» й тоді, коли в ній просто грає музика. Дозволу на мікрофон не потрібно."""
+    processes = _mac_property("CoreAudio", 1, "prs#", as_list=True)  # 1 — kAudioObjectSystemObject
+    if processes is not None:
+        own = os.getpid()
+        return any(_mac_property("CoreAudio", p, "piri") and _mac_property("CoreAudio", p, "ppid") != own
+                   for p in processes)
+    device = _mac_property("CoreAudio", 1, "dIn ")  # kAudioHardwarePropertyDefaultInputDevice
+    return bool(device) and bool(_mac_property("CoreAudio", device, "gone"))
+
+
+def _camera_in_use_mac():
+    """macOS: якась програма зараз знімає камерою (зелена крапка біля камери).
+    CoreMediaIO віддає список камер і kCMIODevicePropertyDeviceIsRunningSomewhere для кожної
+    без дозволу на камеру — на сам потік ми не підписуємося. Віртуальні камери (OBS тощо) теж
+    рахуються, коли їх хтось використовує."""
+    devices = _mac_property("CoreMediaIO", 1, "dev#", as_list=True)  # 1 — kCMIOObjectSystemObject
+    return any(_mac_property("CoreMediaIO", d, "gone") for d in devices or [])
+
+
 # ---------- звук і сповіщення ----------
 
 # Windows: події стандартної звукової схеми («Панель керування → Звук → Звуки»).
