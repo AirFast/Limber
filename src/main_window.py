@@ -383,6 +383,7 @@ class MainWindow:
         minute = self.minute(now)
         marks = self.timeline_marks(now, events)
         drinks = [e["at"] for e in events if e["type"] == "water"] or self.stats.times(today, "water_at")
+        missed = [e["at"] for e in events if e["type"] == "water_missed"]  # нагадування без склянки
         breaks = [e for e in events if e["type"] == "break" and e.get("result") in ("done", "skipped")]
         spans = event_spans(events, minute)
         s = self.sched
@@ -390,14 +391,14 @@ class MainWindow:
         if self.cfg["water_enabled"] and not s.water_open and not s.water_done and not (s.paused and s.pause_water):
             next_water = minute + round(s.water_remaining / 60)
         idle = s.paused or bool(s.eating)
-        key = (width, minute, tuple(marks), tuple(drinks), next_water, idle,
+        key = (width, minute, tuple(marks), tuple(drinks), tuple(missed), next_water, idle,
                tuple(tuple(sorted(e.items())) for e in events))
         if not force and key == self._timeline_key:
             return
         self._timeline_key = key
         # Межі шкали: від ранку (не пізніше 8:00 чи першої події) до кінця дня (не раніше 18:00 і не раніше
         # «зараз»), по годинах — уміщаються всі позначки й проміжки
-        times = ([m[0] for m in marks] + drinks + [e["at"] for e in breaks] + [minute]
+        times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks] + [minute]
                  + [m for span in spans for m in span[1:3]])
         start = (min([8 * 60] + times) - 30) // 60 * 60
         end = -(-(max([18 * 60] + times) + 30) // 60) * 60
@@ -416,8 +417,11 @@ class MainWindow:
             r = 3 * sc
             d.rounded_rectangle((pad * sc - r, y * sc - r, (width - pad) * sc + r, y * sc + r), radius=r,
                                 fill=rgba(C["track"]))
-            if minute > start:
-                d.rounded_rectangle((pad * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
+            # Зелене — робочий час: від початку дня (якщо він уже відомий) до «зараз»
+            day_start = self.stats.day(today)["day_start"]
+            x0 = x_of(day_start) if day_start else pad
+            if minute > start and xn > x0:
+                d.rounded_rectangle((x0 * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
             # Проміжки — тонкі смужки по самій смузі дня (не вужчі за 3 px, щоб і короткі було видно)
             for kind, a, b, event in spans:
@@ -442,7 +446,9 @@ class MainWindow:
                     dot(x_of(e["at"]), 3.5, C["accent"])
                 else:
                     dot(x_of(e["at"]), 3.5, C["dim"], ring=1.4)
-            for m in drinks:  # склянки
+            for m in missed:  # пропущені склянки — порожні приглушені, як пропущені перерви
+                dot(x_of(m), 5, C["dim"], ring=1.8)
+            for m in drinks:  # випиті склянки — у момент, коли їх позначили
                 dot(x_of(m), 5, C["water"])
             # Наступне нагадування про воду — лише якщо не ховається за позначкою їжі чи кінця дня
             if (next_water is not None and next_water <= end
@@ -480,7 +486,7 @@ class MainWindow:
         def clash(box, tier):
             return [b for b in placed[tier] if not (box[0] > b[2] + 8 or box[2] < b[0] - 8)]
 
-        self.timeline_points = self.timeline_tips(marks, drinks, breaks, next_water, now, x_of, end)
+        self.timeline_points = self.timeline_tips(marks, drinks, breaks, next_water, now, x_of, end, missed)
         self.timeline_spans = self.timeline_span_tips(spans, x_of)
         for m, name, color, state, kind in marks:
             if kind != "day":
@@ -514,13 +520,14 @@ class MainWindow:
                 groups.append([item])
         return groups
 
-    def timeline_tips(self, marks, drinks, breaks, next_water, now, x_of, end):
+    def timeline_tips(self, marks, drinks, breaks, next_water, now, x_of, end, missed=()):
         """[(x, текст підказки)] для позначок без підпису — просто «Назва: час»: «Вечеря: 18:37»,
         «Вода: 17:19», «Довга перерва: 10:30». Стан (з'їдено, пропущено) видно з самої позначки;
         близькі склянки й перерви — однією підказкою з кількома часами."""
         points = [(x_of(m), f"{name}: {fmt_clock(m)}") for m, name, _color, _state, kind in marks if kind == "meal"]
-        for group in self.grouped([(m,) for m in drinks], x_of):
-            points.append((x_of(group[0][0]), f"{t('tl_water')}: {', '.join(fmt_clock(g[0]) for g in group)}"))
+        for times, name in ((drinks, t("tl_water")), (missed, t("tl_water_missed"))):
+            for group in self.grouped([(m,) for m in times], x_of):
+                points.append((x_of(group[0][0]), f"{name}: {', '.join(fmt_clock(g[0]) for g in group)}"))
         for group in self.grouped([(e["at"], e) for e in breaks], x_of):
             x = sum(x_of(m) for m, _e in group) / len(group)
             if len(group) == 1:

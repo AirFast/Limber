@@ -556,6 +556,8 @@ class Popups:
         if drank:
             self.stats.add("water")
             self.log_water_times(1)
+        else:  # «Пізніше» чи нагадування зникло без відповіді — на шкалі дня це пропущена склянка
+            self.stats.log("water_missed", self.minute())
         self.sync_day()  # темп наступної склянки — з урахуванням щойно випитої
         self.sched.water_answered(drank)
 
