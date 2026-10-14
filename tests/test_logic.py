@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import os
 import sys
 
@@ -26,11 +27,21 @@ def make_scheduler(**overrides):
     return core.Scheduler({**core.DEFAULTS, **meals_off, "day_end_enabled": False, **overrides})
 
 
-def tick(s, seconds):
+def at(hour, minute=0, second=0):
+    """Мить тестового дня — середи 14.10.2026: тести не залежать від годинника машини."""
+    return dt.datetime(2026, 10, 14, hour, minute, second)
+
+
+def tick_at(s, start, seconds, **kwargs):
+    """Тікає по секунді, рухаючи й годинник."""
     events = []
-    for _ in range(seconds):
-        events += s.tick(1)
+    for i in range(seconds):
+        events += s.tick(1, now=start + dt.timedelta(seconds=i), **kwargs)
     return events
+
+
+def tick(s, seconds, start=at(10)):
+    return tick_at(s, start, seconds)
 
 
 def test_break_fires_after_interval_with_warning():
@@ -42,15 +53,15 @@ def test_break_fires_after_interval_with_warning():
 def test_timer_is_frozen_during_break_and_pause():
     s = make_scheduler(mini_interval_min=1)
     tick(s, 60)
-    assert s.tick(100) == []
+    assert s.tick(100, now=at(10, 1)) == []
     s.finish_break()
-    s.pause(30)
-    assert s.tick(1000) == [] and s.remaining == 60
+    s.pause(30, now=at(10, 1))
+    assert s.tick(1000, now=at(10, 2)) == [] and s.remaining == 60
 
 
 def test_timed_pause_stops_breaks_but_not_water():
     s = make_scheduler(mini_interval_min=1, water_interval_min=5, warn_before_sec=0)
-    s.pause(30)
+    s.pause(30, now=at(10))
     events = tick(s, 5 * 60)
     assert events == ["water"]          # вода нагадала, хоча перерви на паузі
     assert s.remaining == 60            # відлік до перерви стоїть
@@ -58,23 +69,12 @@ def test_timed_pause_stops_breaks_but_not_water():
 
 def test_pause_until_morning_stops_water_too():
     s = make_scheduler(mini_interval_min=1, water_interval_min=5, warn_before_sec=0)
-    s.pause(None)
-    assert tick(s, 10 * 60) == []
+    s.pause(None, now=at(10))
+    # Людина не працює далі (інакше день продовжився б), але й не пішла — лише читає без миші
+    assert tick_at(s, at(10), 10 * 60, idle=2 * 60) == []
     assert s.water_remaining == 5 * 60
     s.resume()
-    assert tick(s, 60) == ["break"]     # після «Продовжити» все знову рахується
-
-
-def at(hour, minute=0, second=0):
-    return dt.datetime(2026, 10, 14, hour, minute, second)
-
-
-def tick_at(s, start, seconds):
-    """Тікає по секунді, рухаючи й годинник."""
-    events = []
-    for i in range(seconds):
-        events += s.tick(1, now=start + dt.timedelta(seconds=i))
-    return events
+    assert tick(s, 60, start=at(10, 10)) == ["break"]     # після «Продовжити» все знову рахується
 
 
 def test_lunch_reminds_once_at_its_time():
@@ -124,7 +124,7 @@ def test_eating_freezes_timers_and_asks_to_continue():
 
 def test_going_to_eat_cancels_timed_pause():
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
-    s.pause(30)
+    s.pause(30, now=at(12, 59))
     assert s.tick(1, now=at(13)) == ["meal"]    # звичайна пауза їжі не заважає
     s.meal_answered("eat", now=at(13))
     assert s.paused_until is None and s.eating == "lunch"
@@ -150,6 +150,226 @@ def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
     s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
     s.pause(None, now=at(17, 59))                      # час фіксований: не залежить від годинника машини
     assert s.tick(1, now=at(18)) == []
+
+
+def test_each_state_freezes_what_the_table_says():
+    s = make_scheduler(mini_interval_min=20, water_interval_min=60, warn_before_sec=0)
+    assert s.state == core.WORKING and s.frozen() == frozenset()
+    s.pause(30, now=at(10))
+    assert s.state == core.PAUSED and s.frozen() == {core.BREAKS}
+    s.tick(5 * 60, now=at(10, 1), idle=10 * 60)                 # відійшов під час паузи
+    assert s.state == core.AWAY and s.mode == core.PAUSED       # пауза не губиться
+    assert s.frozen() == {core.BREAKS, core.WATER, core.CLOCK}
+    assert s.tick(1, now=at(10, 40), idle=0) == ["back"]       # пауза тим часом скінчилась
+    assert s.state == core.WORKING
+
+
+def test_timed_pause_ends_by_itself():
+    s = make_scheduler()
+    s.pause(30, now=at(10))
+    assert s.paused and s.paused_until == at(10, 30)
+    s.tick(1, now=at(10, 30))
+    assert not s.paused and s.mode == core.WORKING
+
+
+def test_workday_belongs_to_the_previous_date_until_the_boundary():
+    assert core.workday_date(at(0, 30)) == dt.date(2026, 10, 13)
+    assert core.workday_date(at(4)) == dt.date(2026, 10, 14)
+    assert core.workday_date(at(5, 59), boundary_hour=6) == dt.date(2026, 10, 13)
+    assert core.work_started(at(4, 30), 0, boundary_hour=5) is None          # ще вчорашня ніч
+    assert core.work_started(at(5, 30), 0, boundary_hour=5) == 5 * 60 + 30
+    s = make_scheduler(day_boundary_hour=5)
+    s.pause(None, now=at(23))
+    assert s.paused_until == at(7) + dt.timedelta(days=1)                   # межа доби + 2 год
+    # Вечеря після півночі в п'ятницю — ще п'ятниця, а не вихідний
+    s = make_scheduler(lunch_enabled=True, workdays=[4])
+    assert s.reminders_today(dt.datetime(2026, 10, 17, 1, 0))
+    assert not s.reminders_today(dt.datetime(2026, 10, 17, 9, 0))
+
+
+def test_stats_are_written_to_the_current_workday(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, "STATS_PATH", str(tmp_path / "stats.json"))
+    stats = core.Stats(today=lambda: core.workday_date(at(0, 30)))
+    stats.add("work_sec", 60)
+    assert stats.day(dt.date(2026, 10, 13))["work_sec"] == 60 and stats.day(at(0).date())["work_sec"] == 0
+
+
+def test_day_end_after_midnight_still_belongs_to_the_evening():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    assert s.tick(1, now=at(0, 30) + dt.timedelta(days=1)) == ["day_end"]   # працює далеко за північ
+    s.day_end_answered("finish", now=at(0, 31) + dt.timedelta(days=1))
+    assert s.tick(1, now=at(18) + dt.timedelta(days=1)) == ["day_end"]      # наступного вечора — знову
+
+
+def test_long_absence_counts_as_a_long_break():
+    s = make_scheduler(long_every=3, long_duration_min=5, mini_interval_min=20)
+    s.finish_break()
+    assert s.breaks_until_long() == 2
+    tick_at(s, at(10), 20, idle=6 * 60)                       # 6 хв — відсутність, але не довга перерва
+    s.tick(1, now=at(10, 1), idle=0)
+    assert s.breaks_until_long() == 2
+    s.tick(1, now=at(11), idle=10 * 60)                      # 10 хв = 2 × довга перерва
+    assert s.tick(1, now=at(11, 1), idle=0) == ["back"]
+    assert s.breaks_until_long() == 3 and s.next_kind() == "mini"
+
+
+def test_skipped_long_break_comes_back_once():
+    s = make_scheduler(long_every=2)
+    s.finish_break()
+    assert s.next_kind() == "long"
+    s.finish_break(skipped=True)
+    assert s.next_kind() == "long" and s.breaks_until_long() == 1   # пропущена довга — ще раз
+    s.finish_break(skipped=True)
+    assert s.next_kind() == "mini"                                  # удруге ритм іде далі
+    s.finish_break()
+    assert s.next_kind() == "long"
+    s.finish_break(skipped=True)
+    s.finish_break()                                                # повернута довга зроблена
+    assert s.next_kind() == "mini" and s.breaks_until_long() == 2
+    s.finish_break(skipped=True)                                    # пропущена міні — нічого особливого
+    assert s.next_kind() == "long"
+
+
+def test_smart_water_pacing_follows_the_rest_of_the_day():
+    s = make_scheduler(water_interval_min=60, water_goal=8)
+    assert s.water_interval(at(10)) == 60 * 60                      # кінець дня невідомий — як у налаштуваннях
+    s.update_day(drunk=4, workday_end=at(18))
+    assert s.water_interval(at(10)) == 2 * 60 * 60                  # випереджаємо: 8 год на 4 склянки
+    s.update_day(drunk=4, workday_end=at(14))
+    assert s.water_interval(at(10)) == 60 * 60                      # 4 год на 4 склянки
+    s.update_day(drunk=1, workday_end=at(13))
+    assert s.water_interval(at(10)) == 3 * 3600 // 7                 # відстаємо — частіше
+    s.update_day(drunk=1, workday_end=at(11))
+    assert s.water_interval(at(10)) == 15 * 60                     # відстаємо — частіше, але не частіше 15 хв
+    s.update_day(drunk=7, workday_end=at(18))
+    s.water_answered(True, now=at(17))
+    assert s.water_remaining == 60 * 60                             # остання склянка — за годину до кінця
+    s.water_answered(False, now=at(17))
+    assert s.water_remaining == 15 * 60                             # «Пізніше» — як і раніше
+    s.update_day(drunk=8, workday_end=at(18))
+    assert s.water_done
+
+
+def test_overwork_warns_once_a_day():
+    s = make_scheduler(max_work_hours=9)
+    s.update_day(drunk=0, worked=9 * 3600 - 1)
+    assert s.tick(1, now=at(18)) == []
+    s.update_day(drunk=0, worked=9 * 3600)
+    assert s.tick(1, now=at(18, 1)) == ["overwork"]
+    assert s.tick(1, now=at(18, 2)) == []                       # поки висить — удруге не показуємо
+    s.overwork_answered("later", now=at(18, 2))
+    assert s.tick(1, now=at(19)) == []                          # раз на день
+    assert s.tick(1, now=at(19) + dt.timedelta(days=1)) == ["overwork"]   # наступного дня (worked від App)
+    off = make_scheduler(max_work_hours=0)
+    off.update_day(drunk=0, worked=20 * 3600)
+    assert off.tick(1, now=at(20)) == []
+
+
+def test_overwork_waits_for_the_day_end_reminder():
+    s = make_scheduler(max_work_hours=9, day_end_enabled=True, day_end_at=18 * 60)
+    s.update_day(drunk=0, worked=10 * 3600)
+    assert s.tick(1, now=at(18)) == ["day_end"]
+    assert s.tick(1, now=at(18, 1)) == []
+    s.day_end_answered("snooze", now=at(18, 1))
+    assert s.tick(1, now=at(18, 2)) == ["overwork"]
+
+
+def test_busy_holds_the_break_for_at_most_half_an_hour():
+    s = make_scheduler(mini_interval_min=1, warn_before_sec=10)
+    assert tick_at(s, at(10), 49) == []
+    assert tick_at(s, at(10, 0, 49), 10 * 60, busy=True) == ["break_held"]   # ні попередження, ні перерви
+    assert s.remaining == 0 and not s.in_break
+    assert s.tick(1, now=at(10, 11), busy=False) == ["break"]               # дзвінок скінчився
+    s.finish_break()
+    events = tick_at(s, at(11), 40 * 60, busy=True)
+    assert events == ["break_held", "break"] and s.in_break                  # але не довше 30 хв
+
+
+def test_busy_does_not_hold_water():
+    s = make_scheduler(water_interval_min=15, mini_interval_min=60)
+    assert tick_at(s, at(10), 15 * 60, busy=True) == ["water"]
+
+
+def test_state_survives_a_restart():
+    cfg = dict(lunch_enabled=True, lunch_at=13 * 60, long_every=3, mini_interval_min=20, water_interval_min=60)
+    s = make_scheduler(**cfg)
+    s.finish_break()
+    s.postpone()
+    tick_at(s, at(12, 59), 2 * 60)
+    s.meal_answered("snooze", now=at(13, 1))
+    s.update_day(drunk=0)
+    snap = json.loads(json.dumps(s.snapshot(at(13, 2))))   # лише JSON-типи
+    restored = make_scheduler(**cfg)
+    assert restored.restore(snap, at(13, 3))
+    assert (restored.breaks_taken, restored.postpones, restored.remaining, restored.water_remaining) == (
+        1, 1, s.remaining, s.water_remaining)
+    assert restored.meal_state("lunch", at(13, 3)) == ("snoozed", at(13, 16))
+    assert restored.tick(1, now=at(13, 16)) == ["meal"]
+
+
+def test_restored_modes_keep_their_deadlines():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_pause_min=30)
+    s.tick(1, now=at(13))
+    s.meal_answered("eat", now=at(13))
+    restored = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_pause_min=30)
+    assert restored.restore(s.snapshot(at(13, 10)), at(13, 11))
+    assert restored.eating == "lunch" and restored.eating_until == at(13, 30)
+    assert restored.tick(1, now=at(13, 30)) == ["meal_over"]
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    s.pause(None, now=at(18))
+    restored = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    assert restored.restore(s.snapshot(at(18)), at(18, 1))
+    assert restored.pause_water and restored.day_finished(at(19)) and restored.paused_until == s.paused_until
+
+
+def test_open_reminders_and_breaks_come_back_after_a_restart():
+    s = make_scheduler(mini_interval_min=1, warn_before_sec=0, lunch_enabled=True, lunch_at=13 * 60)
+    tick_at(s, at(12, 59, 30), 60)
+    assert s.in_break and s.meal_open == "lunch"
+    restored = make_scheduler(mini_interval_min=1, warn_before_sec=0, lunch_enabled=True, lunch_at=13 * 60)
+    assert restored.restore(s.snapshot(at(13)), at(13))
+    assert not restored.in_break and restored.remaining == core.BREAK_RESUME_SEC   # перерва — за хвилину
+    assert restored.tick(1, now=at(13, 1)) == ["meal"]                            # віконця вже немає
+
+
+def test_old_or_foreign_state_is_not_restored():
+    s = make_scheduler()
+    s.finish_break()
+    snap = s.snapshot(at(10))
+    assert not make_scheduler().restore(snap, at(10) + dt.timedelta(days=1))   # інший робочий день
+    assert not make_scheduler().restore(snap, at(10) - dt.timedelta(hours=1))   # з майбутнього
+    late = core.Scheduler.snapshot(s, at(4, 30))
+    assert not make_scheduler().restore(late, at(4, 30) + dt.timedelta(hours=13))   # старіше 12 год
+    for broken in ({}, {"version": 1}, dict(snap, mode="dancing"), dict(snap, remaining="x"), None):
+        assert not make_scheduler().restore(broken, at(10, 5))
+
+
+def test_long_gap_since_the_saved_state_is_an_absence():
+    s = make_scheduler(long_every=3, long_duration_min=5, mini_interval_min=20)
+    s.finish_break()
+    tick(s, 15 * 60)
+    restored = make_scheduler(long_every=3, long_duration_min=5, mini_interval_min=20)
+    assert restored.restore(s.snapshot(at(10, 15)), at(12))       # комп'ютер був вимкнений майже 2 год
+    assert restored.remaining == 20 * 60 and restored.breaks_until_long() == 3
+
+
+def test_restore_day_from_stats():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, day_end_enabled=True, day_end_at=18 * 60)
+    s.restore_day(at(10).date(), eaten=["lunch"], finished_minute=30)    # день завершили о 00:30
+    assert s.finished_at == at(0, 30) + dt.timedelta(days=1)
+    assert s.meal_state("lunch", at(13)) == ("eat", None)
+    assert s.tick(1, now=at(13)) == [] and s.tick(1, now=at(18)) == []
+
+
+def test_slider_zero_positions():
+    assert core.slider_position("workday_start", 0) == core.SLIDER_ZERO["workday_start"]
+    assert core.slider_position("workday_start", 8 * 60) == 8 * 60
+    assert core.setting_value("max_work_hours", core.SLIDER_ZERO["max_work_hours"]) == 0
+    assert core.setting_value("max_work_hours", 9) == 9
+    for key, position in core.SLIDER_ZERO.items():
+        assert core.SLIDERS[key][0] == position
+    _lo, _hi, _step, fmt = core.SLIDERS["max_work_hours"]
+    assert (fmt(5), fmt(9)) == ("вимкнено", "9 год")
 
 
 def test_split_balanced_keeps_order_and_evens_columns():
@@ -210,7 +430,7 @@ def test_next_meal_and_marking_a_meal_eaten_in_advance():
     s = make_scheduler(breakfast_enabled=True, breakfast_at=8 * 60, lunch_enabled=True, lunch_at=13 * 60)
     assert s.next_meal(at(7)) == ("breakfast", at(8))
     assert s.next_meal(at(8, 10)) == ("breakfast", None)       # час снідати вже зараз
-    s.meal_results[(at(8).date(), "breakfast")] = "eat"        # тарілку позначили на «Стані»
+    s.mark_meal("breakfast", True, now=at(8, 5))              # тарілку позначили на «Стані»
     assert s.tick(1, now=at(8, 10)) == []                      # без нагадування
     assert s.next_meal(at(8, 10)) == ("lunch", at(13))
     assert s.next_meal(at(15)) is None                         # обід минув — на сьогодні все
@@ -306,11 +526,20 @@ def test_no_water_reminders_after_the_goal_is_reached():
 def test_workdays_only_silences_meals_and_day_end_at_the_weekend():
     saturday = dt.datetime(2026, 10, 17, 13, 0)
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, day_end_enabled=True, day_end_at=18 * 60,
-                       workdays_only=True)
+                       workdays=[0, 1, 2, 3, 4])
     assert s.tick(1, now=saturday) == [] and s.next_meal(saturday) is None
     assert s.tick(1, now=saturday.replace(hour=18)) == []
-    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, workdays_only=False)
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, workdays=list(range(7)))
     assert s.tick(1, now=saturday) == ["meal"]
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, workdays=[5, 6])   # працює лише у вихідні
+    assert s.tick(1, now=at(13)) == [] and s.tick(1, now=saturday) == ["meal"]
+
+
+def test_old_workdays_only_setting_migrates_to_a_list_of_days():
+    assert core.migrate_config({"workdays_only": False})["workdays"] == list(range(7))
+    assert "workdays" not in core.migrate_config({"workdays_only": True})    # будні — і так за замовчуванням
+    assert core.migrate_config({"workdays_only": False, "workdays": [2, 0, 0]})["workdays"] == [0, 2]
+    assert core.migrate_config({"workdays": "пн"})["workdays"] == core.DEFAULTS["workdays"]
 
 
 def test_finished_day_is_not_asked_again_and_continues_if_still_working():

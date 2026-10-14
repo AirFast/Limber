@@ -8,8 +8,8 @@ from PIL import ImageTk
 
 import i18n
 import system
-from core import (APP_NAME, at_minute, average_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
-                  completion_rate, fmt_hm, fmt_time, main_layout, save_json,
+from core import (APP_NAME, average_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
+                  completion_rate, fmt_hm, fmt_time, main_layout, save_json, setting_value, slider_position,
                   split_balanced, water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
@@ -248,7 +248,7 @@ class MainWindow:
 
     def refresh_meal_card(self, now):
         """Картка «Їжа»: відлік до наступної їжі, «сьогодні 1 з 3» і тарілки увімкнених прийомів їжі."""
-        s, today = self.sched, self.stats.day(now.date())
+        s, today = self.sched, self.stats.day(self.today())
         enabled = [m for m in MEALS if self.cfg[f"{m}_enabled"]]
         eaten = sum(today[f"ate_{m}"] for m in enabled)
         progress = t("meals_today", n=eaten, total=len(enabled))
@@ -276,12 +276,12 @@ class MainWindow:
 
     def render_plates(self, enabled, now):
         """Тарілки увімкнених прийомів їжі: клік позначає з'їденою, наведення — попередній вигляд."""
-        today = self.stats.day(now.date())
+        today = self.stats.day(self.today())
         states = []
         for meal in enabled:
             state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
             states.append("done" if today[f"ate_{meal}"] else ("later" if state == "done" else state))
-        key = (tuple(enabled), tuple(states), tuple(self.meal_time(m, now.date()) for m in enabled))
+        key = (tuple(enabled), tuple(states), tuple(self.meal_time(m, self.today()) for m in enabled))
         if self.w.get("plates_key") == key:
             return
         self.w["plates_key"] = key
@@ -309,7 +309,7 @@ class MainWindow:
             plate.pack()
             name = tk.Label(cell, text=t(f"meal_{meal}"), bg=C["card"], fg=C["muted"], font=font(9), cursor=cursor)
             name.pack()
-            at = tk.Label(cell, text=fmt_clock(self.meal_time(meal, now.date())), bg=C["card"], fg=C["dim"],
+            at = tk.Label(cell, text=fmt_clock(self.meal_time(meal, self.today())), bg=C["card"], fg=C["dim"],
                           font=font(8), cursor=cursor)
             at.pack()
             if not done:
@@ -330,15 +330,15 @@ class MainWindow:
     def timeline_marks(self, now):
         """Позначки шкали дня: (хвилина, назва, колір, стан, вид). Їжа ("done"/"now"/"later"/"skip") стоїть
         у момент, коли поїли, — так видно регулярність; вид "day" — початок і кінець дня (з підписом)."""
-        today = self.stats.day(now.date())
+        today = self.stats.day(self.today())
         planned = self.sched.reminders_today(now)  # у вихідні — лише те, що справді було
         marks = []
         for meal in MEALS:
             if today[f"ate_{meal}"]:
-                marks.append((self.meal_time(meal, now.date()), t(f"meal_{meal}"), C["meal"], "done", "meal"))
+                marks.append((self.meal_time(meal, self.today()), t(f"meal_{meal}"), C["meal"], "done", "meal"))
             elif self.cfg[f"{meal}_enabled"] and planned:
                 state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
-                marks.append((self.meal_time(meal, now.date()), t(f"meal_{meal}"), C["meal"],
+                marks.append((self.meal_time(meal, self.today()), t(f"meal_{meal}"), C["meal"],
                               "later" if state == "done" else state, "meal"))
         if today["day_start"]:
             marks.append((today["day_start"], t("sch_day_start"), C["accent"], "done", "day"))
@@ -360,7 +360,7 @@ class MainWindow:
             return
         marks = self.timeline_marks(now)
         minute = minute_of_day(now)
-        drinks = self.stats.times(now.date(), "water_at")
+        drinks = self.stats.times(self.today(), "water_at")
         s = self.sched
         next_water = None
         if self.cfg["water_enabled"] and not s.water_open and not s.water_done and not (s.paused and s.pause_water):
@@ -499,12 +499,12 @@ class MainWindow:
         timed = []  # (хвилина дня, рядок) — події з часом ідуть за ним
         left = s.breaks_until_long()
         long_row = ("long", t("sch_long"), t("long_next") if left == 1 else fmt_after_minis(left - 1), left == 1)
-        started = self.stats.day(now.date())["day_start"]
+        started = self.stats.day(self.today())["day_start"]
         if started:
             timed.append((started, ("day_start", t("sch_day_start"), fmt_clock(started), False)))
-        if cfg["day_end_enabled"] and (s.reminders_today(now) or self.stats.day(now.date())["day_end"]):
-            finished = self.stats.day(now.date())["day_end"]
-            at = at_minute(now.date(), cfg["day_end_at"])
+        if cfg["day_end_enabled"] and (s.reminders_today(now) or self.stats.day(self.today())["day_end"]):
+            finished = self.stats.day(self.today())["day_end"]
+            at = s.moment(now, cfg["day_end_at"])
             if finished:
                 text, hot = t("sch_finished", time=fmt_clock(finished)), False
             elif s.day_end_snoozed:
@@ -635,7 +635,7 @@ class MainWindow:
         if not c:
             return
         n = self.stats_range
-        today = dt.date.today()
+        today = self.today()
         days = [today - dt.timedelta(days=i) for i in range(n - 1, -1, -1)]
         records = [self.stats.day(d) for d in days]
         self.w["chart_title"].configure(text=t("card_last_n", n=n).upper())
@@ -704,7 +704,7 @@ class MainWindow:
         avg_liters = round(total["water"] * i18n.GLASS_LITERS / n, 1)
         self.w["range_water"].configure(text=t(
             "range_water", glasses=fmt_glasses(total["water"]), avg=fmt_volume(avg_liters / i18n.GLASS_LITERS),
-            streak=fmt_days(water_streak(self.stats, self.cfg["water_goal"], dt.date.today()))))
+            streak=fmt_days(water_streak(self.stats, self.cfg["water_goal"], self.today()))))
         start = average_minute(r["day_start"] for r in records)
         self.w["range_day"].configure(text=t(
             "range_day", meals=total["meals"], work=fmt_minutes(total["work_sec"] // 60))
@@ -715,7 +715,7 @@ class MainWindow:
         info = self.chart_info
         day, rec = info["days"][index], info["records"][index]
         date = f"{day:%d.%m}"
-        if day == dt.date.today():
+        if day == self.today():
             title = t("stats_today", date=date)
         else:
             title = t("stats_day", weekday=t("weekdays").split()[day.weekday()], date=date)
@@ -829,7 +829,10 @@ class MainWindow:
         self.build_water_profile(water)
         meals = self.build_meals_card(page)
 
+        # «Робочий день»: дні, початок, кінець і ліміт роботи
         day_end = card(page, t("card_day_end"))
+        self.build_workdays(day_end)
+        self.add_slider(day_end, "workday_start")
         lo, hi, step, fmt = SLIDERS["day_end_at"]
         day_end_slider = Slider(day_end, t("s_day_end_at"), lo, hi, step, self.cfg["day_end_at"], fmt,
                                 lambda v: self.set_setting("day_end_at", v))
@@ -839,9 +842,9 @@ class MainWindow:
             day_end_slider.set_enabled(value)
 
         Toggle(day_end, t("day_end_toggle"), self.cfg["day_end_enabled"], toggle_day_end).pack(fill="x", pady=(0, 6))
-        day_end_slider.pack(fill="x")
+        day_end_slider.pack(fill="x", pady=(0, 10))
         day_end_slider.set_enabled(self.cfg["day_end_enabled"])
-        toggle(day_end, t("workdays_only_toggle"), "workdays_only", pady=(8, 0))
+        self.add_slider(day_end, "max_work_hours")
 
         sound = card(page, t("card_sound"))
         toggle(sound, t("sound_toggle"), "sound", pady=(0, 8))
@@ -899,6 +902,30 @@ class MainWindow:
             slider.set_enabled(self.cfg[f"{meal}_enabled"])
         self.add_slider(box, "meal_pause_min")
         return box
+
+    def build_workdays(self, parent):
+        """Робочі дні — сегменти з днями тижня (як перемикач мови): у ці дні нагадуємо про їжу й кінець дня."""
+        bg = parent["bg"]
+        tk.Label(parent, text=t("workdays_label"), bg=bg, fg=C["muted"], font=font(10)).pack(anchor="w")
+        segments = tk.Frame(parent, bg=C["panel"])
+        segments.pack(fill="x", pady=(4, 10))
+        chips = {}
+
+        def paint():
+            for day, chip in chips.items():
+                active = day in self.cfg["workdays"]
+                chip.configure(bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
+
+        def flip(day):
+            self.set_setting("workdays", sorted(set(self.cfg["workdays"]) ^ {day}))  # новий список, не той самий
+            paint()
+
+        for day, name in enumerate(t("weekdays_short").split()):
+            chip = tk.Label(segments, text=name, font=font(10), padx=4, pady=3, cursor="hand2")
+            chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
+            chip.bind("<Button-1>", lambda e, d=day: flip(d))
+            chips[day] = chip
+        paint()
 
     def build_language_switch(self, parent):
         """Рядок «Мова» з перемикачем-сегментом між мовами."""
@@ -1018,9 +1045,10 @@ class MainWindow:
                label, choose).pack(fill="x", pady=(0, 6))
 
     def add_slider(self, parent, key):
+        """Повзунок налаштування; крайнє ліве положення деяких — «авто»/«вимкнено» (0 у налаштуваннях)."""
         lo, hi, step, fmt = SLIDERS[key]
-        Slider(parent, t(f"s_{key}"), lo, hi, step, self.cfg[key], fmt,
-               lambda v, k=key: self.set_setting(k, v)).pack(fill="x", pady=(0, 10))
+        Slider(parent, t(f"s_{key}"), lo, hi, step, slider_position(key, self.cfg[key]), fmt,
+               lambda v, k=key: self.set_setting(k, setting_value(k, v))).pack(fill="x", pady=(0, 10))
 
     def set_setting(self, key, value):
         if self.cfg.get(key) == value:
@@ -1028,7 +1056,7 @@ class MainWindow:
         self.cfg[key] = value
         save_json(CONFIG_PATH, self.cfg)
         self.sched.apply_config()
-        if key in ("day_end_at", "day_end_enabled"):
+        if key in ("day_end_at", "day_end_enabled", "workday_start"):
             self.refresh_water_plan()
         self.flash_saved()
 
@@ -1054,7 +1082,7 @@ class MainWindow:
         s = self.sched
         self.draw_ring()
         self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
-        today = self.stats.day(dt.date.today())
+        today = self.stats.day(self.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         hover = self.w.get("glass_hover")
         if hover is not None:  # курсор на склянці — що буде після кліку
@@ -1124,7 +1152,7 @@ class MainWindow:
 
     def set_water(self, count):
         """Випито склянок за сьогодні — лише більше, ніж було: випите не скасовується."""
-        before = self.stats.day(dt.date.today())["water"]
+        before = self.stats.day(self.today())["water"]
         count = min(count, MAX_GLASSES)
         if count <= before:
             return
@@ -1134,6 +1162,7 @@ class MainWindow:
         if self.water_win and not self.water_demo:
             self.water_win.destroy()
             self.water_win = None
+        self.sync_day()  # темп наступної склянки — з урахуванням щойно випитих
         self.sched.water_answered(True)
         self.refresh_main()
         if self.w.get("chart") and self.w["chart"].winfo_ismapped():
