@@ -1962,7 +1962,9 @@ class App:
         tabs.pack(side="right")
 
         body = tk.Frame(win, bg=C["bg"])
-        body.pack(fill="both", expand=True, padx=24, pady=(4, 20))
+        # Смуга прокрутки (6 + 8 px) живе в правому відступі: правий край вмісту — на одній лінії
+        # з правим краєм кнопок вкладок (24 px від краю вікна)
+        body.pack(fill="both", expand=True, padx=(24, 24 - ScrollArea.BAR - 8), pady=(4, 20))
         self.pages, self.page_frames, self.tab_buttons = {}, {}, {}
         self.current_page = None
         for key, builder in (("status", self.build_status_page),
@@ -1997,8 +1999,8 @@ class App:
         win.update_idletasks()  # розміри, що просять сторінки, рахуються й для прихованого вікна
         frames = self.page_frames.values()
         left, top, right, bottom = work
-        # Відступи тіла (24 + 24), смуга прокрутки (6 + 8); заголовка (18 + 10) і тіла (4 + 20)
-        width = max(self.layout["width"], *(page.winfo_reqwidth() + 48 + ScrollArea.BAR + 8 for page in frames))
+        # Відступи тіла разом зі смугою прокрутки — 24 + 24; заголовка (18 + 10) і тіла (4 + 20)
+        width = max(self.layout["width"], *(page.winfo_reqwidth() + 48 for page in frames))
         height = header.winfo_reqheight() + 28 + 24 + max(page.winfo_reqheight() for page in frames)
         width = min(width, right - left - 40)
         height = min(height, bottom - top - TITLE_BAR - 20)
