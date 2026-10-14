@@ -474,25 +474,6 @@ def test_fmt_volume(lang, glasses, text):
     assert i18n.fmt_volume(glasses) == text
 
 
-def test_migration_from_limber_moves_data_even_if_new_folder_exists(tmp_path, monkeypatch):
-    import system
-    old, new = tmp_path / "Limber", tmp_path / "Rhythmos"
-    old.mkdir()
-    new.mkdir()
-    (old / "config.json").write_text('{"language": "en"}')
-    (old / "stats.json").write_text("{}")
-    (new / "rhythmos.log").write_text("log")        # журнал уже відкрито на старті — нова папка існує
-    monkeypatch.setenv("APPDATA", str(tmp_path))
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "nothing"))
-    # Старе завдання автозапуску «Limber» нібито існує
-    monkeypatch.setattr(system.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
-    autostart = system.migrate_old_data(str(new))
-    assert (new / "config.json").read_text() == '{"language": "en"}'
-    assert (new / "stats.json").exists() and not old.exists()
-    if system.IS_WINDOWS:
-        assert autostart is True
-
-
 def test_unknown_language_falls_back_to_english():
     i18n.set_language("de")
     assert i18n.get_language() == "en"

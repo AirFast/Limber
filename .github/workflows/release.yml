@@ -135,15 +135,9 @@ jobs:
         with:
           path: artifacts
 
-      # Перехідний період після перейменування: Limber ≤ 1.11 шукає для автооновлення файл
-      # LimberSetup-*.exe — публікуємо копію інсталятора під старою назвою
-      - name: Legacy installer name for Limber auto-update
-        run: for f in artifacts/windows/RhythmosSetup-*.exe; do cp "$f" "${f/RhythmosSetup-/LimberSetup-}"; done
-
       - uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/windows/RhythmosSetup-*.exe
-            artifacts/windows/LimberSetup-*.exe
             artifacts/macos/Rhythmos-*.dmg
           generate_release_notes: true

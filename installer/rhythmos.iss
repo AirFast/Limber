@@ -17,8 +17,7 @@ AppPublisher=Andrew Petryk
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-; До 2.0 програма звалася Limber (той самий AppId — тож це оновлення, а не друга програма).
-; Нова назва — нова папка й нова група в меню «Пуск», а не попередні
+; Папка встановлення й група в «Пуску» — завжди за назвою програми
 UsePreviousAppDir=no
 UsePreviousGroup=no
 ; Встановлення для поточного користувача — без прав адміністратора
@@ -52,14 +51,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\dist\Rhythmos\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-[InstallDelete]
-; Версії 1.0–1.1 клали ярлик прямо в «Програми»
-Type: files; Name: "{autoprograms}\Limber.lnk"
-; Усе від попередньої назви програми (Limber): папка встановлення, група в «Пуску», ярлик на Робочому столі
-Type: filesandordirs; Name: "{localappdata}\Programs\Limber"
-Type: filesandordirs; Name: "{autoprograms}\Limber"
-Type: files; Name: "{autodesktop}\Limber.lnk"
-
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--open"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
@@ -88,7 +79,6 @@ var
   ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM Limber.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);  // попередня назва
   Result := '';
 end;
 

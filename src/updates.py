@@ -112,7 +112,7 @@ def _clean_env():
     """Середовище для інсталятора й нової версії — без тестових і службових змінних,
     інакше перезапущена програма знову «вдавала б» стару версію."""
     return {k: v for k, v in os.environ.items()
-            if k not in ("RHYTHMOS_VERSION_OVERRIDE", "LIMBER_VERSION_OVERRIDE", "GITHUB_TOKEN")}
+            if k not in ("RHYTHMOS_VERSION_OVERRIDE", "GITHUB_TOKEN")}
 
 
 def install(path, autostart=True, language="uk"):

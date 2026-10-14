@@ -457,13 +457,7 @@ def main():
     if not instance.acquire():
         return  # уже запущена копія сама покаже вікно
 
-    old_autostart = system.migrate_old_data(DATA_DIR)
     smoke_dir = sys.argv[sys.argv.index("--smoke-test") + 1] if "--smoke-test" in sys.argv else None
-    if old_autostart and not smoke_dir:  # автозапуск зі старою назвою (Limber) — перереєструємо під новою
-        try:
-            system.set_autostart(True, __file__)
-        except OSError:
-            traceback.print_exc()
     # macOS: інсталятора немає (програму просто перетягують у «Програми»),
     # тож автозапуск вмикаємо під час першого запуску; вимкнути можна в налаштуваннях
     if system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH):
