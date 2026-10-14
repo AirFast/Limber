@@ -151,6 +151,24 @@ def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
     assert s.tick(1, now=at(18)) == []
 
 
+def test_split_balanced_keeps_order_and_evens_columns():
+    heights = [275, 212, 310, 330, 390, 130, 125, 150, 150]
+    for columns in (2, 3, 4):
+        groups = rhythmos.split_balanced(heights, columns)
+        assert len(groups) == columns
+        assert [i for g in groups for i in g] == list(range(len(heights)))   # порядок карток не змінюється
+    groups = rhythmos.split_balanced(heights, 4)
+    tallest = max(sum(heights[i] for i in g) + 14 * (len(g) - 1) for g in groups)
+    assert tallest == 310 + 330 + 14                                          # найкраще можливе: «пауза + вода»
+    assert rhythmos.split_balanced([100, 100], 3) == [[0], [1]]               # колонок не більше, ніж карток
+
+
+def test_main_layout_follows_screen_width():
+    assert rhythmos.main_layout(2520)["columns"] == 4
+    assert rhythmos.main_layout(1240)["columns"] == 3
+    assert rhythmos.main_layout(984) == {"columns": 2, "stat_cards": 3, "width": 900}
+
+
 def test_completion_rate():
     rec = {"mini_done": 6, "long_done": 2, "skipped": 2}
     assert rhythmos.completion_rate(rec) == 80
