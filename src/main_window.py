@@ -259,7 +259,8 @@ class MainWindow:
             value = fmt_time((upcoming[1] - now).total_seconds())
             sub = t(f"meal_next_{upcoming[0]}") + "\n" + progress  # два рядки: що далі й підсумок дня
         else:
-            value, sub = t("meals_done"), progress
+            # Більше нагадувань сьогодні не буде: «усе» — лише якщо справді все з'їли
+            value, sub = t("meals_done" if eaten >= len(enabled) else "meals_no_more"), progress
         self.w["meal"].configure(text=value)
         self.w["meal_sub"].configure(text=sub)
         self.render_plates(enabled, now)
