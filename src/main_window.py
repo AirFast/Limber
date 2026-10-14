@@ -1,19 +1,21 @@
 """Головне вікно: вкладки «Стан», «Статистика», «Налаштування» й розкладка під екран."""
 
 import datetime as dt
+import os
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 from PIL import ImageTk
 
 import i18n
 import system
-from core import (APP_NAME, average_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
-                  completion_rate, fmt_hm, fmt_time, main_layout, save_json, setting_value, slider_position,
-                  split_balanced, water_interval_for, water_streak)
-from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, dot_image,
+from core import (APP_NAME, average_minute, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
+                  completion_rate, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity, save_json,
+                  setting_value, slider_position, split_balanced, water_interval_for, water_streak)
+from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
-from i18n import SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_volume, t
+from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_seconds, fmt_times,
+                  fmt_volume, t)
 from system import font
 from widgets import ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
@@ -214,7 +216,7 @@ class MainWindow:
         self.w["timeline"].pack(side="bottom", fill="x", pady=(10, 0))
         self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
         self.w["timeline"].bind("<Motion>", self.timeline_hover)
-        self.w["timeline"].bind("<Leave>", lambda e: self.w["timeline"].delete("tip"))
+        self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
         metrics = (("breaks", t("m_breaks"), C["accent"]), ("skipped", t("m_skipped"), C["muted"]),
@@ -320,18 +322,22 @@ class MainWindow:
             plates.append(plate)
 
     def meal_time(self, meal, date):
-        """Хвилина дня для їжі: коли насправді поїли (якщо позначено), інакше — запланований час."""
+        """Хвилина дня для їжі: коли насправді поїли (журнал, або ate_<їжа>_at у старих днях),
+        інакше — запланований час."""
         if self.stats.day(date)[f"ate_{meal}"]:
-            eaten_at = self.stats.times(date, f"ate_{meal}_at")
+            logged = [e["at"] for e in self.stats.events(date) if e["type"] == "meal" and e.get("meal") == meal]
+            eaten_at = logged or self.stats.times(date, f"ate_{meal}_at")
             if eaten_at:
                 return eaten_at[0]
         return self.cfg[f"{meal}_at"]
 
-    def timeline_marks(self, now):
+    def timeline_marks(self, now, events):
         """Позначки шкали дня: (хвилина, назва, колір, стан, вид). Їжа ("done"/"now"/"later"/"skip") стоїть
-        у момент, коли поїли, — так видно регулярність; вид "day" — початок і кінець дня (з підписом)."""
+        у момент, коли поїли, — так видно регулярність; вид "day" — початок і кінець дня (з підписом).
+        Початок і кінець — з журналу подій (там час після півночі — понад 24:00), у старих днях — лічильники."""
         today = self.stats.day(self.today())
         planned = self.sched.reminders_today(now)  # у вихідні — лише те, що справді було
+        logged = {e["type"]: e["at"] for e in events if e["type"] in ("day_start", "day_end")}
         marks = []
         for meal in MEALS:
             if today[f"ate_{meal}"]:
@@ -340,17 +346,20 @@ class MainWindow:
                 state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
                 marks.append((self.meal_time(meal, self.today()), t(f"meal_{meal}"), C["meal"],
                               "later" if state == "done" else state, "meal"))
-        if today["day_start"]:
-            marks.append((today["day_start"], t("sch_day_start"), C["accent"], "done", "day"))
-        if today["day_end"] or (self.cfg["day_end_enabled"] and planned):
-            marks.append((today["day_end"] or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
-                          "done" if today["day_end"] else "later", "day"))
+        start = logged.get("day_start") or today["day_start"]
+        if start:
+            marks.append((start, t("sch_day_start"), C["accent"], "done", "day"))
+        end = logged.get("day_end") or today["day_end"]
+        if end or (self.cfg["day_end_enabled"] and planned):
+            marks.append((end or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
+                          "done" if end else "later", "day"))
         return sorted(marks, key=lambda mark: mark[0])
 
     def draw_timeline(self, force=False):
-        """Смуга дня: заповнена до «зараз»; кружечки їжі й кінця дня з підписами над смугою, сині точки —
-        коли пили воду, синій кружечок — наступне нагадування; під смугою — години.
-        Малюємо згладжено через Pillow і лише коли щось змінилося (раз на хвилину чи після кліку)."""
+        """Смуга дня: заповнена до «зараз»; на ній — проміжки з журналу (відсутність, пауза, пауза на їжу,
+        перерва чекала), маленькі зелені точки — перерви (пропущені — порожні), сині — склянки, кружечки
+        їжі й кінця дня, синій кружечок — наступне нагадування про воду; підписи — лише початок і кінець
+        дня, під смугою — години. Малюємо згладжено через Pillow і лише коли щось змінилося."""
         c = self.w.get("timeline")
         if not c:
             return
@@ -358,20 +367,27 @@ class MainWindow:
         width = c.winfo_width()
         if width < 100:
             return
-        marks = self.timeline_marks(now)
-        minute = minute_of_day(now)
-        drinks = self.stats.times(self.today(), "water_at")
+        today = self.today()
+        events = self.stats.events(today)
+        minute = self.minute(now)
+        marks = self.timeline_marks(now, events)
+        drinks = [e["at"] for e in events if e["type"] == "water"] or self.stats.times(today, "water_at")
+        breaks = [e for e in events if e["type"] == "break" and e.get("result") in ("done", "skipped")]
+        spans = event_spans(events, minute)
         s = self.sched
         next_water = None
         if self.cfg["water_enabled"] and not s.water_open and not s.water_done and not (s.paused and s.pause_water):
             next_water = minute + round(s.water_remaining / 60)
         idle = s.paused or bool(s.eating)
-        key = (width, minute, tuple(marks), tuple(drinks), next_water, idle)
+        key = (width, minute, tuple(marks), tuple(drinks), next_water, idle,
+               tuple(tuple(sorted(e.items())) for e in events))
         if not force and key == self._timeline_key:
             return
         self._timeline_key = key
-        # Межі шкали: від ранку (не пізніше 8:00 чи першої події) до кінця дня (не раніше 18:00), по годинах
-        times = [m[0] for m in marks] + drinks
+        # Межі шкали: від ранку (не пізніше 8:00 чи першої події) до кінця дня (не раніше 18:00 і не раніше
+        # «зараз»), по годинах — уміщаються всі позначки й проміжки
+        times = ([m[0] for m in marks] + drinks + [e["at"] for e in breaks] + [minute]
+                 + [m for span in spans for m in span[1:3]])
         start = (min([8 * 60] + times) - 30) // 60 * 60
         end = -(-(max([18 * 60] + times) + 30) // 60) * 60
         pad, y = 16, 48
@@ -380,6 +396,10 @@ class MainWindow:
             return pad + (width - 2 * pad) * (min(max(m, start), end) - start) / (end - start)
 
         xn = x_of(minute)
+        # Відсутність — тьмяна, пауза — приглушена, їжа — бурштинова, «до ранку» — як ще не прожита смуга,
+        # «перерва чекала» — світліша за зелений, щоб виднілась на заповненій смузі
+        span_colors = {"away": C["dim"], "timed": C["muted"], "eating": C["meal"], "finished": C["track"],
+                       "held": blend(C["accent"], C["text"], 0.5)}
 
         def paint(d, sc):
             r = 3 * sc
@@ -388,8 +408,14 @@ class MainWindow:
             if minute > start:
                 d.rounded_rectangle((pad * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
+            # Проміжки — тонкі смужки по самій смузі дня (не вужчі за 3 px, щоб і короткі було видно)
+            for kind, a, b, event in spans:
+                color = span_colors.get(event.get("kind") if kind == "pause" else kind, C["muted"])
+                x0, x1 = x_of(a), max(x_of(b), x_of(a) + 3)
+                h = 2.2 * sc
+                d.rounded_rectangle((x0 * sc, y * sc - h, x1 * sc, y * sc + h), radius=h, fill=rgba(color))
             # Усі позначки в одному стилі: кружечок з обідком кольору картки (відділяє від смуги й сусідів);
-            # ring — товщина контуру для порожнього кружечка («ще буде»), None — заповнений
+            # ring — товщина контуру для порожнього кружечка («ще буде», пропущено), None — заповнений
             halo = 1.5 * sc
 
             def dot(x, radius, color, ring=None):
@@ -400,6 +426,11 @@ class MainWindow:
                     inner = rr - ring * sc
                     d.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=rgba(C["card"]))
 
+            for e in breaks:  # перерви — найменші, під склянками й їжею
+                if e["result"] == "done":
+                    dot(x_of(e["at"]), 3.5, C["accent"])
+                else:
+                    dot(x_of(e["at"]), 3.5, C["dim"], ring=1.4)
             for m in drinks:  # склянки
                 dot(x_of(m), 5, C["water"])
             # Наступне нагадування про воду — лише якщо не ховається за позначкою їжі чи кінця дня
@@ -425,11 +456,11 @@ class MainWindow:
                 c.move(item, shift, 0)
             return c.bbox(item)
 
-        # Години під смугою: крок такий, щоб підписи не злипались
+        # Години під смугою: крок такий, щоб підписи не злипались; після півночі — знову з 0:00
         span = width - 2 * pad
         step = next((h for h in (1, 2, 3, 4, 6) if span * h * 60 / (end - start) >= 46), 6)
         for hour in range(-(-start // (60 * step)) * step, end // 60 + 1, step):
-            place(c.create_text(x_of(hour * 60), y + 20, text=f"{hour}:00", fill=C["dim"], font=font(8)),
+            place(c.create_text(x_of(hour * 60), y + 20, text=f"{hour % 24}:00", fill=C["dim"], font=font(8)),
                   x_of(hour * 60))
         # Підписи — лише початок і кінець дня (у два яруси, якщо тісно; інакше зсув за сусіда);
         # решта позначок — підказка при наведенні (timeline_hover)
@@ -438,7 +469,8 @@ class MainWindow:
         def clash(box, tier):
             return [b for b in placed[tier] if not (box[0] > b[2] + 8 or box[2] < b[0] - 8)]
 
-        self.timeline_points = self.timeline_tips(marks, drinks, next_water, now, x_of, end)
+        self.timeline_points = self.timeline_tips(marks, drinks, breaks, next_water, now, x_of, end)
+        self.timeline_spans = self.timeline_span_tips(spans, x_of)
         for m, name, color, state, kind in marks:
             if kind != "day":
                 continue
@@ -446,7 +478,8 @@ class MainWindow:
             fill = color if state in ("now", "done") else C["muted"]
             item, tier = None, 0
             for tier in (0, 1):
-                item = c.create_text(x, y - 18 - tier * 16, text=f"{name} {fmt_clock(m)}", font=font(9), fill=fill)
+                item = c.create_text(x, y - 18 - tier * 16, text=f"{name} {fmt_clock(m)}", font=font(9), fill=fill,
+                                     tags="label")
                 box = place(item, x)
                 if not clash(box, tier):
                     break
@@ -458,33 +491,88 @@ class MainWindow:
                 box = place(item, x)
             placed[tier].append(box)
 
-    def timeline_tips(self, marks, drinks, next_water, now, x_of, end):
-        """[(x, текст підказки)] для позначок без підпису: їжа, склянки (близькі — разом), наступна склянка, «зараз»."""
+    @staticmethod
+    def grouped(items, x_of, gap=10):
+        """Близькі на шкалі позначки (не далі за gap px одна від одної) — разом: одна підказка на групу.
+        items — кортежі, перший елемент яких — хвилина дня."""
+        groups = []
+        for item in sorted(items, key=lambda i: i[0]):
+            if groups and x_of(item[0]) - x_of(groups[-1][-1][0]) <= gap:
+                groups[-1].append(item)
+            else:
+                groups.append([item])
+        return groups
+
+    def timeline_tips(self, marks, drinks, breaks, next_water, now, x_of, end):
+        """[(x, текст підказки)] для позначок без підпису: їжа, перерви й склянки (близькі — разом),
+        наступна склянка, «зараз»."""
         states = {"done": t("tl_eaten"), "now": t("tl_now_meal"), "later": t("tl_planned"), "skip": t("tl_skipped")}
         points = [(x_of(m), f"{name}: {fmt_clock(m)}{SEP}{states.get(state, '')}")
                   for m, name, _color, state, kind in marks if kind == "meal"]
-        group = []
-        for m in sorted(drinks) + [None]:
-            if group and (m is None or x_of(m) - x_of(group[-1]) > 10):
-                points.append((x_of(group[0]), f"{t('tl_water')}: {', '.join(fmt_clock(g) for g in group)}"))
-                group = []
-            if m is not None:
-                group.append(m)
+        for group in self.grouped([(m,) for m in drinks], x_of):
+            points.append((x_of(group[0][0]), f"{t('tl_water')}: {', '.join(fmt_clock(g[0]) for g in group)}"))
+        for group in self.grouped([(e["at"], e) for e in breaks], x_of):
+            x = sum(x_of(m) for m, _e in group) / len(group)
+            if len(group) == 1:
+                e = group[0][1]
+                if e["result"] == "done":
+                    sec = e.get("sec", 0)
+                    detail = fmt_seconds(sec) if sec < 60 else fmt_minutes(round(sec / 60))
+                else:
+                    detail = t("tl_skipped")
+                kind = t("tl_long" if e.get("kind") == "long" else "tl_mini")
+                points.append((x, f"{t('tl_break')}: {fmt_clock(e['at'])}{SEP}{kind}, {detail}"))
+            else:
+                text = f"{t('tl_breaks')}: {', '.join(fmt_clock(m) for m, _e in group)}"
+                skipped = sum(e["result"] == "skipped" for _m, e in group)
+                if skipped:
+                    text += f"{SEP}{t('tip_skipped')}: {skipped}"
+                points.append((x, text))
         if next_water is not None and next_water <= end:
             points.append((x_of(next_water), f"{t('tl_next_water')}: ≈{fmt_clock(next_water)}"))
-        points.append((x_of(minute_of_day(now)), f"{t('tl_now')}: {now:%H:%M}"))
+        points.append((x_of(self.minute(now)), f"{t('tl_now')}: {now:%H:%M}"))
         return points
 
+    def timeline_span_tips(self, spans, x_of):
+        """[(x0, x1, текст)] для проміжків: «Вас не було: 12:05–12:40  •  35 хв», «Пауза: 15:00–15:30»."""
+        names = {"timed": t("tl_pause"), "eating": t("tl_eating"), "finished": t("tl_finished")}
+        tips = []
+        for kind, a, b, event in spans:
+            when = f"{fmt_clock(a)}–{fmt_clock(b)}"
+            if kind == "away":
+                text = f"{t('tl_away')}: {when}{SEP}{fmt_minutes(b - a)}"
+            elif kind == "held":
+                reason = event.get("reason")
+                text = f"{t('tl_held')}: {when}"
+                if reason in ("fullscreen", "camera", "microphone"):
+                    text += f"{SEP}{t('tl_busy_' + reason)}"
+            else:
+                text = f"{names.get(event.get('kind'), t('tl_pause'))}: {when}"
+                if event.get("kind") == "eating" and event.get("meal") in MEALS:
+                    text += f"{SEP}{t('meal_' + event['meal'])}"
+            tips.append((x_of(a), max(x_of(b), x_of(a) + 3), text))
+        return tips
+
     def timeline_hover(self, event):
-        """Підказка над позначкою шкали, найближчою до курсора (у межах 9 px)."""
+        """Підказка над позначкою шкали, найближчою до курсора (у межах 9 px), а якщо курсор на проміжку,
+        а позначка не впритул (далі за 4 px), — над проміжком (найкоротшим, якщо їх кілька).
+        Підписи початку й кінця дня, які підказка накрила б, на цей час ховаємо."""
         c = self.w.get("timeline")
         if not c:
             return
-        c.delete("tip")
-        near = [p for p in self.timeline_points if abs(p[0] - event.x) <= 9]
-        if not near or abs(event.y - 48) > 16:
+        self.timeline_leave()
+        if abs(event.y - 48) > 16:
             return
-        x, text = min(near, key=lambda p: abs(p[0] - event.x))
+        near = [p for p in self.timeline_points if abs(p[0] - event.x) <= 9]
+        point = min(near, key=lambda p: abs(p[0] - event.x)) if near else None
+        under = [s for s in self.timeline_spans if s[0] - 2 <= event.x <= s[1] + 2]
+        if under and (point is None or abs(point[0] - event.x) > 4):
+            x0, x1, text = min(under, key=lambda s: s[1] - s[0])
+            x = min(max(event.x, x0), x1)
+        elif point:
+            x, text = point
+        else:
+            return
         item = c.create_text(x, 16, text=text, font=font(9), fill=C["text"], tags="tip")
         x0, y0, x1, y1 = c.bbox(item)
         shift = max(0, 8 - x0) - max(0, x1 - (c.winfo_width() - 8))
@@ -492,6 +580,17 @@ class MainWindow:
         x0, y0, x1, y1 = c.bbox(item)
         box = c.create_rectangle(x0 - 8, y0 - 4, x1 + 8, y1 + 4, fill=C["panel"], outline=C["accent"], tags="tip")
         c.tag_raise(item, box)
+        for label in c.find_withtag("label"):
+            lx0, ly0, lx1, ly1 = c.bbox(label)
+            if lx0 < x1 + 8 and lx1 > x0 - 8 and ly0 < y1 + 4:
+                c.itemconfigure(label, state="hidden")
+
+    def timeline_leave(self):
+        """Курсор пішов зі шкали (чи підказка змінюється): прибрати підказку й повернути підписи."""
+        c = self.w.get("timeline")
+        if c:
+            c.delete("tip")
+            c.itemconfigure("label", state="normal")
 
     def schedule_rows(self, now):
         """Рядки розкладу на сьогодні: (ключ, назва, стан, підсвітити?). Їжа — у власній картці поруч з водою."""
@@ -603,6 +702,10 @@ class MainWindow:
         self.w["chart_title"].pack(side="left")
         segments = tk.Frame(head, bg=C["panel"])
         segments.pack(side="right")
+        # Експорт усієї статистики в CSV — посилання поруч з перемикачем періоду
+        export = tk.Label(head, text=t("export_link"), bg=C["card"], fg=C["accent"], font=font(9), cursor="hand2")
+        export.pack(side="right", padx=(0, 14))
+        export.bind("<Button-1>", lambda e: self.export_stats())
         self.w["range_buttons"] = {}
         for days in STATS_RANGES:
             btn = tk.Label(segments, text=t("range_days", n=days), font=font(9), padx=10, pady=2, cursor="hand2")
@@ -640,6 +743,8 @@ class MainWindow:
         today = self.today()
         days = [today - dt.timedelta(days=i) for i in range(n - 1, -1, -1)]
         records = [self.stats.day(d) for d in days]
+        now = self.minute()
+        regular = [regularity(self.stats.events(d), now if d == today else None) for d in days]
         self.w["chart_title"].configure(text=t("card_last_n", n=n).upper())
         for d, btn in self.w["range_buttons"].items():
             active = d == n
@@ -650,7 +755,7 @@ class MainWindow:
         width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 210)
         top, bottom = 24, height - 66
         slot = width / n
-        self.chart_info = {"days": days, "records": records, "slot": slot, "top": top, "bottom": bottom,
+        self.chart_info = {"days": days, "records": records, "regular": regular, "slot": slot, "top": top, "bottom": bottom,
                            "width": width, "bar": min(44, slot * 0.6), "hover": None}
         peak = max([r["mini_done"] + r["long_done"] + r["skipped"] for r in records] + [4])
         for i in range(5):
@@ -735,6 +840,41 @@ class MainWindow:
             self.w[key].configure(text=value)
             self.w[f"{key}_sub"].configure(text=sub)
 
+    @staticmethod
+    def regularity_lines(reg):
+        """Регулярність дня з журналу для підказки графіка (у старих днях журналу немає — нічого)."""
+        if not reg:
+            return []
+        lines = []
+        if reg["on_time"] or reg["late"]:
+            line = f"{t('tip_on_time')}: {reg['on_time']}"
+            if reg["late"]:
+                line += f"{SEP}{t('tip_late')}: {reg['late']}"
+            lines.append(line)
+        if reg["away"]:
+            lines.append(f"{t('tip_away')}: {fmt_times(reg['away'])}{SEP}{t('tip_away_total')}: "
+                         f"{fmt_minutes(reg['away_min'])}")
+        if reg["longest_min"]:
+            lines.append(f"{t('tip_longest')}: {fmt_minutes(reg['longest_min'])}")
+        if reg["held"]:
+            lines.append(f"{t('tip_held_n')}: {fmt_times(reg['held'])}")
+        return lines
+
+    def export_stats(self):
+        """«Експорт CSV»: уся статистика — рядок на день, і поруч файл з усіма подіями журналу."""
+        path = filedialog.asksaveasfilename(
+            parent=self.main_win, title=t("export_dialog"), defaultextension=".csv",
+            initialfile=f"rhythmos-{self.today():%Y-%m-%d}.csv", filetypes=[("CSV", "*.csv")])
+        if not path:
+            return
+        try:
+            days, events = export_csv(self.stats, path, now=self.minute(), today=self.today())
+        except OSError as e:
+            messagebox.showerror(APP_NAME, t("export_failed", e=e), parent=self.main_win)
+            return
+        self.show_toast(t("export_done"), t("export_done_text", days=os.path.basename(days),
+                                                               events=os.path.basename(events)))
+
     def work_span(self, rec):
         """«08:42 – 18:05» (початок і кінець дня), «з 08:42», якщо день ще триває, або «» — даних немає."""
         start, end = rec["day_start"], rec["day_end"]
@@ -777,10 +917,13 @@ class MainWindow:
             f"{t('tip_meals')}: {rec['meals']}",
             f"{t('tip_work')}: {fmt_minutes(rec['work_sec'] // 60)}",
         ]
-        if rec["day_start"]:
+        if rec["day_start"] and rec["day_end"]:
+            lines.append(f"{t('tip_workday')}: {self.work_span(rec)}")
+        elif rec["day_start"]:
             lines.append(f"{t('tip_day_start')}: {fmt_clock(rec['day_start'])}")
-        if rec["day_end"]:
+        elif rec["day_end"]:
             lines.append(f"{t('tip_day_end')}: {fmt_clock(rec['day_end'])}")
+        lines += self.regularity_lines(info["regular"][index])
         text = c.create_text(0, 0, text="\n".join(lines), anchor="nw", fill=C["text"], font=font(10), tags="hover")
         x0, y0, x1, y1 = c.bbox(text)
         box_w, box_h = x1 - x0 + 24, y1 - y0 + 18

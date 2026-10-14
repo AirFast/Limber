@@ -406,6 +406,107 @@ def test_water_streak_counts_from_yesterday_until_goal_is_met_today():
     assert core.water_streak(stats, 8, today) == 3
 
 
+def test_day_minute_runs_past_midnight_and_clock_wraps():
+    day = dt.date(2026, 10, 14)
+    assert core.day_minute(day, at(13, 45)) == 13 * 60 + 45
+    assert core.day_minute(day, at(0, 30) + dt.timedelta(days=1)) == 24 * 60 + 30   # ще той самий робочий день
+    assert i18n.fmt_clock(24 * 60 + 30) == "00:30"
+
+
+def make_stats(monkeypatch, tmp_path, day=dt.date(2026, 10, 14)):
+    monkeypatch.setattr(core, "STATS_PATH", str(tmp_path / "stats.json"))
+    return core.Stats(today=lambda: day)
+
+
+def test_event_log_appends_replaces_closes_and_removes(monkeypatch, tmp_path):
+    stats = make_stats(monkeypatch, tmp_path)
+    day = dt.date(2026, 10, 14)
+    stats.log("day_start", 8 * 60 + 40, replace=())
+    stats.log("water", 9 * 60)
+    stats.log("water", 9 * 60)                                   # дві склянки — дві події
+    stats.log("meal", 13 * 60, replace=("meal",), meal="lunch")
+    stats.log("meal", 13 * 60 + 10, replace=("meal",), meal="lunch")   # той самий обід — замінюємо
+    stats.log("day_end", 18 * 60, replace=())
+    stats.log("day_end", 18 * 60 + 20, replace=())               # працює далі — кінець дня зсувається
+    pause = stats.log("pause", 15 * 60, to=None, kind="timed")
+    assert stats.open_spans([day]) == [(day, pause, {"type": "pause", "at": 15 * 60, "to": None, "kind": "timed"})]
+    stats.close(day, pause, 15 * 60 + 30)
+    stats.close(day, pause, 16 * 60)                             # закритий проміжок не переписуємо
+    stats.unlog("meal", meal="lunch")
+    events = core.Stats(today=lambda: day).events(day)           # усе записано на диск
+    assert [e["type"] for e in events] == ["day_start", "water", "water", "day_end", "pause"]
+    assert events[3]["at"] == 18 * 60 + 20 and events[4]["to"] == 15 * 60 + 30
+    assert stats.open_spans([day]) == [] and stats.dates() == [day]
+    assert stats.day(day)["water"] == 0                          # лічильники журнал не чіпає
+
+
+def test_open_spans_last_until_now_or_the_last_event():
+    events = [{"type": "day_start", "at": 540}, {"type": "pause", "at": 600, "to": None, "kind": "timed"},
+              {"type": "water", "at": 700}]
+    assert core.event_spans(events, now=650)[0][1:3] == (600, 650)
+    assert core.event_spans(events)[0][1:3] == (600, 700)        # минулий день: до останньої події
+    assert core.day_bounds(events, now=800) == (540, 800)
+
+
+def test_regularity_from_the_event_log():
+    events = [
+        {"type": "day_start", "at": 9 * 60},
+        {"type": "break", "at": 9 * 60 + 20, "kind": "mini", "result": "done", "sec": 30},
+        {"type": "break", "at": 9 * 60 + 40, "kind": "mini", "result": "postponed", "sec": 0},
+        {"type": "break", "at": 9 * 60 + 45, "kind": "long", "result": "done", "sec": 300},  # після відкладання
+        {"type": "break", "at": 10 * 60 + 10, "kind": "mini", "result": "skipped", "sec": 5},
+        {"type": "away", "at": 11 * 60, "to": 11 * 60 + 30},
+        {"type": "held", "at": 12 * 60, "to": 12 * 60 + 10, "reason": "camera"},
+        {"type": "pause", "at": 13 * 60, "to": 13 * 60 + 40, "kind": "eating", "meal": "lunch"},
+        {"type": "day_end", "at": 17 * 60},
+    ]
+    reg = core.regularity(events)
+    assert (reg["on_time"], reg["late"], reg["skipped"], reg["postponed"]) == (1, 1, 1, 1)
+    assert (reg["away"], reg["away_min"], reg["held"]) == (1, 30, 1)
+    assert reg["longest_min"] == 17 * 60 - (13 * 60 + 40)       # після обіду й до кінця дня — без перерви
+    assert core.regularity([]) is None
+
+
+def test_longest_work_stretch():
+    assert core.longest_work_stretch((540, 600), []) == 60
+    assert core.longest_work_stretch((540, 720), [(560, 570), (600, 700)]) == 30
+    assert core.longest_work_stretch(None, []) == 0
+
+
+def test_absence_is_logged_only_after_the_day_started():
+    day = dt.date(2026, 10, 14)
+    assert core.absence_span(day, at(10, 40), 35 * 60, day_start=9 * 60) == (10 * 60 + 5, 10 * 60 + 40)
+    assert core.absence_span(day, at(9, 10), 3 * 3600, day_start=9 * 60) == (9 * 60, 9 * 60 + 10)  # з початку дня
+    assert core.absence_span(day, at(9, 10), 3 * 3600, day_start=0) is None    # ще ранок — не відсутність
+
+
+def test_scheduler_remembers_how_long_the_absence_was():
+    s = make_scheduler(long_duration_min=5)
+    s.tick(1, now=at(11), idle=10 * 60)
+    assert s.tick(1, now=at(11, 1), idle=0) == ["back"]
+    assert s.last_away == 10 * 60
+
+
+def test_export_csv_writes_days_and_events(monkeypatch, tmp_path):
+    import csv
+    stats = make_stats(monkeypatch, tmp_path)
+    stats.add("mini_done")
+    stats.set("day_start", 9 * 60)
+    stats.log("break", 9 * 60 + 20, kind="mini", result="done", sec=30)
+    stats.log("away", 10 * 60, to=10 * 60 + 15)
+    stats.data["2026-10-13"] = {"water": 5}                      # старий день без журналу
+    days, events = core.export_csv(stats, str(tmp_path / "out.csv"))
+    assert events.endswith("out-events.csv")
+    with open(days, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["date"] for r in rows] == ["2026-10-13", "2026-10-14"]
+    assert rows[0]["water"] == "5" and rows[0]["away_count"] == ""
+    assert rows[1]["mini_done"] == "1" and rows[1]["day_start"] == "09:00" and rows[1]["away_min"] == "15"
+    with open(events, encoding="utf-8-sig", newline="") as f:
+        logged = list(csv.DictReader(f))
+    assert [(r["time"], r["type"], r["until"]) for r in logged] == [("09:20", "break", ""), ("10:00", "away", "10:15")]
+
+
 def test_fmt_hm_and_days():
     assert core.fmt_hm(6 * 3600 + 5 * 60 + 59) == "6:05"
     assert [i18n.fmt_days(n) for n in (1, 3, 5, 21)] == ["1 день", "3 дні", "5 днів", "21 день"]

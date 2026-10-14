@@ -267,6 +267,12 @@ def minute_of_day(moment):
     return moment.hour * 60 + moment.minute
 
 
+def day_minute(date, moment):
+    """Хвилини від півночі робочого дня `date`: після півночі — понад 24:00 (00:30 → 1470).
+    Так у журналі подій зберігається час — проміжки й порядок лишаються правильними й уночі."""
+    return int((moment - dt.datetime.combine(date, dt.time())).total_seconds() // 60)
+
+
 def at_minute(date, minutes):
     """Мить дня `date` через `minutes` хвилин від півночі."""
     return dt.datetime.combine(date, dt.time()) + dt.timedelta(minutes=minutes)
@@ -342,6 +348,197 @@ class Stats:
         rec = self.data.setdefault(self.today().isoformat(), {})
         rec[key] = list(values)
         save_json(STATS_PATH, self.data)
+
+    # --- журнал подій дня ---
+    # Кожен день, крім лічильників, має список подій "events" — з нього малюємо шкалу дня й рахуємо
+    # регулярність. Подія — словник: "type" і "at" (хвилина робочого дня, day_minute), далі — за типом:
+    #   break     kind (mini/long), result (done/skipped/postponed), sec — скільки тривала;
+    #   away      to — людини не було з at до to;
+    #   pause     to, kind (timed/eating/finished), meal — для eating;
+    #   held      to, reason (fullscreen/camera/microphone) — перерва чекала кінця дзвінка чи показу;
+    #   water, meal (meal), day_start, day_end, overwork — моменти.
+    # Проміжок, що ще триває (пауза, перерва чекає), має to = None — його закриває close().
+    # Лічильники вище пишемо далі: у старих днях подій немає, і решта коду читає саме їх
+
+    def events(self, date):
+        return [dict(e) for e in self.data.get(date.isoformat(), {}).get("events", [])]
+
+    def log(self, event_type, at, /, date=None, replace=None, **fields):
+        """Подія `event_type` о хвилині `at` у журнал дня `date` (за замовчуванням — сьогодні); один запис
+        на диск. replace — кортеж полів: подію того самого типу з такими самими значеннями цих полів
+        замінюємо (кінець дня, з'їдена їжа), а не додаємо ще одну. Повертає номер події в журналі дня."""
+        rec = self.data.setdefault((date or self.today()).isoformat(), {})
+        events = rec.setdefault("events", [])
+        event = {"type": event_type, "at": int(at), **fields}
+        index = len(events)
+        if replace is not None:
+            index = next((i for i, e in enumerate(events) if e.get("type") == event_type
+                          and all(e.get(f) == fields.get(f) for f in replace)), index)
+        if index < len(events):
+            events[index] = event
+        else:
+            events.append(event)
+        save_json(STATS_PATH, self.data)
+        return index
+
+    def close(self, date, index, to):
+        """Проміжок, що тривав (to = None), закінчився о хвилині `to`."""
+        events = self.data.get(date.isoformat(), {}).get("events", [])
+        if 0 <= index < len(events) and events[index].get("to") is None:
+            events[index]["to"] = max(int(to), events[index]["at"])
+            save_json(STATS_PATH, self.data)
+
+    def unlog(self, event_type, /, date=None, **match):
+        """Прибирає події `event_type` з такими полями (позначку «з'їдено» зняли)."""
+        rec = self.data.get((date or self.today()).isoformat(), {})
+        events = rec.get("events", [])
+        kept = [e for e in events if not (e.get("type") == event_type and all(e.get(k) == v for k, v in match.items()))]
+        if len(kept) != len(events):
+            rec["events"] = kept
+            save_json(STATS_PATH, self.data)
+
+    def open_spans(self, dates):
+        """[(дата, номер, подія)] проміжків, що досі тривають (to = None), — щоб закрити їх після перезапуску."""
+        return [(date, i, e) for date in dates for i, e in enumerate(self.events(date))
+                if e.get("type") in SPAN_TYPES and e.get("to") is None]
+
+    def dates(self):
+        """Усі дні зі статистикою, за порядком."""
+        found = []
+        for key in self.data:
+            try:
+                found.append(dt.date.fromisoformat(key))
+            except ValueError:
+                pass
+        return sorted(found)
+
+
+SPAN_TYPES = ("away", "pause", "held")   # події-проміжки: мають кінець "to"
+PAUSE_KINDS = {"paused": "timed", "eating": "eating", "finished": "finished"}  # режим → вид паузи в журналі
+
+
+def absence_span(date, now, seconds, day_start):
+    """(від, до) відсутності в хвилинах робочого дня `date`, що скінчилась у `now` і тривала `seconds`;
+    None — якщо робочий день ще не почався (ніч і ранок до першої дії — не відсутність). Початок — не
+    раніше за початок дня: після паузи «до ранку» людина «відсутня» ще з учорашнього вечора."""
+    if not day_start:
+        return None
+    end = day_minute(date, now)
+    start = max(day_minute(date, now - dt.timedelta(seconds=seconds)), day_start)
+    return (start, end) if end > start else None
+
+
+def event_end(event, now=None, last=None):
+    """Кінець проміжку: записаний, або «зараз» (now — для сьогодні), або остання відома хвилина дня."""
+    if event.get("to") is not None:
+        return event["to"]
+    return max(event["at"], now if now is not None else (last if last is not None else event["at"]))
+
+
+def event_spans(events, now=None):
+    """Проміжки дня: [(тип, від, до, подія)] — відсутності, паузи й перерви, що чекали, за порядком.
+    Незакритий проміжок триває до now (сьогодні) або до останньої події дня."""
+    last = max((e.get("to") or e["at"] for e in events), default=None)
+    spans = [(e["type"], e["at"], event_end(e, now, last), e) for e in events if e.get("type") in SPAN_TYPES]
+    return sorted(spans, key=lambda s: s[1])
+
+
+def day_bounds(events, now=None):
+    """(початок, кінець) робочого дня з журналу: day_start і day_end, або перша подія й now/остання подія."""
+    if not events:
+        return None
+    start = next((e["at"] for e in events if e["type"] == "day_start"), None)
+    end = next((e["at"] for e in events if e["type"] == "day_end"), None)
+    first = min(e["at"] for e in events)
+    last = max(max(e["at"], e.get("to") or 0) for e in events)
+    return (start if start is not None else first,
+            end if end is not None else (now if now is not None else last))
+
+
+def regularity(events, now=None):
+    """Регулярність дня з журналу (None — подій немає): перерви вчасно (без відкладання), після
+    відкладання й пропущені; скільки разів і скільки хвилин людини не було; найдовший відрізок роботи
+    без перерви (перерва, відсутність чи пауза на їжу або звичайна — це відпочинок); скільки разів
+    перерва чекала кінця дзвінка."""
+    if not events:
+        return None
+    result = {"on_time": 0, "late": 0, "skipped": 0, "postponed": 0, "away": 0, "away_min": 0,
+              "held": 0, "longest_min": 0}
+    rests = []
+    postponed = False
+    for e in sorted(events, key=lambda e: e["at"]):
+        kind = e["type"]
+        if kind == "break":
+            if e.get("result") == "postponed":
+                result["postponed"] += 1
+                postponed = True
+            elif e.get("result") == "skipped":
+                result["skipped"] += 1
+                postponed = False
+            else:
+                result["late" if postponed else "on_time"] += 1
+                postponed = False
+                rests.append((e["at"], e["at"] + -(-e.get("sec", 0) // 60)))
+        elif kind == "held":
+            result["held"] += 1
+    for kind, start, end, e in event_spans(events, now):
+        if kind == "away":
+            result["away"] += 1
+            result["away_min"] += end - start
+            rests.append((start, end))
+        elif kind == "pause":  # і пауза «до ранку»: після «Завершити день» — уже не робота
+            rests.append((start, end))
+    result["longest_min"] = longest_work_stretch(day_bounds(events, now), rests)
+    return result
+
+
+def longest_work_stretch(bounds, rests):
+    """Найдовший відрізок між відпочинками (хвилини) у межах робочого дня `bounds`."""
+    if not bounds:
+        return 0
+    start, end = bounds
+    longest, cursor = 0, start
+    for rest_from, rest_to in sorted(rests):
+        if rest_from > cursor:
+            longest = max(longest, min(rest_from, end) - cursor)
+        cursor = max(cursor, rest_to)
+        if cursor >= end:
+            break
+    return max(longest, end - cursor, 0)
+
+
+DAY_COLUMNS = ("date",) + Stats.KEYS + ("breaks_on_time", "away_count", "away_min", "longest_without_break_min")
+EVENT_COLUMNS = ("date", "time", "type", "until", "kind", "result", "seconds", "meal", "reason")
+
+
+def export_csv(stats, path, now=None, today=None):
+    """Уся статистика в CSV: `path` — рядок на день (лічильники й регулярність з журналу),
+    поруч `<назва>-events.csv` — усі події журналу. Час — «ГГ:ХХ». Повертає шляхи обох файлів.
+    UTF-8 з BOM — щоб Excel не ламав кирилицю."""
+    import csv
+    base, ext = os.path.splitext(path)
+    events_path = f"{base}-events{ext or '.csv'}"
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(DAY_COLUMNS)
+        for date in stats.dates():
+            rec = stats.day(date)
+            reg = regularity(stats.events(date), now if date == today else None) or {}
+            writer.writerow([date.isoformat()]
+                            + [(fmt_clock(rec[k]) if rec[k] else "") if k in Stats.MOMENTS else rec[k]
+                               for k in Stats.KEYS]
+                            + [reg.get("on_time", ""), reg.get("away", ""), reg.get("away_min", ""),
+                               reg.get("longest_min", "")])
+    with open(events_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(EVENT_COLUMNS)
+        for date in stats.dates():
+            for e in sorted(stats.events(date), key=lambda e: e["at"]):
+                to = e.get("to")
+                writer.writerow([date.isoformat(), fmt_clock(e["at"]), e["type"],
+                                 fmt_clock(to) if to is not None else "", e.get("kind", ""), e.get("result", ""),
+                                 e.get("sec", ""), e.get("meal", ""), e.get("reason", "")])
+    return path, events_path
 
 
 def split_balanced(heights, columns, gap=14):
@@ -636,6 +833,7 @@ class Scheduler:
         self.finished_at = None    # коли натиснули «Завершити день» (паузу «до ранку»)
         self.away = False          # людини немає за комп'ютером (див. away_after)
         self.away_idle = 0.0       # найдовша бездіяльність за цю відсутність
+        self.last_away = 0.0       # скільки секунд тривала остання відсутність (для журналу на подію "back")
         self.breaks_taken = 0
         self.postpones = 0
         self.long_skipped = False  # довгу перерву пропустили — наступна знову довга (один раз)
@@ -814,6 +1012,7 @@ class Scheduler:
             every = max(1, self.cfg["long_every"])
             self.breaks_taken = -(-self.breaks_taken // every) * every
             self.long_skipped = False
+        self.last_away = self.away_idle
         self.away_idle = 0.0
 
     # --- перерви ---

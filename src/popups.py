@@ -50,6 +50,7 @@ class Popups:
         if self.sched.in_break or not self.sched.can_postpone():
             return
         self.stats.add("postponed")
+        self.stats.log("break", self.minute(), kind=self.sched.next_kind(), result="postponed", sec=0)
         self.sched.postpone()
 
     # --- перерва ---
@@ -233,6 +234,10 @@ class Popups:
         away = result == "done" and system.idle_seconds() >= self.sched.away_after()
         if elapsed and not away:
             self.stats.add("active_sec", elapsed)
+        if not away:  # відсутність журнал запише сам, коли людина повернеться ("back")
+            results = {"done": "done", "skip": "skipped", "postpone": "postponed"}
+            started = dt.datetime.now() - dt.timedelta(seconds=elapsed)
+            self.stats.log("break", self.minute(started), kind=kind, result=results[result], sec=elapsed)
         if away:
             self.sched.finish_break()
         elif result == "done":
@@ -388,6 +393,10 @@ class Popups:
         self.stats.set("meals", sum(self.stats.day(today)[f"ate_{m}"] for m in MEALS))
         # Коли насправді поїли — на шкалі дня тарілка стоїть у цей момент, а не в запланований
         self.stats.set_times(f"ate_{meal}_at", [minute_of_day(now)] if eaten else [])
+        if eaten:
+            self.stats.log("meal", self.minute(now), replace=("meal",), meal=meal)
+        else:
+            self.stats.unlog("meal", meal=meal)
         if self.sched.mark_meal(meal, eaten, now) and not self.meal_demo:  # нагадування більше не потрібне
             self.close_meal_window()
         self.refresh_main()
@@ -556,6 +565,8 @@ class Popups:
         times = self.stats.times(today, "water_at")
         if delta > 0:
             times += [minute_of_day(dt.datetime.now())] * delta
+            for _ in range(delta):
+                self.stats.log("water", self.minute())
         else:
             times = times[:max(0, len(times) + delta)]
         self.stats.set_times("water_at", times)
