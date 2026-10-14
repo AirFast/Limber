@@ -172,34 +172,29 @@ def test_timed_pause_ends_by_itself():
     assert not s.paused and s.mode == core.WORKING
 
 
-def test_workday_belongs_to_the_previous_date_until_the_boundary():
-    assert core.workday_date(at(0, 30)) == dt.date(2026, 10, 13)
-    assert core.workday_date(at(4)) == dt.date(2026, 10, 14)
-    assert core.workday_date(at(5, 59), boundary_hour=6) == dt.date(2026, 10, 13)
-    assert core.work_started(at(4, 30), 0, boundary_hour=5) is None          # ще вчорашня ніч
-    assert core.work_started(at(5, 30), 0, boundary_hour=5) == 5 * 60 + 30
-    s = make_scheduler(day_boundary_hour=5)
+def test_day_is_the_real_calendar_day():
+    assert core.workday_date(at(0, 30)) == dt.date(2026, 10, 14)            # доба — від 00:00 до 24:00
+    assert core.work_started(at(3, 30), 0) is None                           # початок дня — не вночі
+    assert core.work_started(at(4, 30), 0) == 4 * 60 + 30
+    s = make_scheduler()
     s.pause(None, now=at(23))
-    assert s.paused_until == at(7) + dt.timedelta(days=1)                   # межа доби + 2 год
-    # Вечеря після півночі в п'ятницю — ще п'ятниця, а не вихідний
-    s = make_scheduler(lunch_enabled=True, workdays=[4])
-    assert s.reminders_today(dt.datetime(2026, 10, 17, 1, 0))
-    assert not s.reminders_today(dt.datetime(2026, 10, 17, 9, 0))
+    assert s.paused_until == at(6) + dt.timedelta(days=1)                   # «до ранку» — до 06:00
+    s = make_scheduler(lunch_enabled=True, workdays=[4])                     # лише п'ятниця
+    assert s.reminders_today(dt.datetime(2026, 10, 16, 23, 0))
+    assert not s.reminders_today(dt.datetime(2026, 10, 17, 1, 0))           # після півночі — вже субота
 
-
-def test_stats_are_written_to_the_current_workday(monkeypatch, tmp_path):
+def test_stats_are_written_to_the_calendar_day(monkeypatch, tmp_path):
     monkeypatch.setattr(core, "STATS_PATH", str(tmp_path / "stats.json"))
     stats = core.Stats(today=lambda: core.workday_date(at(0, 30)))
     stats.add("work_sec", 60)
-    assert stats.day(dt.date(2026, 10, 13))["work_sec"] == 60 and stats.day(at(0).date())["work_sec"] == 0
+    assert stats.day(dt.date(2026, 10, 14))["work_sec"] == 60 and stats.day(dt.date(2026, 10, 13))["work_sec"] == 0
 
-
-def test_day_end_after_midnight_still_belongs_to_the_evening():
+def test_day_end_is_asked_once_per_calendar_day():
     s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
-    assert s.tick(1, now=at(0, 30) + dt.timedelta(days=1)) == ["day_end"]   # працює далеко за північ
-    s.day_end_answered("finish", now=at(0, 31) + dt.timedelta(days=1))
+    assert s.tick(1, now=at(18)) == ["day_end"]
+    s.day_end_answered("finish", now=at(18, 1))
+    assert s.tick(1, now=at(0, 30) + dt.timedelta(days=1)) == []            # нова доба, але ще не 18:00
     assert s.tick(1, now=at(18) + dt.timedelta(days=1)) == ["day_end"]      # наступного вечора — знову
-
 
 def test_long_absence_counts_as_a_long_break():
     s = make_scheduler(long_every=3, long_duration_min=5, mini_interval_min=20)
@@ -355,8 +350,8 @@ def test_long_gap_since_the_saved_state_is_an_absence():
 
 def test_restore_day_from_stats():
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, day_end_enabled=True, day_end_at=18 * 60)
-    s.restore_day(at(10).date(), eaten=["lunch"], finished_minute=30)    # день завершили о 00:30
-    assert s.finished_at == at(0, 30) + dt.timedelta(days=1)
+    s.restore_day(at(10).date(), eaten=["lunch"], finished_minute=17 * 60 + 30)   # день завершили о 17:30
+    assert s.finished_at == at(17, 30)
     assert s.meal_state("lunch", at(13)) == ("eat", None)
     assert s.tick(1, now=at(13)) == [] and s.tick(1, now=at(18)) == []
 
@@ -664,6 +659,17 @@ def test_water_interval_follows_the_actual_workday():
     cfg = dict(core.DEFAULTS, water_profile="male")
     core.apply_water_profile(cfg, workday=10 * 60)
     assert (cfg["water_goal"], cfg["water_interval_min"]) == (8, 75)
+
+
+def test_current_stretch_counts_from_the_last_rest():
+    events = [{"type": "day_start", "at": 8 * 60},
+              {"type": "break", "at": 10 * 60, "kind": "mini", "result": "done", "sec": 30},
+              {"type": "away", "at": 11 * 60, "to": 11 * 60 + 20},
+              {"type": "break", "at": 12 * 60, "kind": "mini", "result": "skipped"}]
+    assert core.current_stretch(events, 9 * 60) == 60                    # від початку дня
+    assert core.current_stretch(events, 10 * 60 + 30) == 29             # від кінця перерви (10:01)
+    assert core.current_stretch(events, 12 * 60 + 30) == 70             # пропущена перерва — не відпочинок
+    assert core.current_stretch([], 9 * 60) == 0
 
 
 def test_every_nth_break_is_long():

@@ -103,8 +103,8 @@ class App(Popups, MainWindow):
         self.root.after(UPDATE_CHECK_DELAY_MS, self.check_updates)
 
     def today(self):
-        """Поточний робочий день: до межі доби (day_boundary_hour) — ще вчорашній. Ключ статистики."""
-        return workday_date(dt.datetime.now(), self.cfg["day_boundary_hour"])
+        """Поточний день — календарна дата (доба від 00:00 до 24:00). Ключ статистики."""
+        return workday_date(dt.datetime.now())
 
     def restore_state(self):
         """Стан таймерів з state.json (той самий робочий день, не старший за 12 год): відлік до перерви,
@@ -211,7 +211,7 @@ class App(Popups, MainWindow):
         """Передає планувальнику, що відомо про сьогодні: склянки, кінець робочого дня, час роботи."""
         today = self.today()
         rec = self.stats.day(today)
-        end = at_workday_minute(today, self.workday()[1], self.cfg["day_boundary_hour"])
+        end = at_workday_minute(today, self.workday()[1])
         self.sched.update_day(rec["water"], end, rec["work_sec"] + int(self.work_pending))
 
     def refresh_water_plan(self):
@@ -482,7 +482,7 @@ class App(Popups, MainWindow):
         if self.stats.day(today)["day_start"]:
             self.day_start_noted = today
             return
-        minute = work_started(dt.datetime.now(), idle, self.cfg["day_boundary_hour"])
+        minute = work_started(dt.datetime.now(), idle)
         if minute is not None:
             self.stats.set("day_start", minute)
             self.stats.log("day_start", minute, replace=())

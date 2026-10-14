@@ -9,12 +9,12 @@ from PIL import ImageTk
 
 import i18n
 import system
-from core import (APP_NAME, average_minute, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
+from core import (APP_NAME, average_minute, current_stretch, CONFIG_PATH, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats,
                   completion_rate, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity, save_json,
                   setting_value, slider_position, split_balanced, water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
-from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_seconds, fmt_times,
+from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
                   fmt_volume, t)
 from system import font
 from widgets import ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
@@ -179,7 +179,11 @@ class MainWindow:
                     size=11).pack(fill="x", pady=3)
         self.w["pause_btn"] = flat_button(left, t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=3)
-        flat_button(left, t("reset"), self.sched.reset, size=11).pack(fill="x", pady=3)
+        self.w["reset_btn"] = flat_button(left, t("reset"), self.sched.reset, size=11)
+        self.w["reset_btn"].pack(fill="x", pady=3)
+        # «Завершити день» — лише коли настав кінець дня з налаштувань, а день ще не завершено
+        self.w["finish_btn"] = flat_button(left, t("day_end_finish"), lambda: self.handle(("pause", None)),
+                                           bg=C["accent"], fg=C["on_accent"], size=11)
         # Розклад: довга перерва й кінець дня — рядок «назва … стан», оновлюється щосекунди
         tk.Label(left, text=t("card_schedule").upper(), bg=C["card"], fg=C["accent"],
                  font=font(9, "semibold")).pack(anchor="w", pady=(24, 6))
@@ -220,9 +224,10 @@ class MainWindow:
         self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
+        # Перерви й відпочинок — угорі; робота, безперервна робота й відсутність — унизу
         metrics = (("breaks", t("m_breaks"), C["accent"]), ("skipped", t("m_skipped"), C["muted"]),
-                   ("postponed", t("m_postponed"), C["muted"]), ("active", t("m_active"), C["accent"]),
-                   ("work", t("m_work"), C["text"]), ("meals", t("m_meals"), C["meal"]))
+                   ("active", t("m_active"), C["accent"]), ("work", t("m_work"), C["text"]),
+                   ("stretch", t("m_stretch"), C["text"]), ("away", t("m_away"), C["muted"]))
         for i, (key, caption, color) in enumerate(metrics):
             cell = tk.Frame(grid, bg=C["card"])
             cell.grid(row=i // 3, column=i % 3, sticky="nw", pady=(0 if i < 3 else 14, 0))
@@ -505,53 +510,42 @@ class MainWindow:
         return groups
 
     def timeline_tips(self, marks, drinks, breaks, next_water, now, x_of, end):
-        """[(x, текст підказки)] для позначок без підпису: їжа, перерви й склянки (близькі — разом),
-        наступна склянка, «зараз»."""
-        states = {"done": t("tl_eaten"), "now": t("tl_now_meal"), "later": t("tl_planned"), "skip": t("tl_skipped")}
-        points = [(x_of(m), f"{name}: {fmt_clock(m)}{SEP}{states.get(state, '')}")
-                  for m, name, _color, state, kind in marks if kind == "meal"]
+        """[(x, текст підказки)] для позначок без підпису — просто «Назва: час»: «Вечеря: 18:37»,
+        «Вода: 17:19», «Довга перерва: 10:30». Стан (з'їдено, пропущено) видно з самої позначки;
+        близькі склянки й перерви — однією підказкою з кількома часами."""
+        points = [(x_of(m), f"{name}: {fmt_clock(m)}") for m, name, _color, _state, kind in marks if kind == "meal"]
         for group in self.grouped([(m,) for m in drinks], x_of):
             points.append((x_of(group[0][0]), f"{t('tl_water')}: {', '.join(fmt_clock(g[0]) for g in group)}"))
         for group in self.grouped([(e["at"], e) for e in breaks], x_of):
             x = sum(x_of(m) for m, _e in group) / len(group)
             if len(group) == 1:
                 e = group[0][1]
-                if e["result"] == "done":
-                    sec = e.get("sec", 0)
-                    detail = fmt_seconds(sec) if sec < 60 else fmt_minutes(round(sec / 60))
+                if e["result"] != "done":
+                    name = t("tl_break_skipped")
                 else:
-                    detail = t("tl_skipped")
-                kind = t("tl_long" if e.get("kind") == "long" else "tl_mini")
-                points.append((x, f"{t('tl_break')}: {fmt_clock(e['at'])}{SEP}{kind}, {detail}"))
+                    name = t("tl_break_long" if e.get("kind") == "long" else "tl_break")
+                points.append((x, f"{name}: {fmt_clock(e['at'])}"))
             else:
-                text = f"{t('tl_breaks')}: {', '.join(fmt_clock(m) for m, _e in group)}"
-                skipped = sum(e["result"] == "skipped" for _m, e in group)
-                if skipped:
-                    text += f"{SEP}{t('tip_skipped')}: {skipped}"
-                points.append((x, text))
+                points.append((x, f"{t('tl_breaks')}: {', '.join(fmt_clock(m) for m, _e in group)}"))
         if next_water is not None and next_water <= end:
-            points.append((x_of(next_water), f"{t('tl_next_water')}: ≈{fmt_clock(next_water)}"))
+            points.append((x_of(next_water), f"{t('tl_next_water')}: {fmt_clock(next_water)}"))
         points.append((x_of(self.minute(now)), f"{t('tl_now')}: {now:%H:%M}"))
         return points
 
     def timeline_span_tips(self, spans, x_of):
-        """[(x0, x1, текст)] для проміжків: «Вас не було: 12:05–12:40  •  35 хв», «Пауза: 15:00–15:30»."""
+        """[(x0, x1, текст)] для проміжків — «Назва: від–до»: «Вас не було: 12:05–12:40», «Обід: 13:05–13:50»."""
         names = {"timed": t("tl_pause"), "eating": t("tl_eating"), "finished": t("tl_finished")}
         tips = []
         for kind, a, b, event in spans:
-            when = f"{fmt_clock(a)}–{fmt_clock(b)}"
             if kind == "away":
-                text = f"{t('tl_away')}: {when}{SEP}{fmt_minutes(b - a)}"
+                name = t("tl_away")
             elif kind == "held":
-                reason = event.get("reason")
-                text = f"{t('tl_held')}: {when}"
-                if reason in ("fullscreen", "camera", "microphone"):
-                    text += f"{SEP}{t('tl_busy_' + reason)}"
+                name = t("tl_held")
+            elif event.get("kind") == "eating" and event.get("meal") in MEALS:
+                name = t(f"meal_{event['meal']}")
             else:
-                text = f"{names.get(event.get('kind'), t('tl_pause'))}: {when}"
-                if event.get("kind") == "eating" and event.get("meal") in MEALS:
-                    text += f"{SEP}{t('meal_' + event['meal'])}"
-            tips.append((x_of(a), max(x_of(b), x_of(a) + 3), text))
+                name = names.get(event.get("kind"), t("tl_pause"))
+            tips.append((x_of(a), max(x_of(b), x_of(a) + 3), f"{name}: {fmt_clock(a)}–{fmt_clock(b)}"))
         return tips
 
     def timeline_hover(self, event):
@@ -1066,7 +1060,7 @@ class MainWindow:
             self.set_setting("workdays", sorted(set(self.cfg["workdays"]) ^ {day}))  # новий список, не той самий
             paint()
 
-        for day, name in enumerate(t("weekdays_short").split()):
+        for day, name in enumerate(t("weekdays").split()):
             chip = tk.Label(segments, text=name, font=font(10), padx=4, pady=3, cursor="hand2")
             chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             chip.bind("<Button-1>", lambda e, d=day: flip(d))
@@ -1245,22 +1239,33 @@ class MainWindow:
         else:
             self.set_headline("water", fmt_time(s.water_remaining), countdown=True)
             self.w["water_sub"].configure(text=t("water_next", progress=progress))
-        rate = completion_rate(today)
         work = today["work_sec"] + int(self.work_pending)  # ще не записане теж показуємо — наживо
+        now = dt.datetime.now()
+        events = self.stats.events(self.today())
+        reg = regularity(events, self.minute(now)) or {}
+        stretch = 0 if (s.in_break or s.away or s.paused or s.eating) else current_stretch(events, self.minute(now))
         values = {
             "breaks": (today["mini_done"] + today["long_done"],
                        t("breaks_split", mini=today["mini_done"], long=today["long_done"])),
-            "skipped": (today["skipped"], t("done_rate", pct=rate) if rate is not None else ""),
-            "postponed": (today["postponed"], ""),
-            "work": (fmt_hm(work), ""),
+            "skipped": (today["skipped"], t("postponed_n", n=today["postponed"]) if today["postponed"] else ""),
             "active": (today["active_sec"] // 60, ""),
-            "meals": (today["meals"], ""),
+            "work": (fmt_hm(work), self.work_span(today)),
+            "stretch": (stretch, t("longest_n", time=fmt_minutes(reg["longest_min"])) if reg.get("longest_min") else ""),
+            "away": (reg.get("away_min", 0), t("times_n", n=reg["away"]) if reg.get("away") else ""),
         }
         for key, (value, sub) in values.items():
             self.w[f"today_{key}"].configure(text=value)
             self.w[f"today_{key}_sub"].configure(text=sub)
+        # «Завершити день» під кнопками кільця — коли настав кінець дня з налаштувань, а день ще триває
+        due = (self.cfg["day_end_enabled"] and s.reminders_today(now) and not s.day_finished(now)
+               and now >= s.moment(now, self.cfg["day_end_at"]))
+        if due != bool(self.w["finish_btn"].winfo_manager()):
+            if due:
+                self.w["finish_btn"].pack(fill="x", pady=3, after=self.w["reset_btn"])
+            else:
+                self.w["finish_btn"].pack_forget()
         self.refresh_schedule()
-        self.refresh_meal_card(dt.datetime.now())
+        self.refresh_meal_card(now)
         self.draw_timeline()
         self.render_glasses(today["water"])
 

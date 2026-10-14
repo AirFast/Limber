@@ -43,7 +43,6 @@ DEFAULTS = {
     "day_end_enabled": True,     # нагадування «робочий день скінчився»
     "day_end_at": 18 * 60,
     "workdays": [0, 1, 2, 3, 4],  # дні тижня (0 — понеділок), коли нагадувати про їжу й кінець дня
-    "day_boundary_hour": 4,      # дії до цієї години ще належать учорашньому робочому дню
     "workday_start": 0,          # початок робочого дня, хвилини від півночі; 0 — за першою дією з мишею
     "max_work_hours": 9,         # після стількох годин за комп'ютером — попередження; 0 — вимкнено
     "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
@@ -99,7 +98,8 @@ MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
 DAY_END_SNOOZE_MIN = 30   # «Ще 30 хв» — людина ще працює, нагадаємо знову
 WATER_LATER_MIN = 15      # «Пізніше» у нагадуванні про воду
 WATER_MIN_PACE_MIN = 15   # розумний темп води: не частіше, ніж раз на стільки хвилин
-MORNING_AFTER_BOUNDARY_H = 2    # пауза «до ранку» триває до межі доби + 2 год (за замовчуванням 06:00)
+MORNING = dt.time(6, 0)         # до коли триває пауза «до ранку»
+EARLIEST_START = dt.time(4, 0)  # початок робочого дня — перша дія не раніше: до того — ще ніч
 ACTIVE_IDLE_SEC = 60            # людина за комп'ютером, якщо миша чи клавіатура були не довше хвилини тому
 MIN_AWAY_MIN = 2                # відсутність — не коротша за це, навіть якщо довга перерва коротша
 FINISH_GRACE_MIN = 3            # після «Завершити день»: якщо людина працює далі довше — день триває
@@ -278,23 +278,22 @@ def at_minute(date, minutes):
     return dt.datetime.combine(date, dt.time()) + dt.timedelta(minutes=minutes)
 
 
-def workday_date(moment, boundary_hour=DEFAULTS["day_boundary_hour"]):
-    """Робочий день, до якого належить мить: до межі доби (04:00) — ще вчорашній.
+def workday_date(moment):
+    """День, до якого належить мить, — звичайна календарна дата: доба від 00:00 до 24:00.
     Саме ця дата — ключ статистики й «сьогодні» для нагадувань."""
-    return (moment - dt.timedelta(hours=boundary_hour)).date()
+    return moment.date()
 
 
-def at_workday_minute(date, minutes, boundary_hour=DEFAULTS["day_boundary_hour"]):
-    """Мить робочого дня `date` за хвилинами від півночі: час до межі доби — це вже наступна календарна дата."""
-    moment = at_minute(date, minutes)
-    return moment + dt.timedelta(days=1) if minutes < boundary_hour * 60 else moment
+def at_workday_minute(date, minutes):
+    """Мить дня `date` за хвилинами від півночі (час із налаштувань)."""
+    return at_minute(date, minutes)
 
 
-def work_started(now, idle_seconds, boundary_hour=DEFAULTS["day_boundary_hour"]):
+def work_started(now, idle_seconds):
     """Хвилина дня, коли почали працювати, або None: людина за комп'ютером (миша чи клавіатура щойно),
-    і вже не ніч (до межі доби — це ще вчорашній день). Момент — остання дія, а не цей тік."""
+    і вже не ніч — початок дня не раніше EARLIEST_START. Момент — остання дія, а не цей тік."""
     started = now - dt.timedelta(seconds=idle_seconds)
-    if idle_seconds > ACTIVE_IDLE_SEC or started.hour < boundary_hour or started.date() != now.date():
+    if idle_seconds > ACTIVE_IDLE_SEC or started.time() < EARLIEST_START or started.date() != now.date():
         return None
     return minute_of_day(started)
 
@@ -490,6 +489,22 @@ def regularity(events, now=None):
             rests.append((start, end))
     result["longest_min"] = longest_work_stretch(day_bounds(events, now), rests)
     return result
+
+
+def current_stretch(events, now):
+    """Скільки хвилин людина працює поспіль зараз: від кінця останнього відпочинку (зроблена перерва,
+    відсутність, пауза) або від початку дня; `now` — хвилина дня. 0 — день ще не почався."""
+    bounds = day_bounds(events, now)
+    if not bounds:
+        return 0
+    rest_end = bounds[0]
+    for e in events:
+        if e["type"] == "break" and e.get("result") == "done" and e["at"] <= now:
+            rest_end = max(rest_end, e["at"] + -(-e.get("sec", 0) // 60))
+    for kind, _start, end, _e in event_spans(events, now):
+        if kind in ("away", "pause") and end <= now:
+            rest_end = max(rest_end, end)
+    return max(0, now - rest_end)
 
 
 def longest_work_stretch(bounds, rests):
@@ -919,18 +934,17 @@ class Scheduler:
         return self.day_end.snoozed_until
 
     def workday(self, now):
-        """Робочий день для миті `now` (з межею доби day_boundary_hour)."""
-        return workday_date(now, self.cfg["day_boundary_hour"])
+        """День для миті `now` — календарна дата."""
+        return workday_date(now)
 
     def moment(self, now, minutes):
-        """Мить сьогоднішнього робочого дня за хвилинами від півночі (час із налаштувань)."""
-        return at_workday_minute(self.workday(now), minutes, self.cfg["day_boundary_hour"])
+        """Мить сьогодні за хвилинами від півночі (час із налаштувань)."""
+        return at_workday_minute(self.workday(now), minutes)
 
     def morning(self, now):
-        """Кінець паузи «до ранку»: найближча година «межа доби + 2» (06:00) — після півночі це цей самий
-        ранок, а не наступний (інакше пауза тривала б ~30 год)."""
-        hour = (self.cfg["day_boundary_hour"] + MORNING_AFTER_BOUNDARY_H) % 24
-        morning = dt.datetime.combine(now.date(), dt.time(hour))
+        """Кінець паузи «до ранку»: найближчі MORNING (06:00) — після півночі це цей самий ранок,
+        а не наступний (інакше пауза тривала б ~30 год)."""
+        morning = dt.datetime.combine(now.date(), MORNING)
         return morning if now < morning else morning + dt.timedelta(days=1)
 
     def away_after(self):
@@ -1192,7 +1206,7 @@ class Scheduler:
         for meal in eaten:
             self.meals[meal].answered = (day, "eat")
         if finished_minute and not (self.finished_at and self.workday(self.finished_at) == day):
-            self.finished_at = at_workday_minute(day, finished_minute, self.cfg["day_boundary_hour"])
+            self.finished_at = at_workday_minute(day, finished_minute)
         if finished_minute or day_end_asked:
             self.day_end.shown = day
 
