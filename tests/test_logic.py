@@ -93,7 +93,7 @@ def test_meal_is_not_shown_long_after_its_time():
 def test_disabled_meal_and_pause_until_morning_stay_silent():
     assert make_scheduler(lunch_enabled=False).tick(1, now=at(13)) == []
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
-    s.pause(None)
+    s.pause(None, now=at(12, 59))
     assert s.tick(1, now=at(13)) == []
 
 
@@ -148,7 +148,7 @@ def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
     s.meal_answered("skip", now=at(18))
     assert s.tick(1, now=at(18, 1)) == ["day_end"]
     s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
-    s.pause(None)
+    s.pause(None, now=at(17, 59))                      # час фіксований: не залежить від годинника машини
     assert s.tick(1, now=at(18)) == []
 
 
