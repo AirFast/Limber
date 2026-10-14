@@ -22,6 +22,7 @@ def ukrainian():
 def make_scheduler(**overrides):
     # Їжа й кінець дня прив'язані до годинника — у тестах вимкнені, якщо їх не ввімкнути явно
     meals_off = {f"{meal}_enabled": False for meal in core.MEALS}
+    # Тестова дата — середа; «лише в робочі дні» перевіряємо окремо
     return core.Scheduler({**core.DEFAULTS, **meals_off, "day_end_enabled": False, **overrides})
 
 
@@ -273,6 +274,66 @@ def test_work_started_needs_recent_input_and_morning():
 def test_average_minute_skips_days_without_data():
     assert core.average_minute([8 * 60, 0, 9 * 60]) == 8 * 60 + 30
     assert core.average_minute([0, 0]) is None
+
+
+def test_being_away_is_a_natural_break():
+    s = make_scheduler(mini_interval_min=20, long_duration_min=5, water_interval_min=60, warn_before_sec=0)
+    tick_at(s, at(10), 15 * 60)                              # 15 хв роботи
+    remaining, water = s.remaining, s.water_remaining
+    events = []
+    for i in range(30 * 60):                                 # пів години без миші й клавіатури
+        events += s.tick(1, now=at(10, 15) + dt.timedelta(seconds=i), idle=5 * 60 + i)
+    assert events == [] and s.away
+    assert (s.remaining, s.water_remaining) == (remaining, water)   # таймери стояли
+    assert s.tick(1, now=at(10, 46), idle=0) == ["back"]
+    assert s.remaining == 20 * 60 - 1                        # повернувся — до перерви знову 20 хв
+    assert not s.away
+
+
+def test_short_idle_is_not_away():
+    s = make_scheduler(mini_interval_min=20, long_duration_min=5)
+    s.tick(60, now=at(10), idle=4 * 60)                      # читає без миші 4 хв — це ще робота
+    assert not s.away and s.remaining == 19 * 60
+
+
+def test_no_water_reminders_after_the_goal_is_reached():
+    s = make_scheduler(water_interval_min=15, mini_interval_min=60, warn_before_sec=0)
+    s.water_done = True
+    assert tick_at(s, at(10), 20 * 60) == []
+    assert s.water_remaining == 15 * 60
+
+
+def test_workdays_only_silences_meals_and_day_end_at_the_weekend():
+    saturday = dt.datetime(2026, 10, 17, 13, 0)
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, day_end_enabled=True, day_end_at=18 * 60,
+                       workdays_only=True)
+    assert s.tick(1, now=saturday) == [] and s.next_meal(saturday) is None
+    assert s.tick(1, now=saturday.replace(hour=18)) == []
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, workdays_only=False)
+    assert s.tick(1, now=saturday) == ["meal"]
+
+
+def test_finished_day_is_not_asked_again_and_continues_if_still_working():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    assert s.tick(1, now=at(18)) == ["day_end"]
+    s.day_end_answered("finish", now=at(18, 1))
+    s.pause(None, now=at(18, 1))
+    assert s.paused_until is not None and s.day_finished(at(18, 2))
+    assert s.tick(1, now=at(18, 2), idle=0) == []            # щойно натиснув — ще не «працює далі»
+    assert s.tick(1, now=at(18, 5), idle=0) == ["day_continued"]
+    assert s.paused_until is None                            # таймери знову йдуть
+    assert s.tick(1, now=at(19), idle=0) == []               # і про кінець дня вже не питаємо
+    assert not s.day_finished(at(9) + dt.timedelta(days=1))  # нова доба — новий день
+
+
+def test_water_interval_follows_the_actual_workday():
+    assert core.workday_span(8 * 60 + 30, 18 * 60) == (8 * 60 + 30, 18 * 60)
+    assert core.workday_span(9 * 60, None) == (9 * 60, 17 * 60)            # кінець дня вимкнено — 8 год
+    assert core.workday_span(9 * 60, 10 * 60) == (9 * 60, 13 * 60)         # не коротше 4 год
+    assert core.water_interval_for(8, 9 * 60 + 30) == 70                   # 9,5 год на 8 склянок
+    cfg = dict(core.DEFAULTS, water_profile="male")
+    core.apply_water_profile(cfg, workday=10 * 60)
+    assert (cfg["water_goal"], cfg["water_interval_min"]) == (8, 75)
 
 
 def test_every_nth_break_is_long():

@@ -41,6 +41,7 @@ DEFAULTS = {
     "meal_pause_min": 45,    # на скільки «Йду їсти» ставить перерви й воду на паузу
     "day_end_enabled": True,     # нагадування «робочий день скінчився»
     "day_end_at": 18 * 60,
+    "workdays_only": True,       # їжа й кінець дня — лише з понеділка по п'ятницю
     "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
     "intensity": 2,
     "workout_enabled": True,
@@ -80,31 +81,43 @@ MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
 DAY_END_SNOOZE_MIN = 30
 MORNING = dt.time(6, 0)  # до коли триває пауза «до ранку»
 EARLIEST_START = dt.time(4, 0)  # раніше — це ще вчорашня ніч, а не початок робочого дня
-ACTIVE_IDLE_SEC = 60            # людина за комп'ютером, якщо миша чи клавіатура були не довше хвилини тому  # «Ще 30 хв» — людина ще працює, нагадаємо знову
+ACTIVE_IDLE_SEC = 60            # людина за комп'ютером, якщо миша чи клавіатура були не довше хвилини тому
+MIN_AWAY_MIN = 2                # відсутність — не коротша за це, навіть якщо довга перерва коротша
+FINISH_GRACE_MIN = 3            # після «Завершити день»: якщо людина працює далі довше — день триває  # «Ще 30 хв» — людина ще працює, нагадаємо знову
 
 # Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
 # близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
 WATER_PROFILES = {"female": 7, "male": 8}
-WORKDAY_MIN = 8 * 60  # нагадування розподіляють денну мету на 8 годин за комп'ютером
+WORKDAY_MIN = 8 * 60  # тривалість робочого дня, поки її не видно з початку й кінця дня
+TYPICAL_START = 9 * 60  # початок дня, коли ще немає жодного визначеного
+WORKDAY_LIMITS = (4 * 60, 14 * 60)  # розумні межі тривалості робочого дня для розрахунку інтервалу води
 
 
-def water_interval_for(goal):
+def workday_span(start, end):
+    """(початок, кінець) робочого дня в хвилинах: кінець — «Кінець робочого дня» з налаштувань
+    (None — вимкнено, тоді 8 годин від початку); тривалість — у розумних межах."""
+    lo, hi = WORKDAY_LIMITS
+    end = start + WORKDAY_MIN if end is None else end
+    return start, start + min(max(end - start, lo), hi)
+
+
+def water_interval_for(goal, workday=WORKDAY_MIN):
     """Найбільший інтервал (кратний кроку повзунка), з яким `goal` склянок встигаємо за робочий день."""
     lo, hi, step, _fmt = SLIDERS["water_interval_min"]
-    return min(max(WORKDAY_MIN // goal // step * step, lo), hi)
+    return min(max(workday // goal // step * step, lo), hi)
 
 
-def water_plan(profile):
+def water_plan(profile, workday=WORKDAY_MIN):
     """(мета, інтервал у хв) для профілю або None, якщо налаштування ручні."""
     goal = WATER_PROFILES.get(profile)
-    return (goal, water_interval_for(goal)) if goal else None
+    return (goal, water_interval_for(goal, workday)) if goal else None
 
 
-def apply_water_profile(cfg):
+def apply_water_profile(cfg, workday=WORKDAY_MIN):
     """Профіль «жінка»/«чоловік» перекриває мету й інтервал рекомендованими значеннями."""
     if cfg["water_profile"] not in WATER_PROFILES:
         cfg["water_profile"] = "custom"
-    plan = water_plan(cfg["water_profile"])
+    plan = water_plan(cfg["water_profile"], workday)
     if plan:
         cfg["water_goal"], cfg["water_interval_min"] = plan
 
@@ -383,6 +396,9 @@ class Scheduler:
         self.day_end_open = False   # висить нагадування «робочий день скінчився»
         self.day_end_shown = None   # дата, коли про кінець дня вже нагадали
         self.day_end_snoozed = None
+        self.day_finished_at = None  # коли натиснули «Завершити день» (чи паузу «до ранку»)
+        self.away = False           # людини немає за комп'ютером (див. away_after)
+        self.water_done = False     # денну мету води досягнуто — до завтра без нагадувань (ставить App)
 
     def _set_countdown(self, seconds):
         self.remaining = self.period = seconds
@@ -395,12 +411,39 @@ class Scheduler:
             self.pause_water = False
         return self.paused_until is not None
 
+    def away_after(self):
+        """Скільки секунд без миші й клавіатури — це відсутність: як довга перерва, але не менше MIN_AWAY_MIN."""
+        return max(MIN_AWAY_MIN, self.cfg["long_duration_min"]) * 60
+
+    def reminders_today(self, now):
+        """Чи нагадувати сьогодні про їжу й кінець дня: у вихідні — ні, якщо так налаштовано."""
+        return not (self.cfg["workdays_only"] and now.weekday() >= 5)
+
+    def day_finished(self, now):
+        return bool(self.day_finished_at) and self.day_finished_at.date() == now.date()
+
     def next_kind(self):
         return "long" if (self.breaks_taken + 1) % max(1, self.cfg["long_every"]) == 0 else "mini"
 
-    def tick(self, seconds, now=None):
+    def tick(self, seconds, now=None, idle=0.0):
+        """idle — скільки секунд не було миші й клавіатури (system.idle_seconds)."""
         now = now or dt.datetime.now()
         events = []
+        # День завершили, а людина працює далі — день триває: таймери знову йдуть (без повторного питання)
+        if (self.pause_water and self.day_finished(now) and idle < ACTIVE_IDLE_SEC
+                and now - self.day_finished_at >= dt.timedelta(minutes=FINISH_GRACE_MIN)):
+            self.resume()
+            events.append("day_continued")
+        # Людини немає довше за довгу перерву — це природна перерва: таймери стоять, нагадування не
+        # спливають у порожню кімнату; коли повернеться — відлік до перерви почнеться з початку
+        if idle >= self.away_after() and not self.in_break and not self.eating:
+            self.away = True
+            return events
+        if self.away:
+            self.away = False
+            self.postpones = 0
+            self._set_countdown(self.cfg["mini_interval_min"] * 60)
+            events.append("back")
         if self.eating:
             # Пауза на їжу не закінчується сама: після неї питаємо, чи продовжувати
             if not self.meal_over_asked and now >= self.eating_until:
@@ -421,7 +464,7 @@ class Scheduler:
                 events.append("break")
         # Пауза зупиняє лише перерви; вода — тільки під час паузи «до ранку» (робочий день скінчився)
         water_paused = paused and self.pause_water
-        if self.cfg["water_enabled"] and not self.water_open and not water_paused:
+        if self.cfg["water_enabled"] and not self.water_open and not water_paused and not self.water_done:
             self.water_remaining -= seconds
             if self.water_remaining <= 0 and not self.in_break:
                 self.water_open = True
@@ -442,7 +485,7 @@ class Scheduler:
     def due_day_end(self, now):
         """Час кінця робочого дня настав (або минуло «Ще 30 хв»), а людина досі за комп'ютером."""
         if (not self.cfg["day_end_enabled"] or self.day_end_open or self.meal_open or self.in_break
-                or (self.paused and self.pause_water)):
+                or (self.paused and self.pause_water) or self.day_finished(now) or not self.reminders_today(now)):
             return False
         if self.day_end_snoozed:
             if stale(self.day_end_snoozed, now):
@@ -459,7 +502,8 @@ class Scheduler:
 
     def due_meal(self, now):
         """Їжа, про яку час нагадати: її година настала, але минуло не більше MEAL_WINDOW_MIN."""
-        if self.meal_open or self.in_break or (self.paused and self.pause_water):
+        if (self.meal_open or self.in_break or (self.paused and self.pause_water)
+                or not self.reminders_today(now)):
             return None
         minutes = minute_of_day(now)
         for meal in MEALS:
@@ -517,6 +561,8 @@ class Scheduler:
 
     def next_meal(self, now):
         """Наступна їжа: (їжа, коли) або (їжа, None), якщо час їсти вже зараз; None — на сьогодні все."""
+        if not self.reminders_today(now):
+            return None
         best = None
         for meal in MEALS:
             if not self.cfg[f"{meal}_enabled"]:
@@ -586,6 +632,7 @@ class Scheduler:
             self.day_end_open = False
             self.day_end_snoozed = None
             self.day_end_shown = now.date()
+            self.day_finished_at = now
         else:
             self.paused_until = now + dt.timedelta(minutes=minutes)
         self.pause_water = minutes is None

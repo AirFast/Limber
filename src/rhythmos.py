@@ -24,8 +24,9 @@ import pystray  # noqa: E402 — після перенаправлення stder
 
 import i18n  # noqa: E402
 import updates  # noqa: E402
-from core import (APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, Scheduler, Stats, fmt_time,  # noqa: E402
-                  load_config, load_json, minute_of_day, save_json, set_language_setting, work_started)
+from core import (ACTIVE_IDLE_SEC, APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, TYPICAL_START,  # noqa: E402
+                  Scheduler, Stats, apply_water_profile, at_minute, average_minute, fmt_time, load_config,
+                  load_json, minute_of_day, save_json, set_language_setting, work_started, workday_span)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
 from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
@@ -44,10 +45,6 @@ class App(Popups, MainWindow):
         self.cfg = load_config()
         self.stats = Stats()
         self.sched = Scheduler(self.cfg)
-        today = dt.date.today()
-        for meal in MEALS:  # з'їдене сьогодні до перезапуску — без повторного нагадування
-            if self.stats.day(today)[f"ate_{meal}"]:
-                self.sched.meal_results[(today, meal)] = "eat"
         self.queue = queue.Queue()
 
         self.root = tk.Tk()
@@ -85,6 +82,8 @@ class App(Popups, MainWindow):
         self.current_page = None
         self.chart_info = None
         self._timeline_key = self._ring_key = None
+        self.timeline_points = []  # [(x, підказка)] позначок шкали дня без підпису
+        self.restore_today()  # після стану вище: перерахунок води звертається до self.w
         self.saved_check = self._saved_after = None
 
         self.icon = system.make_tray_icon(pystray, "Rhythmos", make_icon(0, False), APP_NAME, self.build_menu())
@@ -94,6 +93,41 @@ class App(Popups, MainWindow):
         self.root.after(1000, self.loop)
         self.root.after(100, self.process_queue)
         self.root.after(UPDATE_CHECK_DELAY_MS, self.check_updates)
+
+    def restore_today(self):
+        """Що вже сталося сьогодні до перезапуску: з'їдене не нагадуємо, завершений день і питання
+        про кінець дня не повторюємо (раніше кожен запуск увечері знову питав «Робочий день скінчився»)."""
+        today = dt.date.today()
+        rec = self.stats.day(today)
+        for meal in MEALS:
+            if rec[f"ate_{meal}"]:
+                self.sched.meal_results[(today, meal)] = "eat"
+        if rec["day_end"]:
+            self.sched.day_finished_at = at_minute(today, rec["day_end"])
+            self.sched.day_end_shown = today
+        if self.stats.times(today, "day_end_asked"):
+            self.sched.day_end_shown = today
+        self.refresh_water_plan()
+
+    def workday(self):
+        """(початок, кінець) сьогоднішнього робочого дня в хвилинах: початок — визначений сьогодні,
+        або середній за два тижні, або типовий; кінець — «Робочий день до» з налаштувань."""
+        today = dt.date.today()
+        start = (self.stats.day(today)["day_start"]
+                 or average_minute(self.stats.day(today - dt.timedelta(days=i))["day_start"] for i in range(1, 15))
+                 or TYPICAL_START)
+        return workday_span(start, self.cfg["day_end_at"] if self.cfg["day_end_enabled"] else None)
+
+    def refresh_water_plan(self):
+        """Норма «жінка»/«чоловік»: інтервал води — так, щоб денну мету встигнути за фактичний робочий день."""
+        start, end = self.workday()
+        before = (self.cfg["water_goal"], self.cfg["water_interval_min"])
+        apply_water_profile(self.cfg, end - start)
+        if (self.cfg["water_goal"], self.cfg["water_interval_min"]) != before:
+            save_json(CONFIG_PATH, self.cfg)
+            self.sched.apply_config()
+        if self.w.get("water_hint"):
+            self.refresh_water_profile()
 
     # --- оновлення ---
 
@@ -187,11 +221,15 @@ class App(Popups, MainWindow):
             item(t("break_now"), post("break_now")),
             item(t("reset"), post("reset")),
             pystray.Menu.SEPARATOR,
+            # Швидкі дії — без головного вікна
+            item(t("tray_drink"), post("drink"), visible=lambda i: self.cfg["water_enabled"]),
+            item(t("day_end_finish"), post(("pause", None)),
+                 visible=lambda i: not self.sched.day_finished(dt.datetime.now())),
+            pystray.Menu.SEPARATOR,
             item(t("pause"), pystray.Menu(
                 item(t("pause_30"), post(("pause", 30))),
                 item(t("pause_60"), post(("pause", 60))),
                 item(t("pause_120"), post(("pause", 120))),
-                item(t("pause_morning"), post(("pause", None))),
             )),
             item(t("resume"), post("resume"),
                  visible=lambda i: self.sched.paused_until is not None or bool(self.sched.eating)),
@@ -217,6 +255,8 @@ class App(Popups, MainWindow):
             self.trigger_break()
         elif action == "reset":
             self.sched.reset()
+        elif action == "drink":
+            self.set_water(self.stats.day(dt.date.today())["water"] + 1)
         elif action == "resume":
             if self.sched.eating:
                 self.close_meal_window()  # «Продовжуємо?» більше не потрібне
@@ -227,7 +267,7 @@ class App(Popups, MainWindow):
             if self.break_state:
                 self.close_break_windows()
                 self.sched.finish_break()
-            if action[1] is None:  # «до ранку» — те саме, що «Завершити день»
+            if action[1] is None:  # «до ранку» — це «Завершити день»
                 self.finish_day()
             self.sched.pause(action[1])
             self.icon.update_menu()
@@ -271,7 +311,7 @@ class App(Popups, MainWindow):
             key = ("break",)
         else:
             title = t(f"tip_next_{s.next_kind()}", app=APP_NAME, time=fmt_time(s.remaining))
-            if self.cfg["water_enabled"] and not s.water_open:
+            if self.cfg["water_enabled"] and not s.water_open and not s.water_done:
                 title += "\n" + t("tip_water", time=fmt_time(s.water_remaining))
             key = ("run", int(24 * (1 - s.remaining / max(s.period, 1))))
         if title != self.tooltip:
@@ -290,7 +330,9 @@ class App(Popups, MainWindow):
         delta = min(now - self.last_tick, 5.0)
         self.last_tick = now
         was_paused = self.sched.paused_until is not None
-        for event in self.sched.tick(delta):
+        idle = system.idle_seconds()
+        self.sched.water_done = self.stats.day(dt.date.today())["water"] >= self.cfg["water_goal"]
+        for event in self.sched.tick(delta, idle=idle):
             if event == "warn":
                 self.show_break_warning()
             elif event == "break":
@@ -302,12 +344,16 @@ class App(Popups, MainWindow):
             elif event == "meal_over":
                 self.show_meal_over()
             elif event == "day_end":
+                self.stats.set_times("day_end_asked", [minute_of_day(dt.datetime.now())])  # не питати після перезапуску
                 self.show_day_end()
+            elif event == "day_continued":
+                self.icon.update_menu()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
-        self.note_day_start()
+        self.note_day_start(idle)
+        self.note_day_end(idle)
         s = self.sched
-        if not (s.in_break or s.eating or s.paused):
+        if not (s.in_break or s.eating or s.paused or s.away):  # без людини — не робота
             self.work_pending += delta
             if self.work_pending >= 60:
                 self.flush_work_time()
@@ -316,7 +362,7 @@ class App(Popups, MainWindow):
         self.refresh_main()
         self.root.after(1000, self.loop)
 
-    def note_day_start(self):
+    def note_day_start(self, idle):
         """Перша дія з мишею чи клавіатурою сьогодні — початок робочого дня (раз на день)."""
         today = dt.date.today()
         if self.day_start_noted == today:
@@ -324,10 +370,20 @@ class App(Popups, MainWindow):
         if self.stats.day(today)["day_start"]:
             self.day_start_noted = today
             return
-        minute = work_started(dt.datetime.now(), system.idle_seconds())
+        minute = work_started(dt.datetime.now(), idle)
         if minute is not None:
             self.stats.set("day_start", minute)
             self.day_start_noted = today
+            self.refresh_water_plan()  # відомий початок дня — точніший інтервал води
+
+    def note_day_end(self, idle):
+        """День завершили, а людина працює далі — кінцем дня стає її остання дія, а не натискання кнопки."""
+        now = dt.datetime.now()
+        if not self.sched.day_finished(now) or idle >= ACTIVE_IDLE_SEC:
+            return
+        minute = minute_of_day(now - dt.timedelta(seconds=idle))
+        if minute > self.stats.day(now.date())["day_end"]:
+            self.stats.set("day_end", minute)
 
     def flush_work_time(self):
         seconds = int(self.work_pending)

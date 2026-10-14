@@ -229,9 +229,13 @@ class Popups:
             if self.main_win:
                 self.main_win.focus_force()
             return
-        if elapsed:
+        # Перерва дійшла до кінця, а людини весь цей час не було — це не «зроблена» перерва, а відсутність
+        away = result == "done" and system.idle_seconds() >= self.sched.away_after()
+        if elapsed and not away:
             self.stats.add("active_sec", elapsed)
-        if result == "done":
+        if away:
+            self.sched.finish_break()
+        elif result == "done":
             self.stats.add(f"{kind}_done")
             self.sched.finish_break()
             self.beep()
