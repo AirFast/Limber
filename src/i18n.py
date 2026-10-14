@@ -57,6 +57,13 @@ def fmt_clock(v):
     return f"{v // 60:02d}:{v % 60:02d}"
 
 
+def fmt_after_minis(v):
+    """«Довга перерва — після 2 міні-перерв»."""
+    if _current == "uk":
+        return f"після {v} {'міні-перерви' if v % 10 == 1 and v % 100 != 11 else 'міні-перерв'}"
+    return f"after {v} mini {'break' if v == 1 else 'breaks'}"
+
+
 def fmt_days(v):
     if _current == "uk":
         return f"{v} {_plural_uk(v, 'день', 'дні', 'днів')}"
@@ -187,6 +194,21 @@ STRINGS = {
         "tip_active": "Рух",
         "tip_meals": "Їжа",
         "tip_day_end": "День завершено",
+        # вкладка «Стан»
+        "card_schedule": "Розклад на сьогодні",
+        "breaks_split": "міні {mini} · довгих {long}",
+        "sch_long": "Довга перерва",
+        "long_next": "наступна перерва",
+        "sch_day_end": "Кінець дня",
+        "sch_in": "{time}  ·  через {left}",
+        "sch_now": "{time}  ·  зараз",
+        "sch_eating": "перерва на їжу до {time}",
+        "sch_eat": "✓ готово",
+        "sch_skip": "пропущено",
+        "sch_snoozed": "нагадаю о {time}",
+        "sch_missed": "{time}  ·  минуло",
+        "sch_finished": "завершено о {time}",
+        "sch_rest": "{time}  ·  час відпочивати",
         "tip_mini": "Міні-перерви",
         "tip_long": "Довгі перерви",
         "tip_skipped": "Пропущено",
@@ -403,6 +425,20 @@ STRINGS = {
         "tip_active": "Movement",
         "tip_meals": "Meals",
         "tip_day_end": "Day finished",
+        "card_schedule": "Today's schedule",
+        "breaks_split": "{mini} mini · {long} long",
+        "sch_long": "Long break",
+        "long_next": "the next break",
+        "sch_day_end": "End of day",
+        "sch_in": "{time}  ·  in {left}",
+        "sch_now": "{time}  ·  now",
+        "sch_eating": "meal break until {time}",
+        "sch_eat": "✓ done",
+        "sch_skip": "skipped",
+        "sch_snoozed": "reminder at {time}",
+        "sch_missed": "{time}  ·  passed",
+        "sch_finished": "finished at {time}",
+        "sch_rest": "{time}  ·  time to rest",
         "tip_mini": "Mini breaks",
         "tip_long": "Long breaks",
         "tip_skipped": "Skipped",

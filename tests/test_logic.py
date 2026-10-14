@@ -172,6 +172,34 @@ def test_fmt_hm_and_days():
     assert [i18n.fmt_days(n) for n in (1, 3, 5, 21)] == ["1 день", "3 дні", "5 днів", "21 день"]
 
 
+def test_meal_state_follows_the_day():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_pause_min=30)
+    assert s.meal_state("lunch", at(12)) == ("upcoming", at(13))
+    s.tick(1, now=at(13))
+    assert s.meal_state("lunch", at(13)) == ("open", None)
+    s.meal_answered("snooze", now=at(13))
+    assert s.meal_state("lunch", at(13, 5)) == ("snoozed", at(13, 15))
+    s.tick(1, now=at(13, 15))
+    s.meal_answered("eat", now=at(13, 15))
+    assert s.meal_state("lunch", at(13, 20)) == ("eating", at(13, 45))
+    s.finish_meal()
+    assert s.meal_state("lunch", at(14)) == ("eat", None)
+    assert make_scheduler(lunch_at=13 * 60).meal_state("lunch", at(15)) == ("missed", at(13))
+
+
+def test_breaks_until_long():
+    s = make_scheduler(long_every=3)
+    assert s.breaks_until_long() == 3
+    s.breaks_taken = 2
+    assert s.breaks_until_long() == 1 and s.next_kind() == "long"
+
+
+def test_fmt_after_minis():
+    assert [i18n.fmt_after_minis(n) for n in (1, 2, 5, 11, 21)] == [
+        "після 1 міні-перерви", "після 2 міні-перерв", "після 5 міні-перерв",
+        "після 11 міні-перерв", "після 21 міні-перерви"]
+
+
 def test_every_nth_break_is_long():
     s = make_scheduler(long_every=3)
     kinds = []
