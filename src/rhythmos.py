@@ -29,7 +29,7 @@ from i18n import (content, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fm
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
