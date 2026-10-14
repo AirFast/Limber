@@ -57,6 +57,12 @@ def fmt_clock(v):
     return f"{v // 60:02d}:{v % 60:02d}"
 
 
+def fmt_days(v):
+    if _current == "uk":
+        return f"{v} {_plural_uk(v, 'день', 'дні', 'днів')}"
+    return f"{v} {'day' if v == 1 else 'days'}"
+
+
 def fmt_warn(v):
     return t("off") if v == 0 else fmt_seconds(v)
 
@@ -165,17 +171,31 @@ STRINGS = {
         "m_postponed": "відкладено",
         "stats_today": "Сьогодні, {date}",
         "stats_day": "{weekday}, {date}",
-        "week_total": "За 7 днів: перерв {breaks} · пропущено {skipped} · склянок води {water} ({volume})",
+        "range_total": "За {n} днів: перерв {breaks} · пропущено {skipped} · виконано {rate} · "
+                       "склянок води {water} ({volume}, у середньому {avg} на день)",
+        "range_more": "За комп'ютером {work} · рух {active} · прийомів їжі {meals} · норма води поспіль: {streak}",
+        "best_day": " · найкращий день {day}: перерв {n}",
+        "card_last_n": "Останні {n} днів",
+        "range_days": "{n} днів",
+        "m_work": "год роботи",
+        "m_active": "хв руху",
+        "m_meals": "прийомів їжі",
+        "done_rate": "виконано {pct}%",
+        "postponed_n": "відкладено {n}",
+        "day_end_at_tip": "день завершено о {time}",
+        "tip_work": "За комп'ютером",
+        "tip_active": "Рух",
+        "tip_meals": "Їжа",
+        "tip_day_end": "День завершено",
         "tip_mini": "Міні-перерви",
         "tip_long": "Довгі перерви",
         "tip_skipped": "Пропущено",
         "tip_postponed": "Відкладено",
         "tip_day_water": "Вода",
-        "card_last7": "Останні 7 днів",
         "lg_mini": "міні",
         "lg_long": "довгі",
         "lg_skipped": "пропущені",
-        "lg_water": "вода",
+        "lg_water": "вода (заповнений — норму виконано)",
         "today": "сьогодні",
         "weekdays": "пн вт ср чт пт сб нд",
         # налаштування
@@ -367,17 +387,31 @@ STRINGS = {
         "m_postponed": "postponed",
         "stats_today": "Today, {date}",
         "stats_day": "{weekday}, {date}",
-        "week_total": "Last 7 days: {breaks} breaks · {skipped} skipped · {water} glasses of water ({volume})",
+        "range_total": "Last {n} days: {breaks} breaks · {skipped} skipped · {rate} done · "
+                       "{water} glasses of water ({volume}, {avg} a day on average)",
+        "range_more": "At the computer {work} · movement {active} · {meals} meals · water goal streak: {streak}",
+        "best_day": " · best day {day}: {n} breaks",
+        "card_last_n": "Last {n} days",
+        "range_days": "{n} days",
+        "m_work": "hours of work",
+        "m_active": "min moving",
+        "m_meals": "meals",
+        "done_rate": "{pct}% done",
+        "postponed_n": "{n} postponed",
+        "day_end_at_tip": "day finished at {time}",
+        "tip_work": "At the computer",
+        "tip_active": "Movement",
+        "tip_meals": "Meals",
+        "tip_day_end": "Day finished",
         "tip_mini": "Mini breaks",
         "tip_long": "Long breaks",
         "tip_skipped": "Skipped",
         "tip_postponed": "Postponed",
         "tip_day_water": "Water",
-        "card_last7": "Last 7 days",
         "lg_mini": "mini",
         "lg_long": "long",
         "lg_skipped": "skipped",
-        "lg_water": "water",
+        "lg_water": "water (filled — goal met)",
         "today": "today",
         "weekdays": "Mon Tue Wed Thu Fri Sat Sun",
         "card_breaks": "Breaks",

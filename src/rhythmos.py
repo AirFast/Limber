@@ -25,11 +25,11 @@ from PIL import Image, ImageDraw, ImageTk
 import exercises
 import i18n
 import updates
-from i18n import (content, fmt_clock, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_volume,
+from i18n import (content, fmt_clock, fmt_days, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds, fmt_times, fmt_volume,
                   fmt_warn, t)
 from system import font
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"
 
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
@@ -73,6 +73,7 @@ MAX_GLASSES = 30          # верхня межа ручного введенн�
 MAX_GLASSES_SHOWN = 24    # більше — не малюємо (три ряди)
 GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
 MAIN_MIN_WIDTH = 1080     # головне вікно: ширше й нижче — налаштування в три колонки
+STATS_RANGES = (7, 30)    # перемикач періоду на графіку статистики
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # щогодини: раз на добу нова версія могла чекати до завтра
 UPDATE_RECHECK_ON_OPEN_SEC = 10 * 60        # відкриття головного вікна теж перевіряє, але не частіше
@@ -261,14 +262,16 @@ def fmt_time(seconds):
 
 
 class Stats:
-    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water")
+    # work_sec — час за комп'ютером (таймер іде: не пауза, не перерва, не їжа), active_sec — час на перервах,
+    # meals — «Йду їсти», day_end — о котрій (хв від півночі) натиснули «Завершити день»; 0 — не завершували
+    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals", "day_end")
 
     def __init__(self):
         self.data = load_json(STATS_PATH, {})
 
-    def add(self, key):
+    def add(self, key, amount=1):
         rec = self.data.setdefault(dt.date.today().isoformat(), {})
-        rec[key] = rec.get(key, 0) + 1
+        rec[key] = rec.get(key, 0) + amount
         save_json(STATS_PATH, self.data)
 
     def set(self, key, value):
@@ -280,6 +283,30 @@ class Stats:
     def day(self, date):
         rec = self.data.get(date.isoformat(), {})
         return {k: rec.get(k, 0) for k in self.KEYS}
+
+
+def completion_rate(rec):
+    """Частка зроблених перерв серед зроблених і пропущених, %; None — перерв не було."""
+    done = rec["mini_done"] + rec["long_done"]
+    total = done + rec["skipped"]
+    return round(100 * done / total) if total else None
+
+
+def water_streak(stats, goal, today):
+    """Скільки днів поспіль виконано норму води. Сьогодні ще не вечір — тож, якщо норми поки немає,
+    рахуємо від учора."""
+    day = today if stats.day(today)["water"] >= goal else today - dt.timedelta(days=1)
+    streak = 0
+    while stats.day(day)["water"] >= goal:
+        streak += 1
+        day -= dt.timedelta(days=1)
+    return streak
+
+
+def fmt_hm(seconds):
+    """Тривалість у картці: 6 год 5 хв → «6:05»."""
+    minutes = int(seconds) // 60
+    return f"{minutes // 60}:{minutes % 60:02d}"
 
 
 # ---------- таймер ----------
@@ -883,6 +910,8 @@ class App:
         self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
         self.update_info = None  # (версія, адреса релізу), якщо на GitHub є новіша версія
         self.last_update_check = None  # time.monotonic() останньої перевірки
+        self.stats_range = 7  # графік статистики: 7 чи 30 днів
+        self.work_pending = 0.0  # час за комп'ютером, ще не записаний у статистику (пишемо раз на хвилину)
 
         self.icon = system.make_tray_icon(pystray, "Rhythmos", make_icon(0, False), APP_NAME, self.build_menu())
         system.start_tray(self.icon, self.root)
@@ -1036,6 +1065,7 @@ class App:
         elif isinstance(action, tuple) and action[0] == "update":
             self.on_update_result(action[1])
         elif action == "quit":
+            self.flush_work_time()
             if system.IS_MAC:
                 self.icon.visible = False  # stop() зупинив би спільний з Tk цикл NSApplication
             else:
@@ -1090,10 +1120,21 @@ class App:
                 self.show_day_end()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
+        s = self.sched
+        if not (s.in_break or s.eating or s.paused):
+            self.work_pending += delta
+            if self.work_pending >= 60:
+                self.flush_work_time()
         self.update_break_warning()
         self.update_tray()
         self.refresh_main()
         self.root.after(1000, self.loop)
+
+    def flush_work_time(self):
+        seconds = int(self.work_pending)
+        if seconds:
+            self.stats.add("work_sec", seconds)
+            self.work_pending -= seconds
 
     def beep(self):
         if self.cfg["sound"]:
@@ -1284,6 +1325,7 @@ class App:
         if not state:
             return
         state["left"] -= 1
+        state["elapsed"] = state.get("elapsed", 0) + 1
         if state["left"] <= 0:
             self.next_break_step()
         else:
@@ -1302,11 +1344,14 @@ class App:
     def end_break(self, result):
         kind = self.break_state["kind"] if self.break_state else "mini"
         demo = bool(self.break_state and self.break_state["demo"])
+        elapsed = self.break_state.get("elapsed", 0) if self.break_state else 0
         self.close_break_windows()
         if demo:
             if self.main_win:
                 self.main_win.focus_force()
             return
+        if elapsed:
+            self.stats.add("active_sec", elapsed)
         if result == "done":
             self.stats.add(f"{kind}_done")
             self.sched.finish_break()
@@ -1410,6 +1455,7 @@ class App:
             self.close_break_windows()
             self.sched.finish_break()
         self.sched.meal_answered("eat")
+        self.stats.add("meals")
         self.icon.update_menu()
 
     def finish_meal(self):
@@ -1433,6 +1479,8 @@ class App:
     def answer_day_end(self, answer):
         self.sched.day_end_answered(answer)
         if answer == "finish":
+            now = dt.datetime.now()
+            self.stats.set("day_end", now.hour * 60 + now.minute)
             self.handle(("pause", None))
 
     # --- власні сповіщення ---
@@ -1681,28 +1729,43 @@ class App:
     # статистика
 
     def build_stats_page(self, parent):
-        """Картки нагорі — один день (сьогодні або той, на який наведено курсор на графіку)."""
+        """Картки нагорі — один день (сьогодні або той, на який наведено курсор на графіку);
+        під ними графік за 7 або 30 днів і підсумки за цей період."""
         page = tk.Frame(parent, bg=C["bg"])
         self.w["stats_day"] = tk.Label(page, bg=C["bg"], fg=C["text"], font=font(12, "semibold"))
         self.w["stats_day"].pack(anchor="w", pady=(0, 8))
         summary = tk.Frame(page, bg=C["bg"])
         summary.pack(fill="x")
         cards = (("day_breaks", t("m_breaks"), C["accent"]), ("day_skipped", t("m_skipped"), C["muted"]),
-                 ("day_postponed", t("m_postponed"), C["muted"]), ("day_water", t("m_water"), C["water"]))
+                 ("day_water", t("m_water"), C["water"]), ("day_work", t("m_work"), C["text"]),
+                 ("day_active", t("m_active"), C["accent"]), ("day_meals", t("m_meals"), C["text"]))
         for i, (key, caption, color) in enumerate(cards):
             box = card(summary)
-            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0 if i == len(cards) - 1 else 6))
+            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 0 if i == len(cards) - 1 else 5))
             summary.columnconfigure(i, weight=1, uniform="sum")
-            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(28, "light"))
+            self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(26, "light"))
             self.w[key].pack(anchor="w")
             tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
-        # Об'єм — окремим рядком: у вузькій картці «glasses of water · ≈2.25 L» не вміщається
-        self.w["day_water_volume"] = tk.Label(self.w["day_water"].master, bg=C["card"], fg=C["water"], font=font(10))
-        self.w["day_water_volume"].pack(anchor="w")
+            # Додатковий рядок: % виконаних, відкладені, об'єм води, кінець дня
+            self.w[f"{key}_sub"] = tk.Label(box, bg=C["card"], fg=color if key == "day_water" else C["dim"],
+                                            font=font(9))
+            self.w[f"{key}_sub"].pack(anchor="w")
 
-        chart = card(page, t("card_last7"))
+        chart = card(page)
         chart.pack(fill="both", expand=True, pady=(14, 0))
-        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=270, cursor="hand2")
+        head = tk.Frame(chart, bg=C["card"])
+        head.pack(fill="x", pady=(0, 4))
+        self.w["chart_title"] = tk.Label(head, bg=C["card"], fg=C["accent"], font=font(9, "semibold"))
+        self.w["chart_title"].pack(side="left")
+        segments = tk.Frame(head, bg=C["panel"])
+        segments.pack(side="right")
+        self.w["range_buttons"] = {}
+        for days in STATS_RANGES:
+            btn = tk.Label(segments, text=t("range_days", n=days), font=font(9), padx=10, pady=2, cursor="hand2")
+            btn.pack(side="left", padx=2, pady=2)
+            btn.bind("<Button-1>", lambda e, d=days: self.set_stats_range(d))
+            self.w["range_buttons"][days] = btn
+        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=250, cursor="hand2")
         self.w["chart"].pack(fill="both", expand=True)
         self.w["chart"].bind("<Motion>", self.on_chart_motion)
         self.w["chart"].bind("<Leave>", lambda e: self.highlight_day(None))
@@ -1713,33 +1776,42 @@ class App:
             tk.Label(bottom_row, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
             tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
                      font=font(10)).pack(side="left", padx=(2, 14))
-        self.w["week_total"] = tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10))
-        self.w["week_total"].pack(anchor="w", pady=(4, 0))
+        for key in ("range_total", "range_more"):
+            self.w[key] = tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10), justify="left")
+            self.w[key].pack(anchor="w", pady=(4, 0))
         return page
+
+    def set_stats_range(self, days):
+        if days != self.stats_range:
+            self.stats_range = days
+            self.draw_stats()
 
     def draw_stats(self):
         c = self.w.get("chart")
         if not c:
             return
+        n = self.stats_range
         today = dt.date.today()
-        days = [today - dt.timedelta(days=i) for i in range(6, -1, -1)]
+        days = [today - dt.timedelta(days=i) for i in range(n - 1, -1, -1)]
         records = [self.stats.day(d) for d in days]
-        week_water = sum(r["water"] for r in records)
-        self.w["week_total"].configure(text=t(
-            "week_total", breaks=sum(r["mini_done"] + r["long_done"] for r in records),
-            skipped=sum(r["skipped"] for r in records), water=week_water, volume=fmt_volume(week_water)))
+        self.w["chart_title"].configure(text=t("card_last_n", n=n).upper())
+        for d, btn in self.w["range_buttons"].items():
+            active = d == n
+            btn.configure(bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
+        self.draw_range_totals(n, days, records)
 
         c.delete("all")
-        width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 230)
+        width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 210)
         top, bottom = 24, height - 48
-        slot = width / 7
+        slot = width / n
         self.chart_info = {"days": days, "records": records, "slot": slot, "top": top, "bottom": bottom,
-                           "width": width, "bar": min(44, slot * 0.5), "hover": None}
+                           "width": width, "bar": min(44, slot * 0.6), "hover": None}
         peak = max([r["mini_done"] + r["long_done"] + r["skipped"] for r in records] + [4])
         for i in range(5):
             y = bottom - (bottom - top) * i / 4
             c.create_line(0, y, width, y, fill=C["track"] if i == 0 else C["grid"])
         bar = self.chart_info["bar"]
+        week = n <= 7  # за тиждень — дні тижня й кількість склянок; за місяць — число кожного п'ятого дня
         bar_tops = []
         for i, (day, rec) in enumerate(zip(days, records)):
             cx = slot * i + slot / 2
@@ -1752,17 +1824,44 @@ class App:
             bar_tops.append(y)
             total = rec["mini_done"] + rec["long_done"] + rec["skipped"]
             if total:
-                c.create_text(cx, y - 10, text=total, fill=C["text"], font=font(10, "semibold"))
-            label = t("today") if day == today else t("weekdays").split()[day.weekday()]
+                c.create_text(cx, y - 10, text=total, fill=C["text"], font=font(10 if week else 8, "semibold"))
+            if week:
+                label = t("today") if day == today else t("weekdays").split()[day.weekday()]
+            else:
+                label = str(day.day) if (n - 1 - i) % 5 == 0 else ""
             c.create_text(cx, bottom + 14, text=label, fill=C["text"] if day == today else C["muted"],
-                          font=font(10))
-            c.create_text(cx, bottom + 33, text=f"● {rec['water']}" if rec["water"] else "",
-                          fill=C["water"], font=font(9))
+                          font=font(10 if week else 9))
+            if rec["water"]:
+                # Норму води виконано — заповнений кружечок, ні — порожній; за тиждень ще й кількість склянок
+                ox, oy, r = (cx - 8 if week else cx), bottom + 33, 3.5
+                c.create_oval(ox - r, oy - r, ox + r, oy + r, outline=C["water"], width=1.5,
+                              fill=C["water"] if rec["water"] >= self.cfg["water_goal"] else "")
+                if week:
+                    c.create_text(ox + 7, oy, text=rec["water"], anchor="w", fill=C["water"], font=font(9))
         self.chart_info["bar_tops"] = bar_tops
-        self.show_stats_day(6)
+        self.show_stats_day(n - 1)
+
+    def draw_range_totals(self, n, days, records):
+        """Два рядки підсумків під графіком: перерви й вода; час, рух, їжа й серія з нормою води."""
+        total = {k: sum(r[k] for r in records) for k in Stats.KEYS if k != "day_end"}
+        rate = completion_rate(total)
+        avg_liters = round(total["water"] * i18n.GLASS_LITERS / n, 1)
+        self.w["range_total"].configure(text=t(
+            "range_total", n=n, breaks=total["mini_done"] + total["long_done"], skipped=total["skipped"],
+            rate=f"{rate}%" if rate is not None else "—", water=total["water"], volume=fmt_volume(total["water"]),
+            avg=fmt_volume(avg_liters / i18n.GLASS_LITERS)))
+        best = max(range(n), key=lambda i: records[i]["mini_done"] + records[i]["long_done"])
+        best_rec = records[best]
+        best_text = ""
+        if best_rec["mini_done"] + best_rec["long_done"]:
+            best_text = t("best_day", day=f"{days[best]:%d.%m}", n=best_rec["mini_done"] + best_rec["long_done"])
+        self.w["range_more"].configure(text=t(
+            "range_more", work=fmt_minutes(total["work_sec"] // 60), active=fmt_minutes(total["active_sec"] // 60),
+            meals=total["meals"], streak=fmt_days(water_streak(self.stats, self.cfg["water_goal"], dt.date.today())))
+            + best_text)
 
     def show_stats_day(self, index):
-        """Картки нагорі: дані одного дня з графіка (6 — сьогодні)."""
+        """Картки нагорі: дані одного дня з графіка (останній — сьогодні)."""
         info = self.chart_info
         day, rec = info["days"][index], info["records"][index]
         date = f"{day:%d.%m}"
@@ -1771,18 +1870,26 @@ class App:
         else:
             title = t("stats_day", weekday=t("weekdays").split()[day.weekday()], date=date)
         self.w["stats_day"].configure(text=title)
-        self.w["day_breaks"].configure(text=rec["mini_done"] + rec["long_done"])
-        self.w["day_skipped"].configure(text=rec["skipped"])
-        self.w["day_water_volume"].configure(text=fmt_volume(rec["water"]))
-        self.w["day_postponed"].configure(text=rec["postponed"])
-        self.w["day_water"].configure(text=rec["water"])
+        rate = completion_rate(rec)
+        values = {
+            "day_breaks": (rec["mini_done"] + rec["long_done"], t("done_rate", pct=rate) if rate is not None else ""),
+            "day_skipped": (rec["skipped"], t("postponed_n", n=rec["postponed"]) if rec["postponed"] else ""),
+            "day_water": (rec["water"], fmt_volume(rec["water"])),
+            "day_work": (fmt_hm(rec["work_sec"]),
+                         t("day_end_at_tip", time=fmt_clock(rec["day_end"])) if rec["day_end"] else ""),
+            "day_active": (rec["active_sec"] // 60, ""),
+            "day_meals": (rec["meals"], ""),
+        }
+        for key, (value, sub) in values.items():
+            self.w[key].configure(text=value)
+            self.w[f"{key}_sub"].configure(text=sub)
 
     def on_chart_motion(self, event):
         info = getattr(self, "chart_info", None)
         if not info:
             return
         inside = info["top"] - 20 <= event.y <= info["bottom"] + 44
-        self.highlight_day(min(6, max(0, int(event.x // info["slot"]))) if inside else None)
+        self.highlight_day(min(len(info["days"]) - 1, max(0, int(event.x // info["slot"]))) if inside else None)
 
     def highlight_day(self, index):
         """Підсвітка стовпчика, підказка з деталями дня й картки нагорі для цього дня."""
@@ -1793,7 +1900,7 @@ class App:
         info["hover"] = index
         c.delete("hover")
         if index is None:
-            self.show_stats_day(6)
+            self.show_stats_day(len(info["days"]) - 1)
             return
         slot, top, bottom = info["slot"], info["top"], info["bottom"]
         band = c.create_rectangle(slot * index + 4, top - 14, slot * (index + 1) - 4, bottom + 44,
@@ -1806,7 +1913,12 @@ class App:
             f"{t('tip_skipped')}: {rec['skipped']}",
             f"{t('tip_postponed')}: {rec['postponed']}",
             f"{t('tip_day_water')}: {t('x_of_y', a=rec['water'], b=self.cfg['water_goal'])} ({fmt_volume(rec['water'])})",
+            f"{t('tip_work')}: {fmt_minutes(rec['work_sec'] // 60)}",
+            f"{t('tip_active')}: {fmt_minutes(rec['active_sec'] // 60)}",
+            f"{t('tip_meals')}: {rec['meals']}",
         ]
+        if rec["day_end"]:
+            lines.append(f"{t('tip_day_end')}: {fmt_clock(rec['day_end'])}")
         text = c.create_text(0, 0, text="\n".join(lines), anchor="nw", fill=C["text"], font=font(10), tags="hover")
         x0, y0, x1, y1 = c.bbox(text)
         box_w, box_h = x1 - x0 + 24, y1 - y0 + 18

@@ -151,6 +151,27 @@ def test_day_end_waits_for_meal_and_skips_after_pause_until_morning():
     assert s.tick(1, now=at(18)) == []
 
 
+def test_completion_rate():
+    rec = {"mini_done": 6, "long_done": 2, "skipped": 2}
+    assert rhythmos.completion_rate(rec) == 80
+    assert rhythmos.completion_rate({"mini_done": 0, "long_done": 0, "skipped": 0}) is None
+
+
+def test_water_streak_counts_from_yesterday_until_goal_is_met_today():
+    stats = rhythmos.Stats.__new__(rhythmos.Stats)
+    today = dt.date(2026, 10, 14)
+    water = {12: 8, 13: 9, 11: 3}   # 11-го норму не виконано — серія переривається
+    stats.data = {dt.date(2026, 10, d).isoformat(): {"water": n} for d, n in water.items()}
+    assert rhythmos.water_streak(stats, 8, today) == 2          # сьогодні ще не випито — рахуємо від учора
+    stats.data[today.isoformat()] = {"water": 8}
+    assert rhythmos.water_streak(stats, 8, today) == 3
+
+
+def test_fmt_hm_and_days():
+    assert rhythmos.fmt_hm(6 * 3600 + 5 * 60 + 59) == "6:05"
+    assert [i18n.fmt_days(n) for n in (1, 3, 5, 21)] == ["1 день", "3 дні", "5 днів", "21 день"]
+
+
 def test_every_nth_break_is_long():
     s = make_scheduler(long_every=3)
     kinds = []
