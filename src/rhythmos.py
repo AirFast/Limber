@@ -1790,14 +1790,15 @@ class App:
             self.main_win.focus_force()
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
+        # Приховане, доки не побудовані сторінки й не відомий розмір: на macOS розмір, заданий уже
+        # показаному вікну, не застосовувався — лишалась сама шапка (2.2.0–2.5.0)
+        win.withdraw()
         win.title(f"{APP_NAME} {__version__}")
         win.protocol("WM_DELETE_WINDOW", self.close_main)
         self.window_icon = ImageTk.PhotoImage(make_app_icon(64))
         win.iconphoto(False, self.window_icon)
         self.main_win = win
         self.w = {}
-        win.update()
-        system.style_window(win)
 
         header = tk.Frame(win, bg=C["bg"])
         header.pack(fill="x", padx=24, pady=(18, 10))
@@ -1830,13 +1831,16 @@ class App:
             btn.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.tab_buttons[key] = btn
         self.fit_main_window(header)
+        win.deiconify()
+        win.update()
+        system.style_window(win)  # темний заголовок — уже для показаного вікна
         self.show_page("status")
 
     def fit_main_window(self, header):
         """Вікно під найбільшу сторінку (зазвичай «Налаштування»): розмір залежить від мови, шрифтів
         і масштабу екрана, тому не задаємо його числами."""
         win = self.main_win
-        win.update_idletasks()
+        win.update_idletasks()  # розміри, що просять сторінки, рахуються й для прихованого вікна
         width = max(MAIN_MIN_WIDTH, *(page.winfo_reqwidth() + 48 for page in self.pages.values()))
         # Відступи заголовка (18 + 10) і тіла (4 + 20). Підказки до розкладки переносяться вужче, ніж потім,
         # тож висота з запасом — нічого не обріжеться
@@ -2728,10 +2732,16 @@ def run_smoke_test(app, out_dir):
         app.show_page(name)
         app.main_win.lift()
 
+    def note(text):
+        """Рядок у журнал і в info.txt поруч зі знімками: на macOS stderr зібраної програми не зберігається."""
+        print(f"smoke test: {text}", file=sys.stderr)
+        with open(os.path.join(out_dir, "info.txt"), "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+
     steps = [
         (app.open_main, None),
-        (lambda: print(f"smoke test: main window {app.main_win.winfo_width()}x{app.main_win.winfo_height()}, "
-                       f"screen {app.root.winfo_screenwidth()}x{app.root.winfo_screenheight()}", file=sys.stderr), None),
+        (lambda: note(f"main window {app.main_win.winfo_width()}x{app.main_win.winfo_height()}, "
+                      f"screen {app.root.winfo_screenwidth()}x{app.root.winfo_screenheight()}"), None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
         (lambda: app.set_stats_range(30), "stats_30"),
