@@ -13,7 +13,7 @@ from core import (APP_NAME, at_minute, minute_of_day, CONFIG_PATH, MAX_GLASSES, 
                   split_balanced, water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
-from i18n import fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_volume, t
+from i18n import SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_volume, t
 from system import font
 from widgets import ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
@@ -555,8 +555,10 @@ class MainWindow:
             tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
                      font=font(10)).pack(side="left", padx=(2, 14))
         for key in ("range_breaks", "range_water", "range_day"):
-            self.w[key] = tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10), justify="left")
-            self.w[key].pack(anchor="w", pady=(4, 0))
+            # Переносяться за шириною картки: на вузькому екрані рядок підсумків довший за неї
+            self.w[key] = wrap_to_width(tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10), justify="left",
+                                                 anchor="w", wraplength=400))
+            self.w[key].pack(fill="x", pady=(4, 0))
         return page
 
     def set_stats_range(self, days):
@@ -633,7 +635,8 @@ class MainWindow:
         best_text = t("best_day", day=f"{days[best]:%d.%m}", n=best_breaks) if best_breaks else ""
         self.w["range_breaks"].configure(text=t(
             "range_breaks", n=n, breaks=total["mini_done"] + total["long_done"], skipped=total["skipped"],
-            rate=f"{rate}%" if rate is not None else "—", active=fmt_minutes(total["active_sec"] // 60)) + best_text)
+            rate=f"{rate}%" if rate is not None else "—") + best_text
+            + t("range_active", active=fmt_minutes(total["active_sec"] // 60)))
         avg_liters = round(total["water"] * i18n.GLASS_LITERS / n, 1)
         self.w["range_water"].configure(text=t(
             "range_water", glasses=fmt_glasses(total["water"]), avg=fmt_volume(avg_liters / i18n.GLASS_LITERS),
@@ -974,7 +977,7 @@ class MainWindow:
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         hover = self.w.get("glass_hover")
         if hover is not None:  # курсор на склянці — що буде після кліку
-            progress += f"  →  {hover} · {fmt_volume(hover)}"
+            progress += f"  →  {hover}{SEP}{fmt_volume(hover)}"
         if not self.cfg["water_enabled"]:
             self.w["water"].configure(text="—")
             self.w["water_sub"].configure(text=t("water_off"))

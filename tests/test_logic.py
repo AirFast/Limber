@@ -311,6 +311,15 @@ def test_both_languages_have_the_same_strings():
     assert len(i18n.t("weekdays").split()) == 7
 
 
+def test_separators_are_consistent():
+    """Один роздільник у всіх рядках: «  •  » (дві пропуски з кожного боку), старої «·» немає."""
+    import re
+    for lang in i18n.LANGUAGES:
+        for key, text in i18n.STRINGS[lang].items():
+            assert "·" not in text, (lang, key)
+            assert not re.search(r"(?<!  )•|•(?!  )", text), (lang, key, text)
+
+
 def test_both_languages_have_the_same_content_shape():
     uk, en = i18n.CONTENT["uk"], i18n.CONTENT["en"]
     assert set(uk) == set(en)
