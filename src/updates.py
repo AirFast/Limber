@@ -1,4 +1,4 @@
-"""Перевірка нових версій Limber на GitHub Releases і автоматичне оновлення."""
+"""Перевірка нових версій Rhythmos на GitHub Releases і автоматичне оновлення."""
 import hashlib
 import json
 import os
@@ -10,7 +10,7 @@ import sys
 import tempfile
 import urllib.request
 
-REPO = "AirFast/Limber"
+REPO = "AirFast/Rhythmos"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 LATEST_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -35,7 +35,7 @@ def _ssl_context():
 
 
 def _open(url, timeout, accept="application/vnd.github+json"):
-    headers = {"Accept": accept, "User-Agent": "Limber-updater"}
+    headers = {"Accept": accept, "User-Agent": "Rhythmos-updater"}
     # Лише для API й лише на сервері збирання (GitHub Actions): без токена спільні IP раннерів
     # швидко вичерпують ліміт запитів. У користувачів цієї змінної немає.
     token = os.environ.get("GITHUB_TOKEN")
@@ -72,7 +72,7 @@ def pick_asset(assets):
     """Файл оновлення для цієї системи: інсталятор Windows або dmg під архітектуру Mac."""
     for asset in assets:
         name = asset["name"]
-        if sys.platform == "win32" and name.startswith("LimberSetup-") and name.endswith(".exe"):
+        if sys.platform == "win32" and name.startswith("RhythmosSetup-") and name.endswith(".exe"):
             return asset
         if sys.platform == "darwin" and name.endswith(f"-macos-{platform.machine()}.dmg"):
             return asset
@@ -87,7 +87,7 @@ def can_self_update():
 def download(asset, progress=None, timeout=60):
     """Завантажує файл у тимчасову папку й перевіряє розмір та SHA-256. Повертає шлях.
     progress(відсоток) викликається з потоку завантаження."""
-    folder = tempfile.mkdtemp(prefix="limber-update-")
+    folder = tempfile.mkdtemp(prefix="rhythmos-update-")
     path = os.path.join(folder, asset["name"])
     digest = hashlib.sha256()
     received = 0
@@ -111,13 +111,14 @@ def download(asset, progress=None, timeout=60):
 def _clean_env():
     """Середовище для інсталятора й нової версії — без тестових і службових змінних,
     інакше перезапущена програма знову «вдавала б» стару версію."""
-    return {k: v for k, v in os.environ.items() if k not in ("LIMBER_VERSION_OVERRIDE", "GITHUB_TOKEN")}
+    return {k: v for k, v in os.environ.items()
+            if k not in ("RHYTHMOS_VERSION_OVERRIDE", "LIMBER_VERSION_OVERRIDE", "GITHUB_TOKEN")}
 
 
 def install(path, autostart=True, language="uk"):
     """Запускає встановлення окремим процесом. Після виклику програма має завершитися:
     на Windows інсталятор замінить файли й сам запустить нову версію,
-    на macOS скрипт дочекається виходу, замінить Limber.app і відкриє його.
+    на macOS скрипт дочекається виходу, замінить Rhythmos.app і відкриє його.
     autostart і language передаються явно: тихий інсталятор не завжди пам'ятає
     попередній вибір і без цього міг би вимкнути автозапуск чи змінити мову."""
     if sys.platform == "win32":
@@ -131,18 +132,19 @@ def install(path, autostart=True, language="uk"):
 
 
 def _app_bundle():
-    """…/Limber.app для зібраної програми (sys.executable = …/Limber.app/Contents/MacOS/Limber)."""
+    """…/Rhythmos.app для зібраної програми (sys.executable = …/Rhythmos.app/Contents/MacOS/Rhythmos)."""
     return os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
 
 
 _MAC_SCRIPT = r"""#!/bin/bash
-# Оновлення Limber: чекаємо завершення старої версії, замінюємо Limber.app з dmg і відкриваємо.
+# Оновлення Rhythmos: чекаємо завершення старої версії, замінюємо Rhythmos.app з dmg і відкриваємо.
 PID="$1"; DMG="$2"; APP="$3"
 while kill -0 "$PID" 2>/dev/null; do sleep 0.5; done
 MNT="$(mktemp -d)"
 hdiutil attach -nobrowse -quiet -mountpoint "$MNT" "$DMG" || exit 1
+SRC="$(ls -d "$MNT"/*.app | head -n 1)"   # не прив'язуємося до назви: програма вже раз перейменовувалась
 rm -rf "$APP.old"
-if mv "$APP" "$APP.old" && ditto "$MNT/Limber.app" "$APP"; then
+if [ -n "$SRC" ] && mv "$APP" "$APP.old" && ditto "$SRC" "$APP"; then
     rm -rf "$APP.old"
 else
     rm -rf "$APP"; mv "$APP.old" "$APP"      # не вдалося — повертаємо стару версію

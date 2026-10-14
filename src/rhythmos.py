@@ -1,4 +1,4 @@
-"""Limber — нагадування про перерви з вправами, водою та статистикою (Windows, macOS)."""
+"""Rhythmos — нагадування про перерви з вправами, водою та статистикою (Windows, macOS)."""
 import datetime as dt
 import json
 import math
@@ -17,7 +17,7 @@ import system
 
 if sys.stderr is None:  # збірка без консолі: помилки імпорту інакше зникли б безслідно
     os.makedirs(system.data_dir(), exist_ok=True)
-    sys.stderr = sys.stdout = open(os.path.join(system.data_dir(), "limber.log"), "a", encoding="utf-8", buffering=1)
+    sys.stderr = sys.stdout = open(os.path.join(system.data_dir(), "rhythmos.log"), "a", encoding="utf-8", buffering=1)
 
 import pystray
 from PIL import Image, ImageDraw, ImageTk
@@ -29,14 +29,14 @@ from i18n import (content, fmt_glasses, fmt_intensity, fmt_minutes, fmt_seconds,
                   fmt_warn, t)
 from system import font
 
-__version__ = "1.11.1"
+__version__ = "2.0.0"
 
-APP_NAME = "Limber"
+APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 STATS_PATH = os.path.join(DATA_DIR, "stats.json")
-ICON_PATH = os.path.join(DATA_DIR, "limber.ico")
-LOG_PATH = os.path.join(DATA_DIR, "limber.log")
+ICON_PATH = os.path.join(DATA_DIR, "rhythmos.ico")
+LOG_PATH = os.path.join(DATA_DIR, "rhythmos.log")
 
 DEFAULTS = {
     "mini_interval_min": 20,
@@ -66,18 +66,21 @@ UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 C = {
-    "bg": "#13292a",
-    "card": "#1a3837",
-    "panel": "#1f4241",
-    "panel_hover": "#2a5654",
-    "track": "#2c504e",
-    "accent": "#5fc4b8",
-    "accent_dark": "#3a8f86",
-    "on_accent": "#0b2a28",
-    "text": "#eef6f5",
-    "muted": "#9dbcb8",
-    "dim": "#5d7775",
+    # Весняна зелень під іконку-листок; темне тло — з легким зеленим відтінком, вода — синя
+    "bg": "#14261c",
+    "card": "#1a3124",
+    "panel": "#1f3a2b",
+    "panel_hover": "#2a4d39",
+    "track": "#2c4d38",
+    "grid": "#1f3a2b",
+    "accent": "#8fd477",
+    "accent_dark": "#4fae5f",
+    "on_accent": "#10301a",
+    "text": "#eef7ec",
+    "muted": "#a6c4a8",
+    "dim": "#5f7b65",
     "water": "#4aa3df",
+    "on_water": "#0b2233",
 }
 
 
@@ -364,10 +367,10 @@ def draw_progress_ring(d, s, size, pad, thickness, fraction, track, color):
 
 def make_icon(progress, paused):
     """Кільце, що заповнюється в міру наближення перерви."""
-    color = rgba("#96a0a0") if paused else rgba(C["accent"])
+    color = rgba(C["dim"]) if paused else rgba(C["accent"])
 
     def paint(d, s):
-        draw_progress_ring(d, s, 64, 4, 9, 0 if paused else progress, rgba("#3c5a58"), color)
+        draw_progress_ring(d, s, 64, 4, 9, 0 if paused else progress, rgba(C["track"]), color)
         if paused:
             d.rounded_rectangle((21 * s, 20 * s, 28 * s, 44 * s), radius=2 * s, fill=color)
             d.rounded_rectangle((36 * s, 20 * s, 43 * s, 44 * s), radius=2 * s, fill=color)
@@ -377,34 +380,96 @@ def make_icon(progress, paused):
     return smooth_image(64, 64, paint)
 
 
+def _vertical_gradient(width, height, top, bottom):
+    image = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        frac = y / max(height - 1, 1)
+        draw.line([(0, y), (width, y)], fill=tuple(int(a + (b - a) * frac) for a, b in zip(top, bottom)) + (255,))
+    return image
+
+
+class _Leaf:
+    """Геометрія листка вздовж осі base→tip: контур, хвиляста центральна жилка, точки на ній."""
+
+    def __init__(self, base, tip, width):
+        self.base, self.tip, self.width = base, tip, width
+        dx, dy = tip[0] - base[0], tip[1] - base[1]
+        self.length = math.hypot(dx, dy)
+        self.ux, self.uy = dx / self.length, dy / self.length
+        self.nx, self.ny = -self.uy, self.ux
+
+    def half_width(self, t):
+        return self.width * (math.sin(math.pi * t) ** 0.95) * (1 - 0.12 * t)
+
+    def at(self, t, offset=0.0):
+        return (self.base[0] + self.ux * self.length * t + self.nx * offset,
+                self.base[1] + self.uy * self.length * t + self.ny * offset)
+
+    def outline(self, steps=90):
+        upper = [self.at(i / steps, self.half_width(i / steps)) for i in range(steps + 1)]
+        lower = [self.at(i / steps, -self.half_width(i / steps)) for i in range(steps + 1)]
+        return upper + lower[::-1]
+
+    def wave(self, t, amplitude, start=0.06, end=0.86, waves=1.6):
+        s = (t - start) / (end - start)
+        return amplitude * math.sin(2 * math.pi * waves * s) * math.sin(math.pi * s)
+
+    def vein(self, amplitude, start=0.06, end=0.86, steps=60):
+        return [self.at(t, self.wave(t, amplitude, start, end))
+                for t in (start + (end - start) * i / steps for i in range(steps + 1))]
+
+
 def make_app_icon(size=256):
-    """Іконка програми: літера L — фігурка, що сидить і тягнеться до носків."""
+    """Іконка Rhythmos: листок (здоров'я) з хвилястою жилкою (ритм) на весняному градієнті.
+    Дрібні деталі — бокові жилки, тінь, відблиск — лише у великих розмірах: у 16–32 px вони б розмилися."""
+    from PIL import ImageFilter
+    detailed = size >= 48
     big = size * SUPERSAMPLE
     u = big / 256
 
-    top, bottom = (0x72, 0xd9, 0xcb), (0x1c, 0x5f, 0x5b)
-    gradient = Image.new("RGBA", (big, big))
-    gd = ImageDraw.Draw(gradient)
-    for y in range(big):
-        t = y / (big - 1)
-        gd.line([(0, y), (big, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)) + (255,))
+    background = _vertical_gradient(big, big, (0xb6, 0xec, 0x88), (0x3a, 0xa8, 0x64))
+    if detailed:  # м'який відблиск угорі ліворуч
+        glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        ImageDraw.Draw(glow).ellipse((-60 * u, -90 * u, 150 * u, 90 * u), fill=(255, 255, 255, 42))
+        background.alpha_composite(glow.filter(ImageFilter.GaussianBlur(28 * u)))
     mask = Image.new("L", (big, big), 0)
     ImageDraw.Draw(mask).rounded_rectangle((10 * u, 10 * u, big - 10 * u, big - 10 * u), radius=58 * u, fill=255)
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    img.paste(gradient, (0, 0), mask)
+    img.paste(background, (0, 0), mask)
+
+    leaf = _Leaf((76 * u, 184 * u), (198 * u, 62 * u), 58 * u)
+    outline = leaf.outline()
+    if detailed:  # тінь під листком
+        shadow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        ImageDraw.Draw(shadow).polygon([(x + 5 * u, y + 9 * u) for x, y in outline], fill=(18, 88, 48, 120))
+        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(9 * u)))
+
+    leaf_mask = Image.new("L", (big, big), 0)
+    ImageDraw.Draw(leaf_mask).polygon(outline, fill=255)
+    img.paste(_vertical_gradient(big, big, (0xff, 0xff, 0xff), (0xdf, 0xf4, 0xd2)), (0, 0), leaf_mask)
 
     d = ImageDraw.Draw(img)
+    white = (255, 255, 255, 255)
+    # черешок — плавно вигнутий
+    stem = [leaf.at(0.02), (leaf.base[0] - 10 * u, leaf.base[1] + 14 * u), (leaf.base[0] - 22 * u, leaf.base[1] + 22 * u)]
+    stem_width = 10 * u if detailed else 13 * u
+    d.line(stem, fill=white, width=int(stem_width), joint="curve")
+    r = stem_width / 2
+    d.ellipse((stem[-1][0] - r, stem[-1][1] - r, stem[-1][0] + r, stem[-1][1] + r), fill=white)
 
-    def stroke(points, width, color):
-        pts = [(x * u, y * u) for x, y in points]
-        d.line(pts, fill=color, width=int(width * u), joint="curve")
-        r = width * u / 2
-        for x, y in (pts[0], pts[-1]):
-            d.ellipse((x - r, y - r, x + r, y + r), fill=color)
-
-    stroke([(78, 118), (78, 190), (180, 190)], 30, (255, 255, 255, 255))  # тулуб і ноги — літера L
-    stroke([(88, 134), (170, 166)], 18, (214, 250, 244, 255))            # руки тягнуться до носків
-    d.ellipse((70 * u, 62 * u, 108 * u, 100 * u), fill=(255, 255, 255, 255))  # голова
+    vein_color = (0x5f, 0xbd, 0x67, 255)
+    amplitude = 9 * u
+    if detailed:  # бокові жилки від хвилястої центральної до країв, трохи вигнуті до кінчика
+        side = (0xb0, 0xe0, 0x9f, 255)
+        for pos in (0.26, 0.46, 0.64):
+            start = leaf.at(pos, leaf.wave(pos, amplitude))
+            for sign in (1, -1):
+                reach = leaf.half_width(pos + 0.15) * 0.68
+                points = [start, leaf.at(pos + 0.05, sign * reach * 0.42), leaf.at(pos + 0.11, sign * reach * 0.78),
+                          leaf.at(pos + 0.16, sign * reach)]
+                d.line(points, fill=side, width=int(2.6 * u), joint="curve")
+    d.line(leaf.vein(amplitude), fill=vein_color, width=int((7 if detailed else 11) * u), joint="curve")
     return img.resize((size, size), Image.LANCZOS)
 
 
@@ -657,7 +722,7 @@ class App:
         self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
         self.update_info = None  # (версія, адреса релізу), якщо на GitHub є новіша версія
 
-        self.icon = system.make_tray_icon(pystray, "Limber", make_icon(0, False), APP_NAME, self.build_menu())
+        self.icon = system.make_tray_icon(pystray, "Rhythmos", make_icon(0, False), APP_NAME, self.build_menu())
         system.start_tray(self.icon, self.root)
         system.on_reopen(self.root, self.open_main)
 
@@ -1121,8 +1186,8 @@ class App:
         buttons = tk.Frame(win, bg=C["panel"])
         buttons.pack(anchor="e", padx=16, pady=14)
         flat_button(buttons, t("later"), lambda: self.end_water(False), bg=C["bg"], size=11).pack(side="left", padx=4)
-        flat_button(buttons, t("drank"), lambda: self.end_water(True), bg=C["water"], fg="#0b2233",
-                    size=11, image=check_mark(16, "#0b2233")).pack(side="left", padx=4)
+        flat_button(buttons, t("drank"), lambda: self.end_water(True), bg=C["water"], fg=C["on_water"],
+                    size=11, image=check_mark(16, C["on_water"])).pack(side="left", padx=4)
         win.update_idletasks()
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
@@ -1412,7 +1477,7 @@ class App:
         peak = max([r["mini_done"] + r["long_done"] + r["skipped"] for r in records] + [4])
         for i in range(5):
             y = bottom - (bottom - top) * i / 4
-            c.create_line(0, y, width, y, fill=C["track"] if i == 0 else "#20403f")
+            c.create_line(0, y, width, y, fill=C["track"] if i == 0 else C["grid"])
         bar = self.chart_info["bar"]
         bar_tops = []
         for i, (day, rec) in enumerate(zip(days, records)):
@@ -1471,7 +1536,7 @@ class App:
             return
         slot, top, bottom = info["slot"], info["top"], info["bottom"]
         band = c.create_rectangle(slot * index + 4, top - 14, slot * (index + 1) - 4, bottom + 44,
-                                  fill="#20403f", outline="", tags="hover")
+                                  fill=C["grid"], outline="", tags="hover")
         c.tag_lower(band)
         rec = info["records"][index]
         lines = [
@@ -1694,9 +1759,9 @@ class App:
 
 
 def current_version():
-    """Версія для порівняння з релізами. LIMBER_VERSION_OVERRIDE — лише для перевірки
+    """Версія для порівняння з релізами. RHYTHMOS_VERSION_OVERRIDE — лише для перевірки
     самооновлення в CI: зібрана програма «вдає» стару версію й оновлюється до останнього релізу."""
-    return os.environ.get("LIMBER_VERSION_OVERRIDE") or __version__
+    return os.environ.get("RHYTHMOS_VERSION_OVERRIDE") or __version__
 
 
 def run_smoke_test(app, out_dir):
@@ -1779,8 +1844,13 @@ def main():
     if not instance.acquire():
         return  # уже запущена копія сама покаже вікно
 
-    system.migrate_old_data(DATA_DIR)
+    old_autostart = system.migrate_old_data(DATA_DIR)
     smoke_dir = sys.argv[sys.argv.index("--smoke-test") + 1] if "--smoke-test" in sys.argv else None
+    if old_autostart and not smoke_dir:  # автозапуск зі старою назвою (Limber) — перереєструємо під новою
+        try:
+            system.set_autostart(True, __file__)
+        except OSError:
+            traceback.print_exc()
     # macOS: інсталятора немає (програму просто перетягують у «Програми»),
     # тож автозапуск вмикаємо під час першого запуску; вимкнути можна в налаштуваннях
     if system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH):
@@ -1808,7 +1878,7 @@ def main():
 
 
 def setup_logging():
-    """pythonw не має консолі, тож помилки інакше зникають безслідно — пишемо їх у limber.log."""
+    """pythonw не має консолі, тож помилки інакше зникають безслідно — пишемо їх у rhythmos.log."""
     if getattr(sys.stderr, "name", "") == LOG_PATH:
         log = sys.stderr  # вже відкрито на початку файлу
     else:

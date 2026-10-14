@@ -11,21 +11,25 @@ import sys
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 
-APP_NAME = "Limber"
-APP_ID = "Limber.BreakReminder"            # Windows: AppUserModelID для власної іконки в панелі завдань
-BUNDLE_ID = "com.airfast.limber"           # macOS: ідентифікатор програми й LaunchAgent
-TASK_NAME = "Limber"                       # Windows: завдання Планувальника
-MUTEX_NAME = "Local\\LimberSingleInstance"
-SHOW_EVENT_NAME = "Local\\LimberShowWindow"
+APP_NAME = "Rhythmos"
+APP_ID = "Rhythmos.BreakReminder"            # Windows: AppUserModelID для власної іконки в панелі завдань
+BUNDLE_ID = "com.airfast.rhythmos"           # macOS: ідентифікатор програми й LaunchAgent
+TASK_NAME = "Rhythmos"                       # Windows: завдання Планувальника
+MUTEX_NAME = "Local\\RhythmosSingleInstance"
+SHOW_EVENT_NAME = "Local\\RhythmosShowWindow"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-LEGACY_RUN_VALUES = ("Limber", "Rozminka")
+LEGACY_RUN_VALUES = ("Limber", "Rozminka")   # Windows: дуже ранні версії писали автозапуск у реєстр Run
+# Попередня назва програми (до 2.0 — Limber): з неї переносяться дані й автозапуск
+LEGACY_APP_NAMES = ("Limber",)
+LEGACY_TASK_NAMES = ("Limber",)
+LEGACY_BUNDLE_IDS = ("com.airfast.limber",)
 
 
 def data_dir():
     """Папка налаштувань, статистики й журналу."""
     if IS_MAC:
-        return os.path.expanduser("~/Library/Application Support/Limber")
-    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Limber")
+        return os.path.expanduser("~/Library/Application Support/Rhythmos")
+    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Rhythmos")
 
 
 # ---------- шрифти ----------
@@ -183,7 +187,7 @@ def screenshot(path):
 # ---------- звук і сповіщення ----------
 
 # Windows: події стандартної звукової схеми («Панель керування → Звук → Звуки»).
-# Звук беремо з поточної схеми користувача — якщо він змінить його у Windows, Limber зіграє його ж.
+# Звук беремо з поточної схеми користувача — якщо він змінить його у Windows, Rhythmos зіграє його ж.
 # Ідентифікатор → подія; підпис для інтерфейсу — i18n "snd_<ідентифікатор>".
 _WINDOWS_EVENTS = [
     ("notification", "Notification.Default"),
@@ -363,7 +367,7 @@ class SingleInstance:
     def _acquire_posix(self):
         import fcntl
         os.makedirs(data_dir(), exist_ok=True)
-        self._lock_file = open(os.path.join(data_dir(), "limber.lock"), "w")
+        self._lock_file = open(os.path.join(data_dir(), "rhythmos.lock"), "w")
         try:
             fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -387,7 +391,7 @@ class SingleInstance:
 # ---------- автозапуск ----------
 
 def launch_target(script):
-    """(програма, аргументи) для запуску Limber: зібраний exe/app або python + скрипт."""
+    """(програма, аргументи) для запуску Rhythmos: зібраний exe/app або python + скрипт."""
     if getattr(sys, "frozen", False):
         return sys.executable, []
     exe = sys.executable
@@ -417,7 +421,7 @@ def _launch_agent_path():
 
 
 def _set_autostart_mac(enabled, script):
-    """LaunchAgent запускає Limber під час входу в macOS."""
+    """LaunchAgent запускає Rhythmos під час входу в macOS."""
     path = _launch_agent_path()
     if not enabled:
         if os.path.exists(path):
@@ -456,6 +460,9 @@ def _remove_legacy_autostart_windows():
     link = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup\Limber.lnk")
     if os.path.exists(link):
         os.remove(link)
+    for task in LEGACY_TASK_NAMES:  # завдання Планувальника під старою назвою програми
+        _run_powershell("Unregister-ScheduledTask -TaskName $env:L_TASK -Confirm:$false -ErrorAction SilentlyContinue",
+                        L_TASK=task)
 
 
 def _set_autostart_windows(enabled, script):
@@ -466,7 +473,7 @@ def _set_autostart_windows(enabled, script):
                         L_TASK=TASK_NAME)
         return
     target, arguments = launch_target(script)
-    # Встановлений Limber.exe запускається без аргументів, а порожній -Argument PowerShell не приймає
+    # Встановлений Rhythmos.exe запускається без аргументів, а порожній -Argument PowerShell не приймає
     ps = (
         "$a = if ($env:L_ARGS) { New-ScheduledTaskAction -Execute $env:L_EXE -Argument $env:L_ARGS "
         "-WorkingDirectory $env:L_DIR } else { New-ScheduledTaskAction -Execute $env:L_EXE -WorkingDirectory $env:L_DIR }; "
@@ -475,7 +482,7 @@ def _set_autostart_windows(enabled, script):
         "-ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew; "
         "$p = New-ScheduledTaskPrincipal -UserId $env:L_USER -LogonType Interactive -RunLevel Limited; "
         "Register-ScheduledTask -TaskName $env:L_TASK -Action $a -Trigger $t -Settings $s -Principal $p "
-        "-Description 'Limber break reminder' -Force | Out-Null")
+        "-Description 'Rhythmos break reminder' -Force | Out-Null")
     result = _run_powershell(ps, L_EXE=target, L_ARGS=" ".join(f'"{a}"' for a in arguments), L_TASK=TASK_NAME,
                              L_DIR=os.path.dirname(target if getattr(sys, "frozen", False) else os.path.abspath(script)),
                              L_USER=f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}")
@@ -486,21 +493,47 @@ def _set_autostart_windows(enabled, script):
 # ---------- перенесення старих даних ----------
 
 def migrate_old_data(target_dir):
-    """Windows: дані з часів «Розминки» та з копій, запущених з-під застосунку Claude (MSIX)."""
-    if not IS_WINDOWS:
-        return
+    """Переносить налаштування й статистику з попередніх назв програми (Limber, «Розминка»)
+    і прибирає старий автозапуск. Повертає True, якщо старий автозапуск був увімкнений —
+    тоді його треба зареєструвати під новою назвою.
+
+    Файли переносяться поштучно: нова папка вже існує, бо журнал відкривається на самому початку."""
     import shutil
-    appdata = os.environ.get("APPDATA", "")
-    old = os.path.join(appdata, "Rozminka")
-    if os.path.isdir(old) and not os.path.exists(target_dir):
-        os.replace(old, target_dir)
-    packages = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages")
-    if os.path.isdir(packages):
-        for name in os.listdir(packages):
-            cached = os.path.join(packages, name, "LocalCache", "Roaming", "Limber")
-            if name.startswith("Claude_") and os.path.isdir(cached):
-                os.makedirs(target_dir, exist_ok=True)
-                for file in ("config.json", "stats.json"):
-                    src, dst = os.path.join(cached, file), os.path.join(target_dir, file)
-                    if os.path.exists(src) and not os.path.exists(dst):
-                        shutil.copy2(src, dst)
+    old_dirs = [os.path.join(os.path.dirname(target_dir), name) for name in LEGACY_APP_NAMES]
+    if IS_WINDOWS:
+        old_dirs.append(os.path.join(os.environ.get("APPDATA", ""), "Rozminka"))
+    for old in old_dirs:
+        if not os.path.isdir(old):
+            continue
+        os.makedirs(target_dir, exist_ok=True)
+        for file in ("config.json", "stats.json"):
+            src, dst = os.path.join(old, file), os.path.join(target_dir, file)
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.move(src, dst)
+        shutil.rmtree(old, ignore_errors=True)
+    if IS_WINDOWS:
+        # Копії, запущені з-під застосунку Claude (пакет MSIX), писали дані в його приватне сховище
+        packages = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages")
+        if os.path.isdir(packages):
+            for name in os.listdir(packages):
+                cached = os.path.join(packages, name, "LocalCache", "Roaming", "Limber")
+                if name.startswith("Claude_") and os.path.isdir(cached):
+                    os.makedirs(target_dir, exist_ok=True)
+                    for file in ("config.json", "stats.json"):
+                        src, dst = os.path.join(cached, file), os.path.join(target_dir, file)
+                        if os.path.exists(src) and not os.path.exists(dst):
+                            shutil.copy2(src, dst)
+
+    autostart_was_on = False
+    if IS_MAC:
+        for bundle_id in LEGACY_BUNDLE_IDS:
+            plist = os.path.expanduser(f"~/Library/LaunchAgents/{bundle_id}.plist")
+            if os.path.exists(plist):
+                os.remove(plist)
+                autostart_was_on = True
+    elif IS_WINDOWS:
+        for task in LEGACY_TASK_NAMES:  # саме завдання прибере set_autostart
+            if subprocess.run(["schtasks", "/query", "/tn", task], capture_output=True,
+                              creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0:
+                autostart_was_on = True
+    return autostart_was_on

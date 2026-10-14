@@ -1,4 +1,4 @@
-"""Переклади Limber: рядки інтерфейсу, поради про воду та форматування чисел (uk, en)."""
+"""Переклади Rhythmos: рядки інтерфейсу, поради про воду та форматування чисел (uk, en)."""
 
 LANGUAGES = {"uk": "Українська", "en": "English"}
 DEFAULT_LANGUAGE = "uk"
@@ -79,7 +79,7 @@ def fmt_intensity(v):
 
 STRINGS = {
     "uk": {
-        "tagline": "час розім'ятися",
+        "tagline": "ритм здорового дня",
         "language": "Мова",
         # трей
         "open": "Відкрити",
@@ -207,12 +207,12 @@ STRINGS = {
         "update_menu": "Оновити до {version}",
         "update_banner": "Нова версія {version} — оновити",
         "update_toast_title": "Доступна нова версія {version}",
-        "update_toast_text": "Limber завантажить і встановить її сам, а потім перезапуститься. Налаштування збережуться.",
+        "update_toast_text": "Rhythmos завантажить і встановить її сам, а потім перезапуститься. Налаштування збережуться.",
         "download": "Відкрити сторінку",
         "update_now": "Оновити",
         "updating_title": "Оновлення до {version}",
         "updating_progress": "Завантаження… {percent}%",
-        "updating_install": "Встановлення… Limber перезапуститься за мить.",
+        "updating_install": "Встановлення… Rhythmos перезапуститься за мить.",
         "update_failed_title": "Не вдалося оновитися автоматично",
         "update_failed_text": "Завантажте інсталятор зі сторінки релізу й встановіть поверх — налаштування збережуться.",
         "water_toggle": "Нагадувати пити воду",
@@ -244,7 +244,7 @@ STRINGS = {
         "off": "вимкнено",
     },
     "en": {
-        "tagline": "time to limber up",
+        "tagline": "the rhythm of a healthy day",
         "language": "Language",
         "open": "Open",
         "break_now": "Break now",
@@ -366,12 +366,12 @@ STRINGS = {
         "update_menu": "Update to {version}",
         "update_banner": "Version {version} is out — update",
         "update_toast_title": "Version {version} is available",
-        "update_toast_text": "Limber will download and install it by itself, then restart. Your settings stay.",
+        "update_toast_text": "Rhythmos will download and install it by itself, then restart. Your settings stay.",
         "download": "Open page",
         "update_now": "Update",
         "updating_title": "Updating to {version}",
         "updating_progress": "Downloading… {percent}%",
-        "updating_install": "Installing… Limber will restart in a moment.",
+        "updating_install": "Installing… Rhythmos will restart in a moment.",
         "update_failed_title": "Automatic update failed",
         "update_failed_text": "Download the installer from the release page and install it over this one — your settings stay.",
         "water_toggle": "Remind me to drink water",
