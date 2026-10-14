@@ -20,7 +20,8 @@ from system import font
 from widgets import ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
 
-TIMELINE_HEIGHT = 76      # шкала дня в картці «Сьогодні»
+TIMELINE_HEIGHT = 100     # шкала дня в картці «Сьогодні»
+TIMELINE_Y = 62           # де на шкалі смуга: над нею — підписи у два яруси, під нею — години (з повітрям)
 TITLE_BAR = 32            # приблизна висота заголовка вікна ОС — щоб вікно вміщалося в робочу область
 STATS_RANGES = (7, 30)    # перемикач періоду на графіку статистики
 
@@ -390,7 +391,7 @@ class MainWindow:
                  + [m for span in spans for m in span[1:3]])
         start = (min([8 * 60] + times) - 30) // 60 * 60
         end = -(-(max([18 * 60] + times) + 30) // 60) * 60
-        pad, y = 16, 48
+        pad, y = 16, TIMELINE_Y
 
         def x_of(m):
             return pad + (width - 2 * pad) * (min(max(m, start), end) - start) / (end - start)
@@ -460,7 +461,7 @@ class MainWindow:
         span = width - 2 * pad
         step = next((h for h in (1, 2, 3, 4, 6) if span * h * 60 / (end - start) >= 46), 6)
         for hour in range(-(-start // (60 * step)) * step, end // 60 + 1, step):
-            place(c.create_text(x_of(hour * 60), y + 20, text=f"{hour % 24}:00", fill=C["dim"], font=font(8)),
+            place(c.create_text(x_of(hour * 60), y + 28, text=f"{hour % 24}:00", fill=C["dim"], font=font(8)),
                   x_of(hour * 60))
         # Підписи — лише початок і кінець дня (у два яруси, якщо тісно; інакше зсув за сусіда);
         # решта позначок — підказка при наведенні (timeline_hover)
@@ -478,7 +479,7 @@ class MainWindow:
             fill = color if state in ("now", "done") else C["muted"]
             item, tier = None, 0
             for tier in (0, 1):
-                item = c.create_text(x, y - 18 - tier * 16, text=f"{name} {fmt_clock(m)}", font=font(9), fill=fill,
+                item = c.create_text(x, y - 24 - tier * 18, text=f"{name} {fmt_clock(m)}", font=font(9), fill=fill,
                                      tags="label")
                 box = place(item, x)
                 if not clash(box, tier):
@@ -561,7 +562,7 @@ class MainWindow:
         if not c:
             return
         self.timeline_leave()
-        if abs(event.y - 48) > 16:
+        if abs(event.y - TIMELINE_Y) > 18:
             return
         near = [p for p in self.timeline_points if abs(p[0] - event.x) <= 9]
         point = min(near, key=lambda p: abs(p[0] - event.x)) if near else None
@@ -573,7 +574,7 @@ class MainWindow:
             x, text = point
         else:
             return
-        item = c.create_text(x, 16, text=text, font=font(9), fill=C["text"], tags="tip")
+        item = c.create_text(x, TIMELINE_Y - 42, text=text, font=font(9), fill=C["text"], tags="tip")
         x0, y0, x1, y1 = c.bbox(item)
         shift = max(0, 8 - x0) - max(0, x1 - (c.winfo_width() - 8))
         c.move(item, shift, 0)
