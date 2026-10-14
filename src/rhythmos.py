@@ -24,10 +24,10 @@ import pystray  # noqa: E402 — після перенаправлення stder
 
 import i18n  # noqa: E402
 import updates  # noqa: E402
-from core import (ACTIVE_IDLE_SEC, APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, STATE_PATH,  # noqa: E402
-                  TYPICAL_START, WORKING, Scheduler, Stats, apply_water_profile, at_workday_minute, average_minute,
-                  fmt_time, load_config, load_json, minute_of_day, save_json, set_language_setting, work_started,
-                  workday_date, workday_span)
+from core import (ACTIVE_IDLE_SEC, APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, PAUSE_KINDS,  # noqa: E402
+                  STATE_PATH, TYPICAL_START, WORKING, Scheduler, Stats, absence_span, apply_water_profile,
+                  at_workday_minute, average_minute, day_minute, fmt_time, load_config, load_json, minute_of_day,
+                  save_json, set_language_setting, work_started, workday_date, workday_span)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
 from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
@@ -87,8 +87,11 @@ class App(Popups, MainWindow):
         self.chart_info = None
         self._timeline_key = self._ring_key = None
         self.timeline_points = []  # [(x, підказка)] позначок шкали дня без підпису
+        self.timeline_spans = []   # [(x0, x1, підказка)] проміжків на смузі дня: відсутність, пауза
+        self.state_saved_at = None  # коли востаннє збережено state.json перед цим запуском
         self.restore_state()
         self.restore_today()  # після стану вище: перерахунок води звертається до self.w
+        self.adopt_open_spans()
         self.saved_check = self._saved_after = None
 
         self.icon = system.make_tray_icon(pystray, "Rhythmos", make_icon(0, False), APP_NAME, self.build_menu())
@@ -107,6 +110,10 @@ class App(Popups, MainWindow):
         """Стан таймерів з state.json (той самий робочий день, не старший за 12 год): відлік до перерви,
         ритм довгих перерв, вода, пауза чи їжа, відповіді на нагадування."""
         data = load_json(STATE_PATH, None)
+        try:
+            self.state_saved_at = dt.datetime.fromisoformat(data["saved_at"])
+        except (TypeError, KeyError, ValueError):
+            self.state_saved_at = None
         if data and self.sched.restore(data, dt.datetime.now()):
             print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} відновлено стан таймерів ({self.sched.mode})",
                   file=sys.stderr)
@@ -127,6 +134,57 @@ class App(Popups, MainWindow):
                                finished_minute=rec["day_end"],
                                day_end_asked=bool(self.stats.times(today, "day_end_asked")))
         self.refresh_water_plan()
+
+    def minute(self, moment=None):
+        """Хвилина сьогоднішнього робочого дня (після півночі — понад 24:00) — час подій у журналі."""
+        return day_minute(self.today(), moment or dt.datetime.now())
+
+    def adopt_open_spans(self):
+        """Після перезапуску: пауза чи очікування перерви, що досі тривають, ведемо далі; ті, що вже
+        скінчились, поки програми не було, закриваємо часом останнього збереженого стану."""
+        self.open_spans = {}
+        today = self.today()
+        wanted = self.span_state()
+        for date, index, event in self.stats.open_spans([today - dt.timedelta(days=1), today]):
+            key = "held" if event["type"] == "held" else "pause"
+            value = event.get("kind", "held")
+            if event["type"] != "away" and wanted.get(key) == value and key not in self.open_spans:
+                self.open_spans[key] = (date, index, value)
+            else:
+                end = self.state_saved_at or dt.datetime.now()
+                self.stats.close(date, index, day_minute(date, end))  # не раніше за початок — стежить close
+
+    def span_state(self):
+        """Які проміжки зараз тривають: вид паузи (timed/eating/finished) і чи чекає перерва."""
+        s = self.sched
+        return {"pause": PAUSE_KINDS.get(s.mode), "held": "held" if s.held is not None else None}
+
+    def track_spans(self):
+        """Щосекунди й після дій: проміжки журналу за станом планувальника. Почалась пауза, їжа, «до ранку»
+        чи очікування перерви — подія з to = None; скінчилась — закриваємо (день — той, коли почалась)."""
+        now = dt.datetime.now()
+        for key, value in self.span_state().items():
+            opened = self.open_spans.get(key)
+            if opened and opened[2] == value:
+                continue
+            if opened:
+                self.stats.close(opened[0], opened[1], day_minute(opened[0], now))
+                self.open_spans.pop(key)
+            if value:
+                today = self.today()
+                if key == "held":
+                    index = self.stats.log("held", day_minute(today, now), to=None, reason=self.busy)
+                else:
+                    fields = {"meal": self.sched.eating} if value == "eating" else {}
+                    index = self.stats.log("pause", day_minute(today, now), to=None, kind=value, **fields)
+                self.open_spans[key] = (today, index, value)
+
+    def log_away(self):
+        """Людина повернулася: відсутність — у журнал (від останньої дії до повернення)."""
+        today = self.today()
+        span = absence_span(today, dt.datetime.now(), self.sched.last_away, self.stats.day(today)["day_start"])
+        if span:
+            self.stats.log("away", span[0], to=span[1])
 
     def workday(self):
         """(початок, кінець) сьогоднішнього робочого дня в хвилинах: початок — з налаштувань («Початок
@@ -300,6 +358,7 @@ class App(Popups, MainWindow):
                 self.close_meal_window()  # «Продовжуємо?» більше не потрібне
                 self.sched.finish_meal()
             self.sched.resume()
+            self.track_spans()
             self.icon.update_menu()
         elif isinstance(action, tuple) and action[0] == "pause":
             if self.break_state:
@@ -308,6 +367,7 @@ class App(Popups, MainWindow):
             if action[1] is None:  # «до ранку» — це «Завершити день»
                 self.finish_day()
             self.sched.pause(action[1])
+            self.track_spans()
             self.icon.update_menu()
         elif action == "start_update":
             self.start_update()
@@ -332,6 +392,7 @@ class App(Popups, MainWindow):
         віконця, що чекали на відповідь, — геть."""
         if not self.stats.day(self.today())["day_end"]:
             self.stats.set("day_end", minute_of_day(dt.datetime.now()))
+            self.stats.log("day_end", self.minute(), replace=())
         if self.toast_kind == "day_end":  # і «Робочий день скінчився», і ліміт роботи
             self.close_toast(dismissed=False)
         if not self.meal_demo:
@@ -389,10 +450,15 @@ class App(Popups, MainWindow):
                 self.stats.set_times("day_end_asked", [minute_of_day(dt.datetime.now())])  # не питати після перезапуску
                 self.show_day_end()
             elif event == "overwork":
+                self.stats.log("overwork", self.minute())
                 self.show_overwork()
             elif event == "day_continued":
                 self.icon.update_menu()
-            # "break_held" (перерва чекає кінця дзвінка) і "back" (повернувся) окремого віконця не мають
+            elif event == "back":
+                self.log_away()
+            # "break_held" (перерва чекає кінця дзвінка) і "back" (повернувся) окремого віконця не мають;
+            # очікування перерви, як і паузи, журнал бачить за станом (track_spans)
+        self.track_spans()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
         self.note_day_start(idle)
@@ -419,6 +485,7 @@ class App(Popups, MainWindow):
         minute = work_started(dt.datetime.now(), idle, self.cfg["day_boundary_hour"])
         if minute is not None:
             self.stats.set("day_start", minute)
+            self.stats.log("day_start", minute, replace=())
             self.day_start_noted = today
             self.refresh_water_plan()  # відомий початок дня — точніший інтервал води
 
@@ -427,9 +494,11 @@ class App(Popups, MainWindow):
         now = dt.datetime.now()
         if not self.sched.day_finished(now) or idle >= ACTIVE_IDLE_SEC:
             return
-        minute = minute_of_day(now - dt.timedelta(seconds=idle))
+        last = now - dt.timedelta(seconds=idle)
+        minute = minute_of_day(last)
         if minute > self.stats.day(self.today())["day_end"]:
             self.stats.set("day_end", minute)
+            self.stats.log("day_end", self.minute(last), replace=())
 
     def flush_work_time(self):
         seconds = int(self.work_pending)
