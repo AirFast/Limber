@@ -2243,11 +2243,20 @@ class App:
             if minute > start:
                 d.rounded_rectangle((pad * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
-            for m in drinks:  # склянки — маленькі сині точки на смузі
-                cx, rr = x_of(m) * sc, 3.5 * sc
+            # Склянки — сині точки, помітно ширші за смугу, з обідком кольору картки, щоб не зливались
+            # із заповненою частиною; наступне нагадування — синій кружечок того ж розміру
+            halo = 1.5 * sc
+            for m in drinks:
+                cx, rr = x_of(m) * sc, 5 * sc
+                d.ellipse((cx - rr - halo, y * sc - rr - halo, cx + rr + halo, y * sc + rr + halo),
+                          fill=rgba(C["card"]))
                 d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(C["water"]))
-            if next_water is not None and next_water <= end:
-                cx, rr, ring = x_of(next_water) * sc, 4.5 * sc, 1.6 * sc
+            # Наступне нагадування — лише якщо не ховається за позначкою їжі чи кінця дня
+            if (next_water is not None and next_water <= end
+                    and all(abs(x_of(next_water) - x_of(m[0])) >= 14 for m in marks)):
+                cx, rr, ring = x_of(next_water) * sc, 5 * sc, 1.8 * sc
+                d.ellipse((cx - rr - halo, y * sc - rr - halo, cx + rr + halo, y * sc + rr + halo),
+                          fill=rgba(C["card"]))
                 d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(C["water"]))
                 d.ellipse((cx - rr + ring, y * sc - rr + ring, cx + rr - ring, y * sc + rr - ring),
                           fill=rgba(C["card"]))
