@@ -2248,35 +2248,30 @@ class App:
             if minute > start:
                 d.rounded_rectangle((pad * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
-            # Склянки — сині точки, помітно ширші за смугу, з обідком кольору картки, щоб не зливались
-            # із заповненою частиною; наступне нагадування — синій кружечок того ж розміру
+            # Усі позначки в одному стилі: кружечок з обідком кольору картки (відділяє від смуги й сусідів);
+            # ring — товщина контуру для порожнього кружечка («ще буде»), None — заповнений
             halo = 1.5 * sc
-            for m in drinks:
-                cx, rr = x_of(m) * sc, 5 * sc
-                d.ellipse((cx - rr - halo, y * sc - rr - halo, cx + rr + halo, y * sc + rr + halo),
-                          fill=rgba(C["card"]))
-                d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(C["water"]))
-            # Наступне нагадування — лише якщо не ховається за позначкою їжі чи кінця дня
+
+            def dot(x, radius, color, ring=None):
+                cx, cy, rr = x * sc, y * sc, radius * sc
+                d.ellipse((cx - rr - halo, cy - rr - halo, cx + rr + halo, cy + rr + halo), fill=rgba(C["card"]))
+                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=rgba(color))
+                if ring:
+                    inner = rr - ring * sc
+                    d.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=rgba(C["card"]))
+
+            for m in drinks:  # склянки
+                dot(x_of(m), 5, C["water"])
+            # Наступне нагадування про воду — лише якщо не ховається за позначкою їжі чи кінця дня
             if (next_water is not None and next_water <= end
                     and all(abs(x_of(next_water) - x_of(m[0])) >= 14 for m in marks)):
-                cx, rr, ring = x_of(next_water) * sc, 5 * sc, 1.8 * sc
-                d.ellipse((cx - rr - halo, y * sc - rr - halo, cx + rr + halo, y * sc + rr + halo),
-                          fill=rgba(C["card"]))
-                d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(C["water"]))
-                d.ellipse((cx - rr + ring, y * sc - rr + ring, cx + rr - ring, y * sc + rr - ring),
-                          fill=rgba(C["card"]))
-            for m, _name, color, state in marks:
-                cx, rr, ring = x_of(m) * sc, 7 * sc, 2 * sc
+                dot(x_of(next_water), 5, C["water"], ring=1.8)
+            for m, _name, color, state in marks:  # їжа й кінець дня
                 if state == "done":
-                    d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(color))
+                    dot(x_of(m), 7, color)
                 else:
-                    edge = C["dim"] if state == "skip" else color
-                    d.ellipse((cx - rr, y * sc - rr, cx + rr, y * sc + rr), fill=rgba(edge))
-                    d.ellipse((cx - rr + ring, y * sc - rr + ring, cx + rr - ring, y * sc + rr - ring),
-                              fill=rgba(C["card"]))
-            # «Зараз» — біла точка з обідком кольору картки
-            d.ellipse(((xn - 6) * sc, (y - 6) * sc, (xn + 6) * sc, (y + 6) * sc), fill=rgba(C["card"]))
-            d.ellipse(((xn - 4) * sc, (y - 4) * sc, (xn + 4) * sc, (y + 4) * sc), fill=rgba(C["text"]))
+                    dot(x_of(m), 7, C["dim"] if state == "skip" else color, ring=2)
+            dot(xn, 5, C["text"])  # «зараз»
 
         self.timeline_photo = ImageTk.PhotoImage(smooth_image(width, TIMELINE_HEIGHT, paint, C["card"]))
         c.delete("all")
