@@ -187,6 +187,16 @@ def test_meal_state_follows_the_day():
     assert make_scheduler(lunch_at=13 * 60).meal_state("lunch", at(15)) == ("missed", at(13))
 
 
+def test_next_meal_and_marking_a_meal_eaten_in_advance():
+    s = make_scheduler(breakfast_enabled=True, breakfast_at=8 * 60, lunch_enabled=True, lunch_at=13 * 60)
+    assert s.next_meal(at(7)) == ("breakfast", at(8))
+    assert s.next_meal(at(8, 10)) == ("breakfast", None)       # час снідати вже зараз
+    s.meal_results[(at(8).date(), "breakfast")] = "eat"        # тарілку позначили на «Стані»
+    assert s.tick(1, now=at(8, 10)) == []                      # без нагадування
+    assert s.next_meal(at(8, 10)) == ("lunch", at(13))
+    assert s.next_meal(at(15)) is None                         # обід минув — на сьогодні все
+
+
 def test_breaks_until_long():
     s = make_scheduler(long_every=3)
     assert s.breaks_until_long() == 3

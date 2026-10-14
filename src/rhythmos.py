@@ -73,6 +73,7 @@ MAX_GLASSES = 30          # верхня межа ручного введенн�
 MAX_GLASSES_SHOWN = 24    # більше — не малюємо (три ряди)
 GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
 MAIN_MIN_WIDTH = 1080     # головне вікно: ширше й нижче — налаштування в три колонки
+TIMELINE_HEIGHT = 64      # шкала дня в картці «Сьогодні»
 STATS_RANGES = (7, 30)    # перемикач періоду на графіку статистики
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # щогодини: раз на добу нова версія могла чекати до завтра
@@ -265,8 +266,10 @@ def fmt_time(seconds):
 
 class Stats:
     # work_sec — час за комп'ютером (таймер іде: не пауза, не перерва, не їжа), active_sec — час на перервах,
-    # meals — «Йду їсти», day_end — о котрій (хв від півночі) натиснули «Завершити день»; 0 — не завершували
-    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals", "day_end")
+    # meals — скільки разів поїли (сума ate_*), ate_<їжа> — 1, якщо цю їжу сьогодні з'їдено («Йду їсти»
+    # або тарілка на «Стані»), day_end — о котрій (хв від півночі) натиснули «Завершити день»; 0 — не завершували
+    KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals", "day_end",
+            "ate_breakfast", "ate_lunch", "ate_dinner")
 
     def __init__(self):
         self.data = load_json(STATS_PATH, {})
@@ -416,6 +419,8 @@ class Scheduler:
         for meal in MEALS:
             if not self.cfg[f"{meal}_enabled"]:
                 continue
+            if (now.date(), meal) in self.meal_results:
+                continue  # уже з'їли (позначили тарілку заздалегідь) чи пропустили
             snoozed = self.meal_snoozed.get(meal)
             if snoozed:
                 if now >= snoozed:
@@ -460,6 +465,19 @@ class Scheduler:
         if now < at:
             return "upcoming", at
         return ("due" if now < at + dt.timedelta(minutes=MEAL_WINDOW_MIN) else "missed"), at
+
+    def next_meal(self, now):
+        """Наступна їжа: (їжа, коли) або (їжа, None), якщо час їсти вже зараз; None — на сьогодні все."""
+        best = None
+        for meal in MEALS:
+            if not self.cfg[f"{meal}_enabled"]:
+                continue
+            state, when = self.meal_state(meal, now)
+            if state in ("open", "due"):
+                return meal, None
+            if state in ("upcoming", "snoozed") and (best is None or when < best[1]):
+                best = (meal, when)
+        return best
 
     def breaks_until_long(self):
         """Скільки перерв лишилось до довгої, включно з нею: 1 — наступна перерва довга."""
@@ -742,7 +760,8 @@ PLATE_STATES = {"eat": "done", "skip": "skip", "missed": "skip", "upcoming": "la
 
 def plate_picture(size, state, bg):
     """Тарілка згори (два кола). "done" — з'їдено (заповнена), "now" — час їсти (яскравий контур),
-    "later" — ще буде (сірий контур), "skip" — пропущено (сірий контур, перекреслено)."""
+    "later" — ще буде (сірий контур), "skip" — пропущено (сірий контур, перекреслено);
+    при наведенні на «Стані»: "add" — клік позначить з'їденою (бліда заливка), "remove" — зніме позначку."""
     meal = C["meal"]
 
     def paint(d, s):
@@ -755,6 +774,12 @@ def plate_picture(size, state, bg):
         if state == "done":
             d.ellipse(outer, fill=rgba(meal))
             d.ellipse(inner, outline=rgba(lighten(meal, 0.45)), width=int(stroke))
+        elif state == "add":
+            d.ellipse(outer, fill=rgba(blend(meal, bg, 0.55)), outline=rgba(lighten(meal, 0.3)), width=int(stroke))
+            d.ellipse(inner, outline=rgba(blend(meal, bg, 0.2)), width=int(stroke * 0.8))
+        elif state == "remove":
+            d.ellipse(outer, fill=rgba(blend(meal, bg, 0.75)), outline=rgba(C["dim"]), width=int(stroke))
+            d.ellipse(inner, outline=rgba(blend(meal, bg, 0.5)), width=int(stroke * 0.8))
         elif state == "now":
             d.ellipse(outer, fill=rgba(blend(meal, bg, 0.78)), outline=rgba(meal), width=int(stroke))
             d.ellipse(inner, outline=rgba(blend(meal, bg, 0.4)), width=int(stroke * 0.8))
@@ -848,6 +873,12 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
     btn.bind("<Enter>", lambda e: btn.configure(bg=hover) if btn["state"] == "normal" else None)
     btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
     return btn
+
+
+def wrap_to_width(label):
+    """Перенос рядка за фактичною шириною мітки (pack з fill="x"): довгий текст не розпирає картку."""
+    label.bind("<Configure>", lambda e: label.configure(wraplength=max(e.width, 1)))
+    return label
 
 
 def card(parent, title=None):
@@ -971,6 +1002,10 @@ class App:
         self.cfg = load_config()
         self.stats = Stats()
         self.sched = Scheduler(self.cfg)
+        today = dt.date.today()
+        for meal in MEALS:  # з'їдене сьогодні до перезапуску — без повторного нагадування
+            if self.stats.day(today)[f"ate_{meal}"]:
+                self.sched.meal_results[(today, meal)] = "eat"
         self.queue = queue.Queue()
 
         self.root = tk.Tk()
@@ -1620,9 +1655,26 @@ class App:
         if self.break_state and not self.break_state["demo"]:  # перерва почалась, поки висіло нагадування
             self.close_break_windows()
             self.sched.finish_break()
+        meal = self.sched.meal_open
         self.sched.meal_answered("eat")
-        self.stats.add("meals")
+        if meal:
+            self.set_meal_eaten(meal, True)
         self.icon.update_menu()
+
+    def set_meal_eaten(self, meal, eaten):
+        """Позначка «з'їдено» для їжі за сьогодні: з нагадування («Йду їсти») або тарілкою на «Стані»."""
+        today = dt.date.today()
+        self.stats.set(f"ate_{meal}", int(eaten))
+        self.stats.set("meals", sum(self.stats.day(today)[f"ate_{m}"] for m in MEALS))
+        if eaten:
+            self.sched.meal_results[(today, meal)] = "eat"
+            self.sched.meal_snoozed.pop(meal, None)
+            if self.sched.meal_open == meal and not self.meal_demo:  # нагадування більше не потрібне
+                self.sched.meal_open = None
+                self.close_meal_window()
+        elif self.sched.meal_results.get((today, meal)) == "eat":
+            del self.sched.meal_results[(today, meal)]
+        self.refresh_main()
 
     def finish_meal(self):
         self.sched.finish_meal()
@@ -1834,76 +1886,222 @@ class App:
         self.w["pause_btn"] = flat_button(left, t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=3)
         flat_button(left, t("reset"), self.sched.reset, size=11).pack(fill="x", pady=3)
+        # Розклад: довга перерва й кінець дня — рядок «назва … стан», оновлюється щосекунди
+        tk.Label(left, text=t("card_schedule").upper(), bg=C["card"], fg=C["accent"],
+                 font=font(9, "semibold")).pack(anchor="w", pady=(24, 6))
+        self.w["schedule"] = tk.Frame(left, bg=C["card"])
+        self.w["schedule"].pack(fill="x")
+        self.w["schedule_rows"] = {}
 
         right = tk.Frame(page, bg=C["bg"])
         right.pack(side="left", fill="both", expand=True)
 
-        water = card(right, t("card_water"))
-        water.pack(fill="x")
+        # Вода й харчування — поруч, однакові за будовою: відлік, рядок стану, склянки чи тарілки
+        top = tk.Frame(right, bg=C["bg"])
+        top.pack(fill="x")
+        water = card(top, t("card_water"))
+        water.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        meals = card(top, t("card_meals"))
+        meals.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        for column in (0, 1):
+            top.columnconfigure(column, weight=1, uniform="top")
+        self.build_meal_card(meals)
         self.w["water"] = tk.Label(water, bg=C["card"], fg=C["water"], font=font(28, "light"))
         self.w["water"].pack(anchor="w")
-        self.w["water_sub"] = tk.Label(water, bg=C["card"], fg=C["muted"], font=font(10))
-        self.w["water_sub"].pack(anchor="w")
-        # Склянки за сьогодні: клік по склянці виставляє кількість, «−»/«+» — по одній
-        row = tk.Frame(water, bg=C["card"])
-        row.pack(fill="x", pady=(10, 0))
-        self.w["glasses"] = tk.Frame(row, bg=C["card"])
-        self.w["glasses"].pack(side="left")
+        self.w["water_sub"] = wrap_to_width(tk.Label(water, bg=C["card"], fg=C["muted"], font=font(10),
+                                                     justify="left", anchor="w", wraplength=260))
+        self.w["water_sub"].pack(fill="x")
+        # Склянки за сьогодні: клік по склянці виставляє кількість (як тарілки в картці «Їжа»)
+        self.w["glasses"] = tk.Frame(water, bg=C["card"])
+        self.w["glasses"].pack(anchor="w", pady=(10, 0))
         self.w["glasses_key"] = None
-        for text, delta in (("+", 1), ("−", -1)):
-            btn = flat_button(row, text, lambda d=delta: self.change_water(d), size=12)
-            btn.configure(padx=10, pady=0)
-            btn.pack(side="right", anchor="n", padx=(4, 0), pady=(4, 0))
 
         today = card(right, t("card_today"))
-        today.pack(fill="x", pady=(14, 0))
+        today.pack(fill="both", expand=True, pady=(14, 0))
+        # Шкала дня внизу картки: від ранку до кінця робочого дня, їжа, кінець дня й «зараз»
+        self.w["timeline"] = tk.Canvas(today, height=TIMELINE_HEIGHT, bg=C["card"], highlightthickness=0)
+        self.w["timeline"].pack(side="bottom", fill="x", pady=(10, 0))
+        self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
         metrics = (("breaks", t("m_breaks"), C["accent"]), ("skipped", t("m_skipped"), C["muted"]),
                    ("postponed", t("m_postponed"), C["muted"]), ("work", t("m_work"), C["text"]),
-                   ("active", t("m_active"), C["accent"]), ("meals", t("m_meals"), C["text"]))
+                   ("active", t("m_active"), C["accent"]), ("meals", t("m_meals"), C["meal"]))
         for i, (key, caption, color) in enumerate(metrics):
             cell = tk.Frame(grid, bg=C["card"])
-            cell.grid(row=i // 3, column=i % 3, sticky="nw", pady=(0 if i < 3 else 12, 0))
+            cell.grid(row=i // 3, column=i % 3, sticky="nw", pady=(0 if i < 3 else 14, 0))
             grid.columnconfigure(i % 3, weight=1, uniform="today")
             self.w[f"today_{key}"] = tk.Label(cell, bg=C["card"], fg=color, font=font(28, "light"))
             self.w[f"today_{key}"].pack(anchor="w")
             tk.Label(cell, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
             self.w[f"today_{key}_sub"] = tk.Label(cell, bg=C["card"], fg=C["dim"], font=font(9))
             self.w[f"today_{key}_sub"].pack(anchor="w")
-
-        # Розклад: довга перерва, їжа, кінець дня — рядок «назва … стан», оновлюється щосекунди
-        schedule = card(right, t("card_schedule"))
-        schedule.pack(fill="both", expand=True, pady=(14, 0))
-        self.w["schedule"] = tk.Frame(schedule, bg=C["card"])
-        self.w["schedule"].pack(fill="x")
-        self.w["schedule_rows"] = {}
         return page
 
+    def build_meal_card(self, box):
+        self.w["meal"] = tk.Label(box, bg=C["card"], fg=C["meal"], font=font(28, "light"))
+        self.w["meal"].pack(anchor="w")
+        self.w["meal_sub"] = wrap_to_width(tk.Label(box, bg=C["card"], fg=C["muted"], font=font(10),
+                                                    justify="left", anchor="w", wraplength=260))
+        self.w["meal_sub"].pack(fill="x")
+        self.w["plates"] = tk.Frame(box, bg=C["card"])
+        self.w["plates"].pack(anchor="w", pady=(10, 0))
+        self.w["plates_key"] = None
+
+    def refresh_meal_card(self, now):
+        """Картка «Їжа»: відлік до наступної їжі, «сьогодні 1 з 3» і тарілки увімкнених прийомів їжі."""
+        s, today = self.sched, self.stats.day(now.date())
+        enabled = [m for m in MEALS if self.cfg[f"{m}_enabled"]]
+        eaten = sum(today[f"ate_{m}"] for m in enabled)
+        progress = t("meals_today", n=eaten, total=len(enabled))
+        hover = self.w.get("plate_hover")
+        if hover is not None:  # курсор на тарілці — що буде після кліку
+            progress += f"  →  {hover}"
+        upcoming = s.next_meal(now)
+        if not enabled:
+            value, sub = "—", t("water_off")
+        elif s.eating:
+            value, sub = t("meal_enjoy"), t("sch_eating", time=f"{s.eating_until:%H:%M}") + "  ·  " + progress
+        elif upcoming and upcoming[1] is None:
+            value, sub = t("meal_now"), progress
+        elif upcoming:
+            value = fmt_time((upcoming[1] - now).total_seconds())
+            sub = t(f"meal_next_{upcoming[0]}") + "  ·  " + progress
+        else:
+            value, sub = t("meals_done"), progress
+        self.w["meal"].configure(text=value)
+        self.w["meal_sub"].configure(text=sub)
+        self.render_plates(enabled, now)
+
+    def render_plates(self, enabled, now):
+        """Тарілки увімкнених прийомів їжі: клік позначає з'їденою чи знімає позначку, наведення — попередній вигляд."""
+        today = self.stats.day(now.date())
+        states = []
+        for meal in enabled:
+            state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
+            states.append("done" if today[f"ate_{meal}"] else ("later" if state == "done" else state))
+        key = (tuple(enabled), tuple(states), tuple(self.cfg[f"{m}_at"] for m in enabled))
+        if self.w.get("plates_key") == key:
+            return
+        self.w["plates_key"] = key
+        self.w["plate_hover"] = None
+        frame = self.w["plates"]
+        for child in frame.winfo_children():
+            child.destroy()
+        plates = []
+        eaten_count = sum(state == "done" for state in states)
+
+        def preview(index):
+            """None — звичайний вигляд; інакше показуємо, що зробить клік по тарілці index."""
+            self.w["plate_hover"] = None if index is None else eaten_count + (-1 if states[index] == "done" else 1)
+            for i, plate in enumerate(plates):
+                state = states[i]
+                if i == index:
+                    state = "remove" if state == "done" else "add"
+                plate.configure(image=plate_image(30, state, C["card"]))
+            self.refresh_main()
+
+        for i, (meal, state) in enumerate(zip(enabled, states)):
+            cell = tk.Frame(frame, bg=C["card"], cursor="hand2")
+            cell.grid(row=0, column=i, padx=(0, 14))
+            plate = tk.Label(cell, image=plate_image(30, state, C["card"]), bg=C["card"], cursor="hand2")
+            plate.pack()
+            name = tk.Label(cell, text=t(f"meal_{meal}"), bg=C["card"], fg=C["muted"], font=font(9), cursor="hand2")
+            name.pack()
+            at = tk.Label(cell, text=fmt_clock(self.cfg[f"{meal}_at"]), bg=C["card"], fg=C["dim"], font=font(8),
+                          cursor="hand2")
+            at.pack()
+            for widget in (cell, plate, name, at):
+                widget.bind("<Button-1>", lambda e, m=meal, done=state == "done": self.set_meal_eaten(m, not done))
+                widget.bind("<Enter>", lambda e, i=i: preview(i))
+                widget.bind("<Leave>", lambda e: preview(None))
+            plates.append(plate)
+
+    def timeline_marks(self, now):
+        """Позначки шкали дня: (хвилина, назва, колір, стан) — їжа ("done"/"now"/"later"/"skip") і кінець дня."""
+        today = self.stats.day(now.date())
+        marks = []
+        for meal in MEALS:
+            if self.cfg[f"{meal}_enabled"]:
+                state = "done" if today[f"ate_{meal}"] else PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
+                marks.append((self.cfg[f"{meal}_at"], t(f"meal_{meal}"), C["meal"], "later" if state == "done" and
+                              not today[f"ate_{meal}"] else state))
+        if self.cfg["day_end_enabled"]:
+            finished = today["day_end"]
+            marks.append((finished or self.cfg["day_end_at"], t("sch_day_end"), C["accent"],
+                          "done" if finished else "later"))
+        return sorted(marks, key=lambda mark: mark[0])
+
+    def draw_timeline(self, force=False):
+        """Смуга дня: заповнена до «зараз», кружечки їжі й кінця дня з підписами.
+        Малюємо згладжено через Pillow і лише коли щось змінилося (раз на хвилину чи після кліку)."""
+        c = self.w.get("timeline")
+        if not c:
+            return
+        now = dt.datetime.now()
+        width = c.winfo_width()
+        if width < 100:
+            return
+        marks = self.timeline_marks(now)
+        minute = now.hour * 60 + now.minute
+        idle = self.sched.paused or bool(self.sched.eating)
+        key = (width, minute, tuple(marks), idle)
+        if not force and key == getattr(self, "_timeline_key", None):
+            return
+        self._timeline_key = key
+        # Межі шкали: від ранку (не пізніше 8:00 чи першої їжі) до кінця дня (не раніше 18:00), по годинах
+        times = [m[0] for m in marks]
+        start = (min([8 * 60] + times) - 30) // 60 * 60
+        end = -(-(max([18 * 60] + times) + 30) // 60) * 60
+        pad, y = 14, 34
+
+        def x_of(m):
+            return pad + (width - 2 * pad) * (min(max(m, start), end) - start) / (end - start)
+
+        xn = x_of(minute)
+
+        def paint(d, s):
+            r = 3 * s
+            d.rounded_rectangle((pad * s - r, y * s - r, (width - pad) * s + r, y * s + r), radius=r,
+                                fill=rgba(C["track"]))
+            if minute > start:
+                d.rounded_rectangle((pad * s - r, y * s - r, xn * s + r, y * s + r), radius=r,
+                                    fill=rgba(C["dim"] if idle else C["accent_dark"]))
+            for m, _name, color, state in marks:
+                cx, rr, ring = x_of(m) * s, 7 * s, 2 * s
+                if state == "done":
+                    d.ellipse((cx - rr, y * s - rr, cx + rr, y * s + rr), fill=rgba(color))
+                else:
+                    edge = C["dim"] if state == "skip" else color
+                    d.ellipse((cx - rr, y * s - rr, cx + rr, y * s + rr), fill=rgba(edge))
+                    d.ellipse((cx - rr + ring, y * s - rr + ring, cx + rr - ring, y * s + rr - ring),
+                              fill=rgba(C["card"]))
+            # «Зараз» — біла точка з обідком кольору картки
+            d.ellipse(((xn - 6) * s, (y - 6) * s, (xn + 6) * s, (y + 6) * s), fill=rgba(C["card"]))
+            d.ellipse(((xn - 4) * s, (y - 4) * s, (xn + 4) * s, (y + 4) * s), fill=rgba(C["text"]))
+
+        self.timeline_photo = ImageTk.PhotoImage(smooth_image(width, TIMELINE_HEIGHT, paint, C["card"]))
+        c.delete("all")
+        c.create_image(0, 0, anchor="nw", image=self.timeline_photo)
+        # Підписи: назви над смугою; якщо дві позначки поруч — друга під смугою, щоб не налазили
+        last_above = -1e9
+        for m, name, color, state in marks:
+            x = x_of(m)
+            label = f"{name} {fmt_clock(m)}"
+            above = x - last_above > 90
+            if above:
+                last_above = x
+            c.create_text(x, y - 16 if above else y + 17, text=label, font=font(9),
+                          fill=color if state in ("now", "done") else C["muted"])
+        c.create_text(pad, TIMELINE_HEIGHT - 2, text=fmt_clock(start), anchor="sw", fill=C["dim"], font=font(8))
+        c.create_text(width - pad, TIMELINE_HEIGHT - 2, text=fmt_clock(end), anchor="se", fill=C["dim"], font=font(8))
+
     def schedule_rows(self, now):
-        """Рядки розкладу на сьогодні: (ключ, назва, стан, підсвітити?)."""
+        """Рядки розкладу на сьогодні: (ключ, назва, стан, підсвітити?). Їжа — у власній картці поруч з водою."""
         s, cfg = self.sched, self.cfg
-        timed = []  # (хвилина дня, рядок) — їжа й кінець дня йдуть за часом
+        timed = []  # (хвилина дня, рядок) — події з часом ідуть за ним
         left = s.breaks_until_long()
         long_row = ("long", t("sch_long"), t("long_next") if left == 1 else fmt_after_minis(left - 1), left == 1)
-        for meal in MEALS:
-            if not cfg[f"{meal}_enabled"]:
-                continue
-            state, when = s.meal_state(meal, now)
-            at = fmt_clock(cfg[f"{meal}_at"])
-            if state == "eating":
-                text = t("sch_eating", time=f"{when:%H:%M}")
-            elif state in ("eat", "skip"):
-                text = t(f"sch_{state}")
-            elif state == "snoozed":
-                text = t("sch_snoozed", time=f"{when:%H:%M}")
-            elif state in ("open", "due"):
-                text = t("sch_now", time=at)
-            elif state == "upcoming":
-                text = t("sch_in", time=at, left=fmt_minutes(max(1, round((when - now).total_seconds() / 60))))
-            else:
-                text = t("sch_missed", time=at)
-            timed.append((cfg[f"{meal}_at"], (meal, t(f"meal_{meal}"), text, state in ("eating", "open", "due"))))
         if cfg["day_end_enabled"]:
             finished = self.stats.day(now.date())["day_end"]
             at = dt.datetime.combine(now.date(), dt.time()) + dt.timedelta(minutes=cfg["day_end_at"])
@@ -1928,9 +2126,9 @@ class App:
                 child.destroy()
             widgets.clear()
             for i, (key, name, _text, _hot) in enumerate(rows):
-                tk.Label(frame, text=name, bg=C["card"], fg=C["muted"], font=font(11)).grid(
+                tk.Label(frame, text=name, bg=C["card"], fg=C["muted"], font=font(10)).grid(
                     row=i, column=0, sticky="w", pady=3)
-                widgets[key] = tk.Label(frame, bg=C["card"], font=font(11))
+                widgets[key] = tk.Label(frame, bg=C["card"], font=font(10))
                 widgets[key].grid(row=i, column=1, sticky="e", pady=3)
             frame.columnconfigure(1, weight=1)
         for key, _name, text, hot in rows:
@@ -1978,7 +2176,7 @@ class App:
         summary.pack(fill="x")
         cards = (("day_breaks", t("m_breaks"), C["accent"]), ("day_skipped", t("m_skipped"), C["muted"]),
                  ("day_water", t("m_water"), C["water"]), ("day_work", t("m_work"), C["text"]),
-                 ("day_active", t("m_active"), C["accent"]), ("day_meals", t("m_meals"), C["text"]))
+                 ("day_active", t("m_active"), C["accent"]), ("day_meals", t("m_meals"), C["meal"]))
         for i, (key, caption, color) in enumerate(cards):
             box = card(summary)
             box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 0 if i == len(cards) - 1 else 5))
@@ -2005,14 +2203,14 @@ class App:
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, d=days: self.set_stats_range(d))
             self.w["range_buttons"][days] = btn
-        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=250, cursor="hand2")
+        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=262, cursor="hand2")
         self.w["chart"].pack(fill="both", expand=True)
         self.w["chart"].bind("<Motion>", self.on_chart_motion)
         self.w["chart"].bind("<Leave>", lambda e: self.highlight_day(None))
         bottom_row = tk.Frame(chart, bg=C["card"])
         bottom_row.pack(fill="x", pady=(6, 0))
         for text, color in ((t("lg_mini"), C["accent"]), (t("lg_long"), C["accent_dark"]),
-                            (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"])):
+                            (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"]), (t("lg_meals"), C["meal"])):
             tk.Label(bottom_row, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
             tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
                      font=font(10)).pack(side="left", padx=(2, 14))
@@ -2042,7 +2240,7 @@ class App:
 
         c.delete("all")
         width, height = max(c.winfo_width(), 600), max(c.winfo_height(), 210)
-        top, bottom = 24, height - 48
+        top, bottom = 24, height - 66
         slot = width / n
         self.chart_info = {"days": days, "records": records, "slot": slot, "top": top, "bottom": bottom,
                            "width": width, "bar": min(44, slot * 0.6), "hover": None}
@@ -2071,13 +2269,18 @@ class App:
                 label = str(day.day) if (n - 1 - i) % 5 == 0 else ""
             c.create_text(cx, bottom + 14, text=label, fill=C["text"] if day == today else C["muted"],
                           font=font(10 if week else 9))
-            if rec["water"]:
-                # Норму води виконано — заповнений кружечок, ні — порожній; за тиждень ще й кількість склянок
-                ox, oy = (cx - 9 if week else cx), bottom + 33
-                c.create_image(ox, oy, image=dot_image(9, C["water"], rec["water"] >= self.cfg["water_goal"],
-                                                       C["card"]))
+            # Вода й їжа: заповнений кружечок — норму / усі прийоми їжі виконано, порожній — ні;
+            # за тиждень ще й кількість
+            meals_planned = sum(self.cfg[f"{m}_enabled"] for m in MEALS)
+            for row, (count, full, color) in enumerate((
+                    (rec["water"], rec["water"] >= self.cfg["water_goal"], C["water"]),
+                    (rec["meals"], meals_planned and rec["meals"] >= meals_planned, C["meal"]))):
+                if not count:
+                    continue
+                ox, oy = (cx - 9 if week else cx), bottom + 33 + row * 18
+                c.create_image(ox, oy, image=dot_image(9, color, bool(full), C["card"]))
                 if week:
-                    c.create_text(ox + 8, oy, text=rec["water"], anchor="w", fill=C["water"], font=font(9))
+                    c.create_text(ox + 8, oy, text=count, anchor="w", fill=color, font=font(9))
         self.chart_info["bar_tops"] = bar_tops
         self.show_stats_day(n - 1)
 
@@ -2128,7 +2331,7 @@ class App:
         info = getattr(self, "chart_info", None)
         if not info:
             return
-        inside = info["top"] - 20 <= event.y <= info["bottom"] + 44
+        inside = info["top"] - 20 <= event.y <= info["bottom"] + 62
         self.highlight_day(min(len(info["days"]) - 1, max(0, int(event.x // info["slot"]))) if inside else None)
 
     def highlight_day(self, index):
@@ -2143,7 +2346,7 @@ class App:
             self.show_stats_day(len(info["days"]) - 1)
             return
         slot, top, bottom = info["slot"], info["top"], info["bottom"]
-        band = c.create_rectangle(slot * index + 4, top - 14, slot * (index + 1) - 4, bottom + 44,
+        band = c.create_rectangle(slot * index + 4, top - 14, slot * (index + 1) - 4, bottom + 62,
                                   fill=C["grid"], outline="", tags="hover")
         c.tag_lower(band)
         rec = info["records"][index]
@@ -2446,6 +2649,8 @@ class App:
             self.w[f"today_{key}"].configure(text=value)
             self.w[f"today_{key}_sub"].configure(text=sub)
         self.refresh_schedule()
+        self.refresh_meal_card(dt.datetime.now())
+        self.draw_timeline()
         self.render_glasses(today["water"])
 
     def render_glasses(self, drunk):
@@ -2480,9 +2685,6 @@ class App:
             glass.bind("<Enter>", lambda e, n=i + 1: preview(target(n)))
             glass.bind("<Leave>", lambda e: preview(None))
             glasses.append(glass)
-
-    def change_water(self, delta):
-        self.set_water(self.stats.day(dt.date.today())["water"] + delta)
 
     def set_water(self, count):
         """Ручна зміна кількості випитої води за сьогодні."""
