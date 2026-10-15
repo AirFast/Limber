@@ -342,12 +342,16 @@ class MainWindow:
 
     def meal_time(self, meal, date):
         """The minute of the day for a meal: when it was actually eaten (the log, or ate_<meal>_at in old days),
-        otherwise the planned time."""
+        today when it was snoozed ("In 15 min") the time it will be reminded at, otherwise the planned time."""
         if self.stats.day(date)[f"ate_{meal}"]:
             logged = [e["at"] for e in self.stats.events(date) if e["type"] == "meal" and e.get("meal") == meal]
             eaten_at = logged or self.stats.times(date, f"ate_{meal}_at")
             if eaten_at:
                 return eaten_at[0]
+        if date == self.today():
+            state, when = self.sched.meal_state(meal, dt.datetime.now())
+            if state in ("snoozed", "open") and when:
+                return self.minute(when)
         return self.cfg[f"{meal}_at"]
 
     def timeline_marks(self, now, events, date):

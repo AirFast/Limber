@@ -778,6 +778,7 @@ class Reminder:
         self.sched, self.name, self.event = sched, name, event
         self.open = False
         self.snoozed_until = None
+        self.moved_to = None  # where "snooze" moved the reminder: still its time once it pops up again
         self.shown = None
         self.answered = None  # (workday, answer)
 
@@ -817,20 +818,22 @@ class Reminder:
         if self.triggered(now):
             self.open = True
             self.shown = self.sched.workday(now)
+            self.moved_to = None
             return True
         return False
 
     def answer(self, answer, now):
         self.open = False
         if answer == "snooze":
-            self.snoozed_until = now + dt.timedelta(minutes=self.snooze_min)
+            self.snoozed_until = self.moved_to = now + dt.timedelta(minutes=self.snooze_min)
         elif answer:
             self.answered = (self.sched.workday(now), answer)
+            self.moved_to = None
 
     def cancel(self):
         """The day is finished: open and snoozed reminders aren't needed (they would fire in the morning)."""
         self.open = False
-        self.snoozed_until = None
+        self.snoozed_until = self.moved_to = None
 
     def snapshot(self):
         # The popup is gone after a restart: an open reminder pops up again
@@ -1267,7 +1270,8 @@ class Scheduler:
 
     def meal_state(self, meal, now):
         """Today's meal state for the schedule: (state, time). States: "eating" (until), "eat", "skip",
-        "snoozed" (remind at), "open" (reminder open), "upcoming" (at), "due" (any moment), "missed"."""
+        "snoozed" (remind at), "open" (reminder open; the time it was snoozed to, if it was), "upcoming" (at),
+        "due" (any moment), "missed"."""
         if self.eating == meal:
             return "eating", self.until
         reminder = self.meals[meal]
@@ -1277,7 +1281,7 @@ class Scheduler:
         if reminder.snoozed_until and not stale(reminder.snoozed_until, now):
             return "snoozed", reminder.snoozed_until
         if reminder.open:
-            return "open", None
+            return "open", reminder.moved_to
         at = self.moment(now, self.cfg[f"{meal}_at"])
         if now < at:
             return "upcoming", at

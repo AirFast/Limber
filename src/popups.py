@@ -332,7 +332,8 @@ class Popups:
             tk.Label(cell, image=plate_image(30, state, C["panel"]), bg=C["panel"]).pack()
             tk.Label(cell, text=t(f"meal_{m}"), bg=C["panel"], fg=C["text"] if m == meal else C["muted"],
                      font=font(9)).pack()
-            tk.Label(cell, text=fmt_clock(self.cfg[f"{m}_at"]), bg=C["panel"], fg=C["dim"], font=font(8)).pack()
+            tk.Label(cell, text=fmt_clock(self.meal_time(m, self.today())), bg=C["panel"], fg=C["dim"],
+                     font=font(8)).pack()
         if mode == "remind":
             text = t("meal_text", time=fmt_minutes(self.cfg["meal_pause_min"]))
         else:

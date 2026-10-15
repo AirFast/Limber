@@ -546,6 +546,7 @@ def test_meal_state_follows_the_day():
     s.meal_answered("snooze", now=at(13))
     assert s.meal_state("lunch", at(13, 5)) == ("snoozed", at(13, 15))
     s.tick(1, now=at(13, 15))
+    assert s.meal_state("lunch", at(13, 15)) == ("open", at(13, 15))      # snoozed: it stays at the new time
     s.meal_answered("eat", now=at(13, 15))
     assert s.meal_state("lunch", at(13, 20)) == ("eating", at(13, 45))
     s.finish_meal()
