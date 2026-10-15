@@ -369,7 +369,8 @@ class App(Popups, MainWindow):
             if self.sched.eating:
                 self.close_meal_window()  # "Continue?" isn't needed anymore
                 self.sched.finish_meal()
-            self.sched.resume()
+            if self.sched.resume():  # "Continue" after "Finish the day": the day goes on
+                self.continue_day()
             self.track_spans()
             self.icon.update_menu()
         elif isinstance(action, tuple) and action[0] == "pause":
@@ -409,6 +410,12 @@ class App(Popups, MainWindow):
             self.close_toast(dismissed=False)
         if not self.meal_demo:
             self.close_meal_window()
+
+    def continue_day(self):
+        """The day goes on, so it isn't finished: clear the finish time, the "Finish the day" button comes back."""
+        self.stats.set("day_end", 0)
+        self.stats.unlog("day_end")
+        self.icon.update_menu()
 
     def update_tray(self):
         s = self.sched
@@ -465,10 +472,7 @@ class App(Popups, MainWindow):
                 self.stats.log("overwork", self.minute())
                 self.show_overwork()
             elif event == "day_continued":
-                # The day goes on, so it isn't finished: clear the finish time, the "Finish the day" button comes back
-                self.stats.set("day_end", 0)
-                self.stats.unlog("day_end")
-                self.icon.update_menu()
+                self.continue_day()
             elif event == "back":
                 self.log_away()
             # "break_held" (the break waits for a call to end) and "back" (returned) have no window of their own;

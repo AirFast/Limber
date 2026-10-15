@@ -1197,9 +1197,20 @@ class Scheduler:
         else:
             self.mode, self.until = PAUSED, now + dt.timedelta(minutes=minutes)
 
-    def resume(self):
-        if self.paused:
-            self.mode, self.until = WORKING, None
+    def resume(self, now=None):
+        """The person ends the pause. After "Finish the day" that is their answer that the day goes on:
+        it is no longer finished right away (no waiting for FINISH_GRACE_MIN). Returns True in that case.
+        A day finished before its end time gets the day-end question back at that time; the person decides then."""
+        if not self.paused:
+            return False
+        now = now or dt.datetime.now()
+        continued = self.mode == FINISHED
+        self.mode, self.until = WORKING, None
+        if continued:
+            self.finished_at, self.active_since = None, None
+            if now < self.moment(now, self.cfg["day_end_at"]):
+                self.day_end.shown = None
+        return continued
 
     def day_end_answered(self, answer, now=None):
         """answer: "snooze" reminds again in 30 min, "finish" finishes the day (App sets the pause)."""

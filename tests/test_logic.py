@@ -608,8 +608,9 @@ def test_pause_until_morning_cancels_pending_reminders():
     s.meal_answered("snooze", now=at(13))
     s.pause(None, now=at(13, 5))
     assert s.meal_snoozed == {} and not s.day_end_open
-    s.resume()
-    assert s.tick(1, now=at(18)) == []                  # the day is already finished: no "workday is over"
+    s.resume(now=at(13, 6))                              # "Continue": the day goes on
+    assert s.tick(1, now=at(13, 20)) == []              # the snoozed lunch doesn't come back
+    assert s.tick(1, now=at(18)) == ["day_end"]         # and at its time the person decides about the day
 
 
 def test_work_started_needs_recent_input_and_morning():
@@ -682,6 +683,26 @@ def test_finished_day_is_not_asked_again_and_continues_if_still_working():
     assert s.paused_until is None                            # the timers run again
     assert not s.day_finished(at(18, 5))                     # and the day is no longer finished
     assert s.tick(1, now=at(19), idle=0) == []               # day end isn't asked anymore
+
+
+def test_continue_after_finishing_the_day_continues_it_right_away():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    s.pause(None, now=at(17))                                 # "Finish the day" from the tray
+    assert s.day_finished(at(17, 1))
+    assert s.resume(now=at(17, 1)) is True                    # "Continue" under the timer
+    assert not s.day_finished(at(17, 1)) and s.paused_until is None
+    assert "day_continued" not in s.tick(1, now=at(17, 5), idle=0)   # nothing left to decide for the person
+    assert s.resume(now=at(17, 6)) is False                   # not paused: nothing to continue
+    s.pause(30, now=at(17, 10))
+    assert s.resume(now=at(17, 11)) is False and not s.day_finished(at(17, 11))  # a timed pause keeps the day
+    assert s.tick(1, now=at(18), idle=0) == ["day_end"]       # finished early, continued: asked at its time
+
+
+def test_continue_after_the_day_end_time_does_not_ask_again_at_once():
+    s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
+    s.pause(None, now=at(18, 30))
+    assert s.resume(now=at(18, 40)) is True and not s.day_finished(at(18, 40))
+    assert s.tick(1, now=at(18, 41), idle=0) == []            # the person just said "continue"
 
 
 def test_a_quick_look_after_finishing_does_not_continue_the_day():
