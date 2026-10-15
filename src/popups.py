@@ -71,6 +71,7 @@ class Popups:
         if self.toast_kind == "warning" and not demo:
             self.close_toast()  # the break started: the warning isn't needed anymore
         self.close_break_windows()
+        system.keep_display_awake(True)  # the person exercises without input: no screen saver over the break
         steps = build_break(kind, self.cfg)
         multi = len(steps) > 1
         self.break_state = {"kind": kind, "steps": steps, "index": 0, "left": steps[0]["secs"],
@@ -221,6 +222,7 @@ class Popups:
             win.destroy()
         self.break_wins = []
         self.break_state = None
+        system.keep_display_awake(False)
 
     def end_break(self, result):
         kind = self.break_state["kind"] if self.break_state else "mini"

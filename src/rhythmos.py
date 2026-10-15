@@ -591,6 +591,8 @@ def run_smoke_test(app, out_dir):
         (lambda: app.change_language("en" if i18n.get_language() == "uk" else "uk"), None),
         (lambda: None, "settings_other_language"),
         (lambda: app.show_demo_break("mini"), None),
+        # A break holds off the screen saver: on macOS the assertion is visible in pmset (#2)
+        (lambda: note(f"display assertion during a break: {system.display_assertions()}"), None),
         (lambda: app.choose_group("back"), "mini_break_back"),
         (lambda: app.end_break("skip"), None),
         (lambda: (app.show_demo_break("long"), app.next_break_step()), "workout"),

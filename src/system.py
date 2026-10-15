@@ -130,6 +130,57 @@ def keep_on_top(win, geometry):
         win.after(250, again)
 
 
+_display_assertion = None  # macOS: the IOPMAssertionID held while a break screen is shown
+
+
+def keep_display_awake(on):
+    """While a break screen is shown: no screen saver and no display sleep, like a video player. The person
+    does the exercises without touching the mouse or keyboard, so the system took them for idle and started
+    the screen saver over the break (#2). It doesn't fake input: idle and away detection keep working.
+    Windows: SetThreadExecutionState (on the Tk thread); macOS: an IOKit PreventUserIdleDisplaySleep assertion."""
+    global _display_assertion
+    try:
+        if IS_WINDOWS:
+            import ctypes
+            es_continuous, es_system, es_display = 0x80000000, 0x00000001, 0x00000002
+            ctypes.windll.kernel32.SetThreadExecutionState(es_continuous | (es_system | es_display if on else 0))
+        elif IS_MAC:
+            import ctypes
+            iokit = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
+            if on and _display_assertion is None:
+                cf = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+                cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+                cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+                cf.CFRelease.argtypes = [ctypes.c_void_p]
+                utf8 = 0x08000100
+                kind = cf.CFStringCreateWithCString(None, b"PreventUserIdleDisplaySleep", utf8)
+                name = cf.CFStringCreateWithCString(None, b"Rhythmos break", utf8)
+                iokit.IOPMAssertionCreateWithName.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                                              ctypes.POINTER(ctypes.c_uint32)]
+                assertion = ctypes.c_uint32(0)
+                result = iokit.IOPMAssertionCreateWithName(kind, 255, name, ctypes.byref(assertion))  # level On
+                cf.CFRelease(kind)
+                cf.CFRelease(name)
+                if result == 0:
+                    _display_assertion = assertion.value
+                else:
+                    print(f"display assertion failed: {result:#x}", file=sys.stderr)
+            elif not on and _display_assertion is not None:
+                iokit.IOPMAssertionRelease.argtypes = [ctypes.c_uint32]
+                iokit.IOPMAssertionRelease(_display_assertion)
+                _display_assertion = None
+    except Exception as error:  # never let this break the break screen itself
+        print(f"keep_display_awake({on}) failed: {error}", file=sys.stderr)
+
+
+def display_assertions():
+    """For the smoke test: whether the break's display assertion is held (macOS: pmset; Windows: our flag)."""
+    if IS_MAC:
+        out = subprocess.run(["pmset", "-g", "assertions"], capture_output=True, text=True).stdout
+        return [line.strip() for line in out.splitlines() if "Rhythmos break" in line] or "none"
+    return "n/a"
+
+
 def monitors():
     """[(x, y, w, h, (work area l, t, r, b), primary?)], the primary monitor first."""
     if IS_MAC:
