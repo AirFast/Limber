@@ -79,7 +79,7 @@ class Popups:
 
         system.activate_app()
         screens = system.monitors() or [(0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight(), None, True)]
-        for x, y, w, h, _work, primary in screens:
+        for x, y, w, h, work, primary in screens:
             win = tk.Toplevel(self.root, bg=C["bg"])
             win.overrideredirect(True)
             win.geometry(f"{w}x{h}+{x}+{y}")
@@ -89,7 +89,9 @@ class Popups:
             if demo:
                 win.bind("<Escape>", lambda e: self.end_break("skip"))
                 banner = tk.Frame(win, bg=C["bg"])
-                banner.place(x=28, y=22)
+                # macOS draws the menu bar (taller with a notch) over the window: start below the work area top
+                top = max(0, work[1] - y) if work else 0
+                banner.place(x=28, y=top + 22)
                 demo_badge(banner).pack(side="left")
                 tk.Label(banner, text=t("demo_esc"), bg=C["bg"], fg=C["dim"], font=font(10)).pack(side="left", padx=8)
             if not primary:
