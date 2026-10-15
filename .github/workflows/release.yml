@@ -93,7 +93,11 @@ jobs:
         run: |
           # A week of history in the old stats.json format: the app migrates it, the screenshots show real data
           python3 tools/seed_stats.py "$HOME/Library/Application Support/Rhythmos"
-          dist/Rhythmos.app/Contents/MacOS/Rhythmos --smoke-test "$PWD/smoke"
+          # The built app writes to rhythmos.log, not to the step's output
+          status=0
+          dist/Rhythmos.app/Contents/MacOS/Rhythmos --smoke-test "$PWD/smoke" || status=$?
+          tail -n 20 "$HOME/Library/Application Support/Rhythmos/rhythmos.log" || true
+          test $status -eq 0
           python3 tools/seed_stats.py --check "$HOME/Library/Application Support/Rhythmos"
 
       # Self-update: a copy of the built app "pretends" to be version 0.0.1, downloads

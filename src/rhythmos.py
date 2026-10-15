@@ -16,7 +16,9 @@ import webbrowser
 
 import system
 
-if sys.stderr is None:  # a build without a console: import errors would otherwise vanish without a trace
+# A build without a console has nowhere to print: on Windows stderr is None, on macOS (started from Finder or at
+# login) it is /dev/null. Import errors, Tk callback tracebacks and update messages would vanish without a trace
+if sys.stderr is None or (getattr(sys, "frozen", False) and not sys.stderr.isatty()):
     os.makedirs(system.data_dir(), exist_ok=True)
     sys.stderr = sys.stdout = open(os.path.join(system.data_dir(), "rhythmos.log"), "a", encoding="utf-8", buffering=1)
 
