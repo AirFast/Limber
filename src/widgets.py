@@ -53,11 +53,19 @@ def wrap_to_width(label):
     return label
 
 
-def card(parent, title=None):
+def card(parent, title=None, action=None):
+    """Картка з заголовком; action = (текст, команда) — мала кнопка праворуч від заголовка
+    (у налаштуваннях — «Спробувати»: перегляд поруч із тим, що він показує)."""
     frame = tk.Frame(parent, bg=C["card"], padx=18, pady=14)
     if title:
-        tk.Label(frame, text=title.upper(), bg=C["card"], fg=C["accent"],
-                 font=font(9, "semibold")).pack(anchor="w", pady=(0, 8))
+        head = tk.Frame(frame, bg=C["card"])
+        head.pack(fill="x", pady=(0, 8))
+        tk.Label(head, text=title.upper(), bg=C["card"], fg=C["accent"],
+                 font=font(9, "semibold")).pack(side="left")
+        if action:
+            btn = flat_button(head, action[0], action[1], size=9)
+            btn.configure(padx=10, pady=1)
+            btn.pack(side="right")
     return frame
 
 
@@ -71,9 +79,11 @@ class Slider(tk.Frame):
         self.lo, self.hi, self.step, self.fmt, self.on_change = lo, hi, step, fmt, on_change
         self.value = self.snap(value)
         self.enabled = True
-        head = tk.Frame(self, bg=bg)
+        # Рядок над доріжкою: підпис і значення; сюди ж можна поставити перемикач (див. «Їжа»)
+        self.head = head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
-        tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10)).pack(side="left")
+        self.label = tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10))
+        self.label.pack(side="left")
         self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
                                     font=font(11, "semibold"))
         self.value_label.pack(side="right")
@@ -197,6 +207,8 @@ class ScrollArea(tk.Frame):
 
 
 class Toggle(tk.Frame):
+    """Перемикач із підписом ліворуч; text=None — сам перемикач (підписом слугує сусідній текст)."""
+
     def __init__(self, parent, text, value, on_change):
         bg = parent["bg"]
         super().__init__(parent, bg=bg, cursor="hand2")
@@ -204,11 +216,14 @@ class Toggle(tk.Frame):
         # Перемикач — праворуч першим, підпис забирає решту й переноситься: у вузькій колонці
         # довгий підпис інакше виштовхував перемикач за край картки
         self.canvas = tk.Canvas(self, width=46, height=24, bg=bg, highlightthickness=0, cursor="hand2")
-        self.canvas.pack(side="right", padx=(8, 0))
-        label = wrap_to_width(tk.Label(self, text=text, bg=bg, fg=C["text"], font=font(11), cursor="hand2",
-                                       anchor="w", justify="left", wraplength=180))
-        label.pack(side="left", fill="x", expand=True)
-        for widget in (self, label, self.canvas):
+        self.canvas.pack(side="right", padx=(8, 0) if text is not None else 0)
+        widgets = [self, self.canvas]
+        if text is not None:
+            label = wrap_to_width(tk.Label(self, text=text, bg=bg, fg=C["text"], font=font(11), cursor="hand2",
+                                           anchor="w", justify="left", wraplength=180))
+            label.pack(side="left", fill="x", expand=True)
+            widgets.append(label)
+        for widget in widgets:
             widget.bind("<Button-1>", self.toggle)
         self.draw()
 

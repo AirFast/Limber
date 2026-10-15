@@ -379,6 +379,14 @@ def test_split_balanced_keeps_order_and_evens_columns():
     assert core.split_balanced([100, 100], 3) == [[0], [1]]               # колонок не більше, ніж карток
 
 
+def test_split_orders_picks_the_evener_of_the_allowed_orders():
+    heights = [277, 213, 313, 151, 317, 313, 330, 162]                      # справжні картки налаштувань
+    sound_last = (0, 1, 2, 4, 5, 6, 3, 7)
+    groups = core.split_orders(heights, [range(8), sound_last], 3)
+    assert [i for g in groups for i in g] == list(sound_last)              # «Звук» не лишився сам у колонці
+    assert core.split_orders(heights, [range(8)], 4) == core.split_balanced(heights, 4)
+
+
 def test_main_layout_follows_screen_width():
     assert core.main_layout(2520)["columns"] == 4
     assert core.main_layout(1240)["columns"] == 3

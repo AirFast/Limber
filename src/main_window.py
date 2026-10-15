@@ -11,7 +11,7 @@ import i18n
 import system
 from core import (APP_NAME, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats, average_minute, completion_rate,
                   current_stretch, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity,
-                  restore_manual_water, save_config, setting_value, slider_position, split_balanced,
+                  restore_manual_water, save_config, setting_value, slider_position, split_orders,
                   water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
@@ -947,11 +947,14 @@ class MainWindow:
     # налаштування
 
     def build_settings_page(self, parent):
-        """Картки в логічному порядку: перерви → довгі перерви → відкладання й пауза → вода → їжа →
-        кінець дня → звук → інше. Колонок стільки, скільки вміщує екран; картки заповнюють їх по черзі
-        згори вниз, межі підібрані так, щоб колонки були якомога рівнішими, а решту висоти картки
-        колонки ділять порівну — усі колонки закінчуються на одній лінії. «Перегляд» — дія, а не
-        налаштування: окремим рядком на всю ширину внизу."""
+        """Картки за темами: спершу перерви (міні → довгі → відкладання й пауза), потім день
+        (робочий день → їжа → вода), а «Звук» — або наприкінці перерв (сигнал на початку й наприкінці
+        перерви), або поруч з «Іншим»: що з цього дає рівніші колонки. Колонок стільки, скільки вміщує
+        екран; картки заповнюють їх по черзі згори вниз, межі підібрані так, щоб колонки були якомога
+        рівнішими, а решту висоти картки колонки ділять порівну — усі колонки закінчуються на одній лінії.
+        У чотири колонки виходить логічно й по рядках: зверху — головні картки тем (перерви, відкладання,
+        робочий день, вода), під ними — їхні доповнення. «Спробувати» — у заголовку картки, поруч із тим,
+        що показує перегляд."""
         page = tk.Frame(parent, bg=C["bg"])
         count = self.layout["columns"]
         # Колонки — раніше за картки: картки кладемо в них через pack(in_=…), а показується лише те,
@@ -961,8 +964,8 @@ class MainWindow:
             column.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == count - 1 else 7))
             page.columnconfigure(i, weight=1, uniform="settings")
 
-        def sliders(title, keys):
-            box = card(page, title)
+        def sliders(title, keys, demo=None):
+            box = card(page, title, (t("preview_try"), demo) if demo else None)
             for key in keys:
                 self.add_slider(box, key)
             return box
@@ -970,19 +973,19 @@ class MainWindow:
         def toggle(box, text, key, **pack):
             Toggle(box, text, self.cfg[key], lambda v: self.set_setting(key, v)).pack(fill="x", **pack)
 
-        breaks = sliders(t("card_breaks"), ("mini_interval_min", "mini_duration_sec", "intensity"))
+        breaks = sliders(t("card_breaks"), ("mini_interval_min", "mini_duration_sec", "intensity"),
+                         lambda: self.show_demo_break("mini"))
         toggle(breaks, t("group_buttons_toggle"), "group_buttons", pady=(2, 0))
-        long_box = sliders(t("card_long"), ("long_every", "long_duration_min"))
+        long_box = sliders(t("card_long"), ("long_every", "long_duration_min"), lambda: self.show_demo_break("long"))
         toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(2, 0))
         postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
 
-        water = card(page, t("card_water"))
-        toggle(water, t("water_toggle"), "water_enabled", pady=(0, 8))
-        self.build_water_profile(water)
-        meals = self.build_meals_card(page)
+        sound = card(page, t("card_sound"))
+        toggle(sound, t("sound_toggle"), "sound", pady=(0, 8))
+        self.add_sound_slider(sound)
 
         # «Робочий день»: дні, початок, кінець і ліміт роботи
-        day_end = card(page, t("card_day_end"))
+        day_end = card(page, t("card_day_end"), (t("preview_try"), lambda: self.show_day_end(demo=True)))
         self.build_workdays(day_end)
         self.add_slider(day_end, "workday_start")
         lo, hi, step, fmt = SLIDERS["day_end_at"]
@@ -993,14 +996,19 @@ class MainWindow:
             self.set_setting("day_end_enabled", value)
             day_end_slider.set_enabled(value)
 
-        Toggle(day_end, t("day_end_toggle"), self.cfg["day_end_enabled"], toggle_day_end).pack(fill="x", pady=(0, 6))
+        # Як у «Їжі»: перемикач нагадування — у рядку повзунка, вимкнене — приглушене
+        day_end_slider.label.configure(fg=C["text"], font=font(11))
+        Toggle(day_end_slider.head, None, self.cfg["day_end_enabled"], toggle_day_end).pack(
+            side="right", padx=(12, 0), before=day_end_slider.value_label)
         day_end_slider.pack(fill="x", pady=(0, 10))
         day_end_slider.set_enabled(self.cfg["day_end_enabled"])
         self.add_slider(day_end, "max_work_hours")
 
-        sound = card(page, t("card_sound"))
-        toggle(sound, t("sound_toggle"), "sound", pady=(0, 8))
-        self.add_sound_slider(sound)
+        meals = self.build_meals_card(page)
+
+        water = card(page, t("card_water"), (t("preview_try"), lambda: self.show_water(demo=True)))
+        toggle(water, t("water_toggle"), "water_enabled", pady=(0, 8))
+        self.build_water_profile(water)
 
         other = card(page, t("card_other"))
         self.build_language_switch(other).pack(fill="x", pady=(0, 6))
@@ -1008,49 +1016,32 @@ class MainWindow:
                self.set_autostart_setting).pack(fill="x", pady=4)
         toggle(other, t("updates_toggle"), "check_updates", pady=4)
 
-        cards = [breaks, long_box, postpone, water, meals, day_end, sound, other]
+        cards = [breaks, long_box, postpone, sound, day_end, meals, water, other]
+        orders = [range(8), (0, 1, 2, 4, 5, 6, 3, 7)]  # «Звук» — після перерв або перед «Іншим»
         page.update_idletasks()
-        for column, group in zip(columns, split_balanced([c.winfo_reqheight() for c in cards], count)):
+        for column, group in zip(columns, split_orders([c.winfo_reqheight() for c in cards], orders, count)):
             for j, index in enumerate(group):
                 # expand: коротша колонка розтягує свої картки до висоти найвищої
                 cards[index].pack(in_=column, fill="both", expand=True, pady=(0 if j == 0 else 14, 0))
-
-        # «Перегляд» — рядок на всю ширину: підказка й п'ять кнопок поруч
-        preview = card(page)
-        preview.grid(row=1, column=0, columnspan=count, sticky="ew", pady=(14, 0))
-        head = tk.Frame(preview, bg=C["card"])
-        head.pack(side="left", fill="y", padx=(0, 16))
-        tk.Label(head, text=t("card_preview").upper(), bg=C["card"], fg=C["accent"],
-                 font=font(9, "semibold")).pack(anchor="w")
-        tk.Label(head, text=t("preview_hint"), bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
-        row = tk.Frame(preview, bg=C["card"])
-        row.pack(side="left", fill="x", expand=True)
-        previews = ((t("preview_mini"), lambda: self.show_demo_break("mini")),
-                    (t("preview_long"), lambda: self.show_demo_break("long")),
-                    (t("preview_water"), lambda: self.show_water(demo=True)),
-                    (t("preview_meal"), lambda: self.show_meal("lunch", demo=True)),
-                    (t("preview_day_end"), lambda: self.show_day_end(demo=True)))
-        for i, (text, action) in enumerate(previews):
-            btn = flat_button(row, text, action, size=10)
-            btn.configure(padx=4, pady=7)
-            btn.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 3, 0 if i == len(previews) - 1 else 3))
-            row.columnconfigure(i, weight=1, uniform="preview")
         return page
 
     def build_meals_card(self, parent):
-        """Сніданок, обід, вечеря: перемикач і час для кожного; повзунок часу неактивний, поки їжу вимкнено."""
-        box = card(parent, t("card_meals"))
+        """Сніданок, обід, вечеря: кожна — повзунок часу, а назва їжі й перемикач — у його верхньому рядку
+        (компактно, як рядок розкладу); повзунок неактивний, поки їжу вимкнено."""
+        box = card(parent, t("card_meals"), (t("preview_try"), lambda: self.show_meal("lunch", demo=True)))
         for meal in MEALS:
             lo, hi, step, fmt = SLIDERS[f"{meal}_at"]
-            slider = Slider(box, t(f"s_{meal}_at"), lo, hi, step, self.cfg[f"{meal}_at"], fmt,
+            slider = Slider(box, t(f"meal_{meal}"), lo, hi, step, self.cfg[f"{meal}_at"], fmt,
                             lambda v, k=f"{meal}_at": self.set_setting(k, v))
+            slider.label.configure(fg=C["text"], font=font(11))
 
             def toggle(value, meal=meal, slider=slider):
                 self.set_setting(f"{meal}_enabled", value)
                 slider.set_enabled(value)
 
-            Toggle(box, t(f"meal_{meal}"), self.cfg[f"{meal}_enabled"], toggle).pack(fill="x", pady=(0, 2))
-            slider.pack(fill="x", pady=(0, 8))
+            Toggle(slider.head, None, self.cfg[f"{meal}_enabled"], toggle).pack(
+                side="right", padx=(12, 0), before=slider.value_label)
+            slider.pack(fill="x", pady=(0, 10))
             slider.set_enabled(self.cfg[f"{meal}_enabled"])
         self.add_slider(box, "meal_pause_min")
         return box

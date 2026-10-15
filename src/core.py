@@ -599,6 +599,18 @@ def split_balanced(heights, columns, gap=14):
     """Ділить картки (у заданому порядку) на `columns` послідовних груп так, щоб найвища колонка
     була якомога нижчою: порядок читання — згори вниз, зліва направо — зберігається.
     Повертає списки індексів карток для кожної колонки."""
+    return _best_split(heights, columns, gap)[1]
+
+
+def split_orders(heights, orders, columns, gap=14):
+    """Те саме для кількох допустимих порядків карток (усі — логічні за темами): обирає порядок, що
+    дає найнижчі й найрівніші колонки. Повертає групи індексів у `heights`, кожна — в порядку читання."""
+    best = min((_best_split([heights[i] for i in order], columns, gap), order) for order in orders)
+    (_score, groups), order = best
+    return [[order[i] for i in group] for group in groups]
+
+
+def _best_split(heights, columns, gap):
     n = len(heights)
     columns = max(1, min(columns, n))
 
@@ -625,7 +637,7 @@ def split_balanced(heights, columns, gap=14):
             search(end, left - 1, groups + [list(range(start, end))])
 
     search(0, columns, [])
-    return best[1]
+    return best
 
 
 def main_layout(available_width):
