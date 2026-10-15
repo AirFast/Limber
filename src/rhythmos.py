@@ -584,6 +584,8 @@ def run_smoke_test(app, out_dir):
         (lambda: (app.show_demo_break("long"), app.next_break_step()), "workout"),
         (lambda: app.end_break("skip"), None),
         (lambda: app.show_water(demo=True), "water"),
+        # The main window brought forward (opened from the tray, clicked) must not cover a reminder
+        (lambda: (app.main_win.lift(), app.main_win.focus_force()), "water_over_main"),
         (lambda: app.end_water(False), None),
         (lambda: app.show_meal("lunch", demo=True), "meal"),
         (app.close_meal_window, None),

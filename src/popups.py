@@ -83,7 +83,7 @@ class Popups:
             win = tk.Toplevel(self.root, bg=C["bg"])
             win.overrideredirect(True)
             win.geometry(f"{w}x{h}+{x}+{y}")
-            win.attributes("-topmost", True)
+            system.keep_on_top(win)
             win.protocol("WM_DELETE_WINDOW", lambda: None)
             self.break_wins.append(win)
             if demo:
@@ -473,7 +473,6 @@ class Popups:
         win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=color,
                           highlightcolor=color)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
         return win
 
     def place_in_corner(self, win, width, right, bottom):
@@ -482,6 +481,7 @@ class Popups:
         width = max(width, win.winfo_reqwidth())
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
+        system.keep_on_top(win)
 
     def popup_head(self, win, title, color, counter, demo, close):
         """The header of the water or meal window: the title, "2 of 3" on the right and, for a demo, the badge and Esc."""

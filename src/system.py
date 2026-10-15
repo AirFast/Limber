@@ -112,6 +112,17 @@ def activate_app():
             pass
 
 
+def keep_on_top(win):
+    """Keeps a reminder window above the others, the app's own main window included. On macOS Tk sets the
+    window level when the window is mapped, and "-topmost" given to a window not yet on screen is lost
+    there: the main window opened or clicked later covered a water or meal reminder. So it is set again
+    once the window is shown."""
+    win.attributes("-topmost", True)
+    if IS_MAC:
+        win.update_idletasks()
+        win.after_idle(lambda: win.winfo_exists() and win.attributes("-topmost", True))
+
+
 def monitors():
     """[(x, y, w, h, (work area l, t, r, b), primary?)], the primary monitor first."""
     if IS_MAC:
