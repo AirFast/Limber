@@ -1,0 +1,37 @@
+name: macOS versions check
+
+# Manual: the smoke test from source on several macOS versions (window corners, menu bar, layouts differ
+# between releases). Run with: gh workflow run macos-check.yml
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Smoke test from source
+        timeout-minutes: 5
+        run: |
+          sw_vers
+          python3 tools/seed_stats.py "$HOME/Library/Application Support/Rhythmos"
+          python3 tools/smoke_local.py "$PWD/smoke"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-${{ matrix.os }}
+          path: smoke/
+          if-no-files-found: ignore
