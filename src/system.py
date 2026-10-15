@@ -10,6 +10,8 @@ import sys
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
+# Cursor over clickable things: Tk's "hand2" is an old X11 hand on macOS, "pointinghand" is the native one
+HAND = "pointinghand" if IS_MAC else "hand2"
 
 APP_NAME = "Rhythmos"
 APP_ID = "Rhythmos.BreakReminder"            # Windows: AppUserModelID for our own taskbar icon

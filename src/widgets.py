@@ -7,7 +7,7 @@ from PIL import ImageTk
 
 from graphics import C, lighten, rgba, smooth_image
 from i18n import t
-from system import font
+from system import HAND, font
 
 
 def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, image=None):
@@ -16,9 +16,9 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
     fg = fg or C["text"]
     if image:
         # In Tk padx is also the gap between text and image, so the button is built from two Labels
-        btn = tk.Frame(parent, bg=bg, padx=22, pady=10, cursor="hand2")
-        parts = [tk.Label(btn, text=text, bg=bg, fg=fg, font=font(size), cursor="hand2"),
-                 tk.Label(btn, image=image, bg=bg, cursor="hand2")]
+        btn = tk.Frame(parent, bg=bg, padx=22, pady=10, cursor=HAND)
+        parts = [tk.Label(btn, text=text, bg=bg, fg=fg, font=font(size), cursor=HAND),
+                 tk.Label(btn, image=image, bg=bg, cursor=HAND)]
         parts[0].pack(side="left")
         parts[1].pack(side="left", padx=(7, 0))
         btn.image = image
@@ -34,7 +34,7 @@ def flat_button(parent, text, command, bg=None, fg=None, size=13, hover=None, im
         return btn
     # A Label, not tk.Button: on macOS a Tk button is always system white and ignores colours
     btn = tk.Label(parent, text=text, bg=bg, fg=fg, disabledforeground=C["dim"],
-                   padx=22, pady=10, font=font(size), cursor="hand2")
+                   padx=22, pady=10, font=font(size), cursor=HAND)
     btn.bind("<Button-1>", lambda e: command() if btn["state"] == "normal" else None)
     btn.bind("<Enter>", lambda e: btn.configure(bg=hover) if btn["state"] == "normal" else None)
     btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
@@ -100,7 +100,7 @@ class Slider(tk.Frame):
                                     font=font(11, "semibold"))
         self.value_label.pack(side="right")
         # Explicit small width: otherwise the Canvas asks for ~380 px and widens the settings columns
-        self.canvas = tk.Canvas(self, width=160, height=26, bg=bg, highlightthickness=0, cursor="hand2")
+        self.canvas = tk.Canvas(self, width=160, height=26, bg=bg, highlightthickness=0, cursor=HAND)
         self.canvas.pack(fill="x", pady=(TIGHT, 0))
         self.canvas.bind("<Configure>", lambda e: self.draw())
         self.canvas.bind("<Button-1>", self.drag)
@@ -133,7 +133,7 @@ class Slider(tk.Frame):
         """A locked slider only shows the value (for example, one computed from the water profile)."""
         if enabled != self.enabled:
             self.enabled = enabled
-            self.canvas.configure(cursor="hand2" if enabled else "arrow")
+            self.canvas.configure(cursor=HAND if enabled else "arrow")
             self.value_label.configure(fg=C["text"] if enabled else C["muted"])
             self.draw()
 
@@ -223,15 +223,15 @@ class Toggle(tk.Frame):
 
     def __init__(self, parent, text, value, on_change):
         bg = parent["bg"]
-        super().__init__(parent, bg=bg, cursor="hand2")
+        super().__init__(parent, bg=bg, cursor=HAND)
         self.value, self.on_change = value, on_change
         # The toggle is packed right first, the label takes the rest and wraps: in a narrow column
         # a long label would otherwise push the toggle past the card edge
-        self.canvas = tk.Canvas(self, width=46, height=24, bg=bg, highlightthickness=0, cursor="hand2")
+        self.canvas = tk.Canvas(self, width=46, height=24, bg=bg, highlightthickness=0, cursor=HAND)
         self.canvas.pack(side="right", padx=(8, 0) if text is not None else 0)
         widgets = [self, self.canvas]
         if text is not None:
-            label = wrap_to_width(tk.Label(self, text=text, bg=bg, fg=C["text"], font=font(11), cursor="hand2",
+            label = wrap_to_width(tk.Label(self, text=text, bg=bg, fg=C["text"], font=font(11), cursor=HAND,
                                            anchor="w", justify="left", wraplength=180))
             label.pack(side="left", fill="x", expand=True)
             widgets.append(label)

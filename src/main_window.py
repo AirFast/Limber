@@ -17,7 +17,7 @@ from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
 from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
                   fmt_volume, t)
-from system import font
+from system import HAND, font
 from widgets import CARD, HEAD_GAP, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
 
@@ -69,7 +69,7 @@ class MainWindow:
         self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=font(10))
         self.w["saved"].pack(side="left", padx=4 * UNIT, pady=(2 * UNIT, 0))
         self.w["update"] = tk.Label(header, text="", bg=C["bg"], fg=C["water"], font=font(10, "semibold"),
-                                    cursor="hand2")
+                                    cursor=HAND)
         self.w["update"].pack(side="left", pady=(2 * UNIT, 0))
         self.w["update"].bind("<Button-1>", lambda e: self.start_update())
         tabs = tk.Frame(header, bg=C["panel"])
@@ -88,16 +88,25 @@ class MainWindow:
             page = builder(area.inner)
             page.pack(fill="both", expand=True)
             self.pages[key], self.page_frames[key] = area, page
-            btn = tk.Label(tabs, text=t(f"tab_{key}"), font=font(11), padx=16, pady=6, cursor="hand2")
+            btn = tk.Label(tabs, text=t(f"tab_{key}"), font=font(11), padx=16, pady=6, cursor=HAND)
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, k=key: self.show_page(k))
             self.tab_buttons[key] = btn
         win.bind("<MouseWheel>", self.on_main_wheel)
+        # No win.update() here: on macOS it could keep servicing redraw events and never return, leaving
+        # the window with no tab chosen and no content (every reopen nested another such update)
         self.fit_main_window(header, work)
-        win.deiconify()
-        win.update()
-        system.style_window(win)  # dark title bar, for the already shown window
         self.show_page("status")
+        win.deiconify()
+        win.update_idletasks()
+        win.after(50, lambda: self.main_shown(win))
+
+    def main_shown(self, win):
+        """Once the window is on screen: the dark title bar and the page laid out for the real size."""
+        if win is not self.main_win:  # closed meanwhile
+            return
+        system.style_window(win)
+        self.show_page(self.current_page or "status")
 
     def work_area(self):
         return system.work_area(self.root)
@@ -225,7 +234,7 @@ class MainWindow:
         days.pack(fill="x", pady=(0, HEAD_GAP))
         self.w["day_chips"] = []
         for back in range(STATUS_DAYS - 1, -1, -1):
-            chip = tk.Label(days, font=font(9), padx=4, pady=2, cursor="hand2")
+            chip = tk.Label(days, font=font(9), padx=4, pady=2, cursor=HAND)
             chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             chip.bind("<Button-1>", lambda e, b=back: self.set_status_day(b))
             self.w["day_chips"].append((back, chip))
@@ -323,7 +332,7 @@ class MainWindow:
         # Eaten can't be undone: only plates not yet eaten are clickable
         for i, (meal, state) in enumerate(zip(enabled, states)):
             done = state == "done"
-            cursor = "arrow" if done else "hand2"
+            cursor = "arrow" if done else HAND
             cell = tk.Frame(frame, bg=C["card"], cursor=cursor)
             cell.grid(row=0, column=i, padx=(0, 4 * UNIT))
             plate = tk.Label(cell, image=plate_image(30, state, C["card"]), bg=C["card"], cursor=cursor)
@@ -764,16 +773,16 @@ class MainWindow:
         segments = tk.Frame(head, bg=C["panel"])
         segments.pack(side="right")
         # Export all statistics to CSV: a link next to the period switch
-        export = tk.Label(head, text=t("export_link"), bg=C["card"], fg=C["accent"], font=font(9), cursor="hand2")
+        export = tk.Label(head, text=t("export_link"), bg=C["card"], fg=C["accent"], font=font(9), cursor=HAND)
         export.pack(side="right", padx=(0, 4 * UNIT))
         export.bind("<Button-1>", lambda e: self.export_stats())
         self.w["range_buttons"] = {}
         for days in STATS_RANGES:
-            btn = tk.Label(segments, text=t("range_days", n=days), font=font(9), padx=10, pady=2, cursor="hand2")
+            btn = tk.Label(segments, text=t("range_days", n=days), font=font(9), padx=10, pady=2, cursor=HAND)
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, d=days: self.set_stats_range(d))
             self.w["range_buttons"][days] = btn
-        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=262, cursor="hand2")
+        self.w["chart"] = tk.Canvas(chart, bg=C["card"], highlightthickness=0, height=262, cursor=HAND)
         self.w["chart"].pack(fill="both", expand=True)
         self.w["chart"].bind("<Motion>", self.on_chart_motion)
         self.w["chart"].bind("<Leave>", lambda e: self.highlight_day(None))
@@ -1125,7 +1134,7 @@ class MainWindow:
             paint()
 
         for day, name in enumerate(t("weekdays").split()):
-            chip = tk.Label(segments, text=name, font=font(10), padx=4, pady=3, cursor="hand2")
+            chip = tk.Label(segments, text=name, font=font(10), padx=4, pady=3, cursor=HAND)
             chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             chip.bind("<Button-1>", lambda e, d=day: flip(d))
             chips[day] = chip
@@ -1139,7 +1148,7 @@ class MainWindow:
         segments.pack(side="right")
         for code, name in i18n.LANGUAGES.items():
             active = code == i18n.get_language()
-            btn = tk.Label(segments, text=name, font=font(10), padx=12, pady=3, cursor="hand2",
+            btn = tk.Label(segments, text=name, font=font(10), padx=12, pady=3, cursor=HAND,
                            bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
             btn.pack(side="left", padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.change_language(c))
@@ -1153,7 +1162,7 @@ class MainWindow:
         segments.pack(fill="x", pady=(TIGHT, 2 * UNIT))
         self.w["water_profile"] = {}
         for code in (*WATER_PROFILES, "custom"):
-            btn = tk.Label(segments, text=t(f"water_profile_{code}"), font=font(10), padx=4, pady=3, cursor="hand2")
+            btn = tk.Label(segments, text=t(f"water_profile_{code}"), font=font(10), padx=4, pady=3, cursor=HAND)
             btn.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.set_water_profile(c))
             self.w["water_profile"][code] = btn
@@ -1376,7 +1385,7 @@ class MainWindow:
         for i in range(shown):
             done = i < drunk
             glass = tk.Label(frame, image=glass_image(22, 30, done, C["card"]), bg=C["card"],
-                             cursor="arrow" if done else "hand2")
+                             cursor="arrow" if done else HAND)
             glass.grid(row=i // per_row, column=i % per_row, padx=3, pady=2)
             if not done:
                 glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(n))

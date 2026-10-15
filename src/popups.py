@@ -10,7 +10,7 @@ from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZ
                   single_break_step)
 from graphics import C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, glass_image, plate_image
 from i18n import content, fmt_clock, fmt_minutes, fmt_volume, t
-from system import font
+from system import HAND, font
 from widgets import EDGE, TIGHT, UNIT, demo_badge, flat_button
 
 
@@ -120,7 +120,7 @@ class Popups:
             widgets["chips"] = {}
             for group in (None, *exercises.GROUPS) if self.cfg["group_buttons"] else ():
                 chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=font(10),
-                                padx=12, pady=5, cursor="hand2")
+                                padx=12, pady=5, cursor=HAND)
                 chip.pack(side="left", padx=3)
                 chip.bind("<Button-1>", lambda e, g=group: self.choose_group(g))
                 widgets["chips"][group] = chip
