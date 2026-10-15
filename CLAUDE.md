@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Rhythmos is a break-reminder tray/menu-bar app for Windows and macOS (Apple Silicon), written in Python 3.12 with Tkinter for windows and `pystray` + Pillow for the tray icon. Code is **English only**: new comments, docstrings and identifiers are written in English (older comments are still Ukrainian; translate them when touching that code). Ukrainian stays only in user-facing text (`i18n.py`) and the README. Commits follow Conventional Commits (`feat(macos): …`, `fix: …`, `chore: release x.y.z`).
+Rhythmos is a break-reminder tray/menu-bar app for Windows and macOS (Apple Silicon), written in Python 3.12 with Tkinter for windows and `pystray` + Pillow for the tray icon. Code and everything around it (comments, docstrings, identifiers, log messages, tests, build scripts, CI) is **English only**. Ukrainian appears only as localized user-facing text: `i18n.py`, the exercise texts in `exercises.py`, the installer's Ukrainian messages, and the README. Commits follow Conventional Commits (`feat(macos): …`, `fix: …`, `chore: release x.y.z`).
 
 ## Commands
 

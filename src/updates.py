@@ -1,4 +1,4 @@
-"""Перевірка нових версій Rhythmos на GitHub Releases і автоматичне оновлення."""
+"""Checking GitHub Releases for new Rhythmos versions, and automatic updates."""
 import hashlib
 import json
 import os
@@ -16,7 +16,7 @@ LATEST_PAGE = f"https://github.com/{REPO}/releases/latest"
 
 
 def parse_version(text):
-    """'v1.10.2' → (1, 10, 2). Порівнювати версії як рядки не можна: '1.10' < '1.9'."""
+    """'v1.10.2' → (1, 10, 2). Versions can't be compared as strings: '1.10' < '1.9'."""
     parts = [int(n) for n in re.findall(r"\d+", text or "")[:3]]
     return tuple(parts + [0] * (3 - len(parts)))
 
@@ -26,7 +26,7 @@ def is_newer(candidate, current):
 
 
 def _ssl_context():
-    # Зібрана програма на macOS не бачить системних сертифікатів — беремо їх із certifi
+    # The built app on macOS doesn't see the system certificates, so take them from certifi
     try:
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
@@ -36,8 +36,8 @@ def _ssl_context():
 
 def _open(url, timeout, accept="application/vnd.github+json"):
     headers = {"Accept": accept, "User-Agent": "Rhythmos-updater"}
-    # Лише для API й лише на сервері збирання (GitHub Actions): без токена спільні IP раннерів
-    # швидко вичерпують ліміт запитів. У користувачів цієї змінної немає.
+    # Only for the API and only on the build server (GitHub Actions): without a token the runners' shared IPs
+    # quickly exhaust the rate limit. Users don't have this variable.
     token = os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         headers["Authorization"] = f"Bearer {token}"
@@ -46,8 +46,8 @@ def _open(url, timeout, accept="application/vnd.github+json"):
 
 
 def fetch_latest(timeout=15):
-    """(версія, адреса сторінки релізу, файли релізу) або None, якщо перевірити не вдалося.
-    Файл релізу: {"name", "url", "size", "sha256"}."""
+    """(version, release page URL, release files), or None if the check failed.
+    A release file: {"name", "url", "size", "sha256"}."""
     try:
         with _open(LATEST_API, timeout) as response:
             data = json.load(response)
@@ -69,7 +69,7 @@ def fetch_latest(timeout=15):
 
 
 def pick_asset(assets):
-    """Файл оновлення для цієї системи: інсталятор Windows або dmg під архітектуру Mac."""
+    """The update file for this system: the Windows installer or the dmg for the Mac's architecture."""
     for asset in assets:
         name = asset["name"]
         if sys.platform == "win32" and name.startswith("RhythmosSetup-") and name.endswith(".exe"):
@@ -80,13 +80,13 @@ def pick_asset(assets):
 
 
 def can_self_update():
-    """Оновлюється лише зібрана програма; запуск із коду оновлюють через git."""
+    """Only the built app updates itself; a run from source is updated with git."""
     return getattr(sys, "frozen", False) and sys.platform in ("win32", "darwin")
 
 
 def download(asset, progress=None, timeout=60):
-    """Завантажує файл у тимчасову папку й перевіряє розмір та SHA-256. Повертає шлях.
-    progress(відсоток) викликається з потоку завантаження."""
+    """Downloads the file to a temporary folder and verifies its size and SHA-256. Returns the path.
+    progress(percent) is called from the download thread."""
     folder = tempfile.mkdtemp(prefix="rhythmos-update-")
     path = os.path.join(folder, asset["name"])
     digest = hashlib.sha256()
@@ -109,18 +109,18 @@ def download(asset, progress=None, timeout=60):
 
 
 def _clean_env():
-    """Середовище для інсталятора й нової версії — без тестових і службових змінних,
-    інакше перезапущена програма знову «вдавала б» стару версію."""
+    """The environment for the installer and the new version, without test and service variables,
+    otherwise the restarted app would "pretend" to be the old version again."""
     return {k: v for k, v in os.environ.items()
             if k not in ("RHYTHMOS_VERSION_OVERRIDE", "GITHUB_TOKEN")}
 
 
 def install(path, autostart=True, language="uk"):
-    """Запускає встановлення окремим процесом. Після виклику програма має завершитися:
-    на Windows інсталятор замінить файли й сам запустить нову версію,
-    на macOS скрипт дочекається виходу, замінить Rhythmos.app і відкриє його.
-    autostart і language передаються явно: тихий інсталятор не завжди пам'ятає
-    попередній вибір і без цього міг би вимкнути автозапуск чи змінити мову."""
+    """Starts the installation as a separate process. After the call the app must exit:
+    on Windows the installer replaces the files and starts the new version itself,
+    on macOS a script waits for the exit, replaces Rhythmos.app and opens it.
+    autostart and language are passed explicitly: a silent installer doesn't always remember
+    the previous choice and without this could turn autostart off or change the language."""
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         args = [path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
@@ -132,22 +132,22 @@ def install(path, autostart=True, language="uk"):
 
 
 def _app_bundle():
-    """…/Rhythmos.app для зібраної програми (sys.executable = …/Rhythmos.app/Contents/MacOS/Rhythmos)."""
+    """…/Rhythmos.app for the built app (sys.executable = …/Rhythmos.app/Contents/MacOS/Rhythmos)."""
     return os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
 
 
 _MAC_SCRIPT = r"""#!/bin/bash
-# Оновлення Rhythmos: чекаємо завершення старої версії, замінюємо Rhythmos.app з dmg і відкриваємо.
+# Rhythmos update: wait for the old version to exit, replace Rhythmos.app from the dmg and open it.
 PID="$1"; DMG="$2"; APP="$3"
 while kill -0 "$PID" 2>/dev/null; do sleep 0.5; done
 MNT="$(mktemp -d)"
 hdiutil attach -nobrowse -quiet -mountpoint "$MNT" "$DMG" || exit 1
-SRC="$(ls -d "$MNT"/*.app | head -n 1)"   # не прив'язуємося до назви: програма вже раз перейменовувалась
+SRC="$(ls -d "$MNT"/*.app | head -n 1)"   # don't rely on the name: the app was renamed once
 rm -rf "$APP.old"
 if [ -n "$SRC" ] && mv "$APP" "$APP.old" && ditto "$SRC" "$APP"; then
     rm -rf "$APP.old"
 else
-    rm -rf "$APP"; mv "$APP.old" "$APP"      # не вдалося — повертаємо стару версію
+    rm -rf "$APP"; mv "$APP.old" "$APP"      # failed: restore the old version
 fi
 hdiutil detach -quiet "$MNT"
 rm -f "$DMG"

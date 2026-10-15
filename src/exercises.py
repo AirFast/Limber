@@ -1,10 +1,10 @@
-"""Бібліотека вправ Rhythmos. Кожна вправа описана одразу двома мовами й має групу м'язів.
+"""The Rhythmos exercise library. Each exercise is described in both languages and has a muscle group.
 
-Запис: (вид, група, рівень, (назва_uk, опис_uk), (назва_en, опис_en))
-  вид:    mini — міні-перерва (сидячи, без підготовки)
-          active — коротка вправа для тіла на міні-перерві (рівень інтенсивності 2+)
-          long — довга перерва без тренування: опис — список кроків
-          workout — вправа інтервального тренування; рівень 1–3
+Entry: (kind, group, level, (title_uk, text_uk), (title_en, text_en))
+  kind:   mini: a mini break (seated, no preparation)
+          active: a short body exercise on a mini break (intensity level 2+)
+          long: a long break without a workout; the text is a list of steps
+          workout: an interval workout exercise; level 1–3
 """
 import random
 
@@ -13,7 +13,7 @@ import i18n
 GROUPS = ("eyes", "neck", "back", "arms", "legs", "body")
 
 EXERCISES = [
-    # ---------- міні-перерви ----------
+    # ---------- mini breaks ----------
     ("mini", "eyes", None, ("Правило 20-20-20", "Знайдіть предмет щонайменше за 6 метрів і дивіться на нього 20 секунд."),
      ("The 20-20-20 rule", "Find something at least 6 metres away and look at it for 20 seconds.")),
     ("mini", "eyes", None, ("Кліпання", "Часто покліпайте 10 секунд, потім заплющіть очі й розслабтеся."),
@@ -82,7 +82,7 @@ EXERCISES = [
     ("mini", "body", None, ("Хвилина тиші", "Заплющіть очі й просто прислухайтеся до звуків довкола."),
      ("A quiet moment", "Close your eyes and simply listen to the sounds around you.")),
 
-    # ---------- активні міні-вправи ----------
+    # ---------- active mini exercises ----------
     ("active", "legs", None, ("10 присідань", "Встаньте й зробіть 10 спокійних присідань. Спина рівна, п'яти на підлозі."),
      ("10 squats", "Stand up and do 10 easy squats. Keep your back straight and heels down.")),
     ("active", "legs", None, ("Підйоми на носки", "Встаньте й 20 разів підніміться на носки, повільно опускаючись."),
@@ -100,7 +100,7 @@ EXERCISES = [
     ("active", "body", None, ("Пройдіться", "Встаньте й пройдіться кімнатою — сидіння теж треба перебивати."),
      ("Take a walk", "Get up and walk around the room — long sitting needs breaking up too.")),
 
-    # ---------- довга перерва без тренування ----------
+    # ---------- long break without a workout ----------
     ("long", "eyes", None, ("Відпочинок для очей", ["Відведіть погляд від екрана й подивіться вдалину — 30 секунд.",
                                                      "Часто покліпайте 10 секунд.",
                                                      "Пальмінг: теплі долоні на заплющені очі на хвилину.",
@@ -147,7 +147,7 @@ EXERCISES = [
                        "Lean forward until you feel a gentle stretch in your chest — 20 seconds.",
                        "Repeat 3 times, breathing deeply."])),
 
-    # ---------- тренування: рівень 1 (легко) ----------
+    # ---------- workout: level 1 (easy) ----------
     ("workout", "neck", 1, ("Кола плечима", "Великі повільні кола плечима: половину часу вперед, половину — назад."),
      ("Shoulder circles", "Big slow shoulder circles: half the time forwards, half backwards.")),
     ("workout", "neck", 1, ("Розтяжка шиї", "Повільно нахиляйте голову вперед і в боки, затримуючись на 5 секунд."),
@@ -171,7 +171,7 @@ EXERCISES = [
     ("workout", "body", 1, ("Ходьба на місці", "Крокуйте на місці в спокійному темпі, розмахуючи руками."),
      ("March on the spot", "March on the spot at an easy pace, swinging your arms.")),
 
-    # ---------- тренування: рівень 2 (середньо) ----------
+    # ---------- workout: level 2 (moderate) ----------
     ("workout", "legs", 2, ("Присідання", "Ноги на ширині плечей, сідайте назад, ніби на стілець. Спина рівна."),
      ("Squats", "Feet shoulder-width apart, sit back as if onto a chair. Keep your back straight.")),
     ("workout", "legs", 2, ("Випади на місці", "Крок уперед, обидва коліна під кутом 90°. Чергуйте ноги."),
@@ -193,7 +193,7 @@ EXERCISES = [
     ("workout", "body", 2, ("Високі коліна", "Крокуйте на місці, піднімаючи коліна до рівня стегна."),
      ("High knees", "March on the spot, lifting your knees to hip height.")),
 
-    # ---------- тренування: рівень 3 (енергійно) ----------
+    # ---------- workout: level 3 (vigorous) ----------
     ("workout", "body", 3, ("Джампінг-джек", "Стрибок — ноги ширше, руки над головою; стрибок назад. У швидкому темпі."),
      ("Jumping jacks", "Jump feet apart with arms overhead, then jump back. Keep a quick pace.")),
     ("workout", "body", 3, ("Біг на місці", "Швидко, коліна до рівня пояса, активно працюйте руками."),
@@ -233,7 +233,7 @@ def _select(kind, group=None, levels=None):
 
 
 def mini_pool(level, group=None):
-    """Міні-перерва: спокійні вправи; на рівні 2+ — інколи коротка вправа для тіла."""
+    """A mini break: calm exercises; at level 2+ sometimes a short body exercise."""
     if group:
         return _select("mini", group) + (_select("active", group) if level >= 2 else [])
     if level >= 2 and random.random() < 0.4:
@@ -246,8 +246,8 @@ def long_pool(group=None):
 
 
 def workout_pool(level, group=None):
-    """Вправи тренування: свій рівень і рівнем нижче; для групи — з будь-якого рівня,
-    а для очей (у тренуванні їх немає) — міні-вправи для очей."""
+    """Workout exercises: the own level and one below; for a group, from any level,
+    and for the eyes (the workout has none) the mini eye exercises."""
     levels = {level, level - 1}
     pool = _select("workout", group, levels)
     if group and not pool:

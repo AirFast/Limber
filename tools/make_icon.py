@@ -1,4 +1,4 @@
-"""Генерує assets/rhythmos.ico з тієї ж функції, якою малює іконку сама програма."""
+"""Generates assets/rhythmos.ico with the same function the app uses to draw its icon."""
 import os
 import sys
 

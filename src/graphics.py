@@ -1,5 +1,5 @@
-"""Палітра й малювання через Pillow: іконки, кільце прогресу, склянки, тарілки, кружечки.
-Tk не згладжує фігури, тож усе малюємо у збільшеному масштабі й зменшуємо (smooth_image)."""
+"""The palette and drawing with Pillow: icons, the progress ring, glasses, plates, dots.
+Tk doesn't anti-alias shapes, so everything is drawn supersampled and scaled down (smooth_image)."""
 
 import math
 import os
@@ -10,7 +10,7 @@ from core import DATA_DIR, ICON_PATH
 
 
 C = {
-    # Весняна зелень під іконку-листок; темне тло — з легким зеленим відтінком, вода — синя
+    # Spring green to match the leaf icon; a dark background with a slight green tint, blue water
     "bg": "#14261c",
     "card": "#1a3124",
     "panel": "#1f3a2b",
@@ -25,7 +25,7 @@ C = {
     "dim": "#5f7b65",
     "water": "#4aa3df",
     "on_water": "#0b2233",
-    "meal": "#f2a65a",       # їжа — теплий бурштиновий, щоб не плутати з водою й перервами
+    "meal": "#f2a65a",       # meals: warm amber, so they're not confused with water and breaks
     "on_meal": "#2e1803",
 }
 
@@ -38,7 +38,7 @@ def rgba(color):
 
 
 def smooth_image(width, height, paint, bg=None):
-    """Малює у збільшеному масштабі й зменшує — Tk сам згладжування не вміє."""
+    """Draws supersampled and scales down, since Tk can't anti-alias by itself."""
     s = SUPERSAMPLE
     img = Image.new("RGBA", (width * s, height * s), rgba(bg) if bg else (0, 0, 0, 0))
     paint(ImageDraw.Draw(img), s)
@@ -46,7 +46,7 @@ def smooth_image(width, height, paint, bg=None):
 
 
 def draw_progress_ring(d, s, size, pad, thickness, fraction, track, color):
-    """Кільце прогресу із заокругленими кінцями дуги (координати — у масштабі s)."""
+    """A progress ring with rounded arc ends (coordinates at scale s)."""
     box = (pad * s, pad * s, (size - pad) * s, (size - pad) * s)
     d.ellipse(box, outline=track, width=thickness * s)
     fraction = min(max(fraction, 0), 1)
@@ -64,7 +64,7 @@ def draw_progress_ring(d, s, size, pad, thickness, fraction, track, color):
 
 
 def make_icon(progress, paused):
-    """Кільце, що заповнюється в міру наближення перерви."""
+    """A ring that fills up as the break approaches."""
     color = rgba(C["dim"]) if paused else rgba(C["accent"])
 
     def paint(d, s):
@@ -88,7 +88,7 @@ def _vertical_gradient(width, height, top, bottom):
 
 
 class _Leaf:
-    """Геометрія листка вздовж осі base→tip: контур, хвиляста центральна жилка, точки на ній."""
+    """Leaf geometry along the base→tip axis: outline, a wavy midrib, points on it."""
 
     def __init__(self, base, tip, width):
         self.base, self.tip, self.width = base, tip, width
@@ -119,15 +119,15 @@ class _Leaf:
 
 
 def make_app_icon(size=256):
-    """Іконка Rhythmos: листок (здоров'я) з хвилястою жилкою (ритм) на весняному градієнті.
-    Дрібні деталі — бокові жилки, тінь, відблиск — лише у великих розмірах: у 16–32 px вони б розмилися."""
+    """The Rhythmos icon: a leaf (health) with a wavy midrib (rhythm) on a spring gradient.
+    Fine details (side veins, shadow, highlight) only at large sizes: at 16–32 px they would blur."""
     from PIL import ImageFilter
     detailed = size >= 48
     big = size * SUPERSAMPLE
     u = big / 256
 
     background = _vertical_gradient(big, big, (0xb6, 0xec, 0x88), (0x3a, 0xa8, 0x64))
-    if detailed:  # м'який відблиск угорі ліворуч
+    if detailed:  # a soft highlight at the top left
         glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         ImageDraw.Draw(glow).ellipse((-60 * u, -90 * u, 150 * u, 90 * u), fill=(255, 255, 255, 42))
         background.alpha_composite(glow.filter(ImageFilter.GaussianBlur(28 * u)))
@@ -138,7 +138,7 @@ def make_app_icon(size=256):
 
     leaf = _Leaf((76 * u, 184 * u), (198 * u, 62 * u), 58 * u)
     outline = leaf.outline()
-    if detailed:  # тінь під листком
+    if detailed:  # a shadow under the leaf
         shadow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).polygon([(x + 5 * u, y + 9 * u) for x, y in outline], fill=(18, 88, 48, 120))
         img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(9 * u)))
@@ -149,7 +149,7 @@ def make_app_icon(size=256):
 
     d = ImageDraw.Draw(img)
     white = (255, 255, 255, 255)
-    # черешок — плавно вигнутий
+    # the stem, gently curved
     stem = [leaf.at(0.02), (leaf.base[0] - 10 * u, leaf.base[1] + 14 * u), (leaf.base[0] - 22 * u, leaf.base[1] + 22 * u)]
     stem_width = 10 * u if detailed else 13 * u
     d.line(stem, fill=white, width=int(stem_width), joint="curve")
@@ -158,7 +158,7 @@ def make_app_icon(size=256):
 
     vein_color = (0x5f, 0xbd, 0x67, 255)
     amplitude = 9 * u
-    if detailed:  # бокові жилки від хвилястої центральної до країв, трохи вигнуті до кінчика
+    if detailed:  # side veins from the wavy midrib to the edges, slightly curved towards the tip
         side = (0xb0, 0xe0, 0x9f, 255)
         for pos in (0.26, 0.46, 0.64):
             start = leaf.at(pos, leaf.wave(pos, amplitude))
@@ -172,7 +172,7 @@ def make_app_icon(size=256):
 
 
 def ensure_icon_file():
-    """.ico для панелі завдань і ярликів."""
+    """.ico for the taskbar and shortcuts."""
     if not os.path.exists(ICON_PATH):
         os.makedirs(DATA_DIR, exist_ok=True)
         make_app_icon(256).save(ICON_PATH, sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (40, 40),
@@ -181,22 +181,22 @@ def ensure_icon_file():
 
 
 _glass_cache = {}
-MAX_GLASSES_SHOWN = 24    # більше склянок не малюємо (три ряди)
-GLASSES_PER_ROW = 8       # далі склянки переносяться в наступний ряд
+MAX_GLASSES_SHOWN = 24    # no more glasses are drawn (three rows)
+GLASSES_PER_ROW = 8       # further glasses wrap to the next row
 
 
 def blend(color, other, amount):
-    """Змішування двох кольорів #rrggbb: amount = 0 → color, 1 → other."""
+    """Mixes two #rrggbb colours: amount = 0 → color, 1 → other."""
     a = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
     b = [int(other[i:i + 2], 16) for i in (1, 3, 5)]
     return "#%02x%02x%02x" % tuple(round(x + (y - x) * amount) for x, y in zip(a, b))
 
 
 def glass_picture(width, height, filled, bg):
-    """Абстрактна склянка з рідиною: хвиляста поверхня й відблиск на гребені.
-    filled: True — випита (синя вода й синій контур), False — ще ні (сіра рідина й контур);
-    при наведенні — що зробить клік: "add" — додасться (синій контур, бліда вода),
-    "remove" — зніметься (сірий контур, ледь помітна вода)."""
+    """An abstract glass with liquid: a wavy surface and a highlight on the crest.
+    filled: True means drunk (blue water and outline), False means not yet (grey liquid and outline);
+    on hover, what a click will do: "add" adds it (blue outline, pale water),
+    "remove" removes it (grey outline, barely visible water)."""
     if filled == "add":
         edge, liquid, shine = lighten(C["water"], 0.35), blend(C["water"], bg, 0.6), blend(C["water"], bg, 0.3)
     elif filled == "remove":
@@ -216,7 +216,7 @@ def glass_picture(width, height, filled, bg):
         def wall(y, x_top, x_bottom):
             return x_top + (x_bottom - x_top) * (y - top) / (bottom - top)
 
-        # Поверхня рідини — синусоїда трохи більш ніж на півтора періоди
+        # The liquid surface: a sine wave of a bit more than one and a half periods
         level = top + (bottom - top) * 0.3
         amplitude = h * 0.045
         inset = stroke * 0.55
@@ -231,7 +231,7 @@ def glass_picture(width, height, filled, bg):
         d.line([(left_top, top), (left_bottom, bottom), (right_bottom, bottom), (right_top, top)],
                fill=rgba(edge), width=int(stroke), joint="curve")
         r = stroke / 2
-        for x in (left_top, right_top):  # заокруглені верхні краї
+        for x in (left_top, right_top):  # rounded top edges
             d.ellipse((x - r, top - r, x + r, top + r), fill=rgba(edge))
 
     return smooth_image(width, height, paint, bg)
@@ -240,15 +240,15 @@ def glass_picture(width, height, filled, bg):
 _dot_cache = {}
 _plate_cache = {}
 
-# Стан їжі (Scheduler.meal_state) → як малювати тарілку у віконці їжі
+# Meal state (Scheduler.meal_state) → how to draw the plate in the meal window
 PLATE_STATES = {"eat": "done", "skip": "skip", "missed": "skip", "upcoming": "later", "snoozed": "later",
                 "eating": "now", "open": "now", "due": "now"}
 
 
 def plate_picture(size, state, bg):
-    """Тарілка згори (два кола). "done" — з'їдено (заповнена), "now" — час їсти (яскравий контур),
-    "later" — ще буде (сірий контур), "skip" — пропущено (сірий контур, перекреслено);
-    при наведенні на «Стані»: "add" — клік позначить з'їденою (бліда заливка), "remove" — зніме позначку."""
+    """A plate seen from above (two circles). "done": eaten (filled), "now": time to eat (bright outline),
+    "later": still to come (grey outline), "skip": skipped (grey outline, crossed out);
+    on hover on Status: "add" means a click marks it eaten (pale fill), "remove" removes the mark."""
     meal = C["meal"]
 
     def paint(d, s):
@@ -287,8 +287,8 @@ def plate_image(size, state, bg):
 
 
 def dot_image(size, color, filled, bg):
-    """Згладжений кружечок для canvas (create_oval у Tk — з «драбинкою» по краю):
-    заповнений або кільце завтовшки ~1,6 px."""
+    """An anti-aliased dot for a canvas (Tk's create_oval has a jagged edge):
+    filled, or a ring ~1.6 px thick."""
     key = (size, color, filled, bg)
     if key not in _dot_cache:
         def paint(d, s):
@@ -310,7 +310,7 @@ def glass_image(width, height, filled, bg):
 
 
 def check_mark(size, color):
-    """Згладжена галочка на прозорому тлі."""
+    """An anti-aliased check mark on a transparent background."""
     def paint(d, s):
         width = max(2.0, size * 0.15) * s
         points = [(0.16 * size * s, 0.54 * size * s), (0.40 * size * s, 0.76 * size * s),
@@ -324,8 +324,8 @@ def check_mark(size, color):
 
 
 def lighten(color, amount=0.14):
-    """Колір, світліший на amount — для стану наведення будь-якої кнопки.
-    (Раніше всім кнопкам задавався той самий темний колір наведення, і на бірюзовій
-    «Перерва зараз» темний текст ставав нерозбірливим.)"""
+    """A colour lighter by amount, for the hover state of any button.
+    (All buttons used to get the same dark hover colour, and on the teal
+    "Break now" the dark text became unreadable.)"""
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
     return "#%02x%02x%02x" % tuple(round(c + (255 - c) * amount) for c in (r, g, b))

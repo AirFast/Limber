@@ -1,5 +1,5 @@
-﻿; Інсталятор Rhythmos (Inno Setup 6).
-; Збирання: build.ps1 або вручну: ISCC.exe /DAppVersion=1.0.0 installer\rhythmos.iss
+﻿; Rhythmos installer (Inno Setup 6).
+; Build: build.ps1, or manually: ISCC.exe /DAppVersion=1.0.0 installer\rhythmos.iss
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"
@@ -17,10 +17,10 @@ AppPublisher=Andrew Petryk
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-; Папка встановлення й група в «Пуску» — завжди за назвою програми
+; The install folder and the Start menu group always use the app name
 UsePreviousAppDir=no
 UsePreviousGroup=no
-; Встановлення для поточного користувача — без прав адміністратора
+; Install for the current user, without administrator rights
 PrivilegesRequired=lowest
 OutputDir=..\dist
 OutputBaseFilename=RhythmosSetup-{#AppVersion}
@@ -57,15 +57,15 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--open"; Tasks: desktopicon
 
 [Run]
-; Мова програми — та, яку вибрали в інсталяторі
+; The app language is the one chosen in the installer
 Filename: "{app}\{#AppExe}"; Parameters: "--set-language=uk"; Flags: runhidden waituntilterminated; Languages: ukrainian
 Filename: "{app}\{#AppExe}"; Parameters: "--set-language=en"; Flags: runhidden waituntilterminated; Languages: english
 Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=on"; Flags: runhidden waituntilterminated; Tasks: autostart
-; Вимикаємо автозапуск лише за явним вибором у вікні інсталятора. Тихе встановлення — це
-; автооновлення, і стан галочки там ненадійний: автозапуск не чіпаємо
+; Autostart is turned off only by an explicit choice in the installer window. A silent install is
+; an auto-update, and the checkbox state there is unreliable: autostart is left alone
 Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=off"; Flags: runhidden waituntilterminated; Tasks: not autostart; Check: not WizardSilent
 Filename: "{app}\{#AppExe}"; Parameters: "--open"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
-; Тихе встановлення — це автооновлення з програми: запускаємо нову версію замість старої
+; A silent install is an auto-update from the app: start the new version instead of the old one
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
@@ -73,7 +73,7 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden
 Filename: "{app}\{#AppExe}"; Parameters: "--set-autostart=off"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveAutostart"
 
 [Code]
-// Перед встановленням чи оновленням закриваємо запущену програму, щоб файли можна було замінити
+// Before installing or updating, close the running app so its files can be replaced
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
@@ -82,8 +82,8 @@ begin
   Result := '';
 end;
 
-// Після видалення пропонуємо прибрати й дані користувача (%APPDATA%\Rhythmos).
-// У тихому режимі (/SILENT, /VERYSILENT) дані лишаються.
+// After uninstalling, offer to remove the user's data too (%APPDATA%\Rhythmos).
+// In silent mode (/SILENT, /VERYSILENT) the data stays.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then

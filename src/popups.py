@@ -1,4 +1,4 @@
-"""Вікна поверх роботи: попередження й екран перерви, вода, їжа, кінець дня, сповіщення в куті."""
+"""Windows over the work: the break warning and screen, water, meals, day end, corner notifications."""
 
 import datetime as dt
 import random
@@ -15,13 +15,13 @@ from widgets import EDGE, TIGHT, UNIT, demo_badge, flat_button
 
 
 class Popups:
-    """Частина App: усе, що з'являється поверх інших вікон."""
+    """Part of App: everything that appears over other windows."""
 
-    # --- попередження перед перервою ---
+    # --- warning before a break ---
 
     def show_break_warning(self):
-        """Віконце «Скоро перерва» з живим відліком. Тримається до самого початку перерви;
-        «Відкласти» переносить її (з тим самим лімітом, що й на екрані перерви), «Ок» лише ховає віконце."""
+        """The "Break soon" window with a live countdown. It stays until the break starts;
+        "Postpone" moves the break (with the same limit as on the break screen), "OK" only hides the window."""
         kind = self.sched.next_kind()
         if kind == "long" and self.cfg["workout_enabled"] and self.cfg["long_duration_min"] >= 2:
             title = t("warn_title_workout")
@@ -37,7 +37,7 @@ class Popups:
                         timeout_ms=int(self.sched.remaining * 1000) + 15_000, kind="warning")
 
     def update_break_warning(self):
-        """Щосекунди: оновлює відлік або прибирає віконце, якщо перерва почалась чи програма на паузі."""
+        """Every second: updates the countdown or removes the window if the break started or the app is paused."""
         if self.toast_kind != "warning":
             return
         s = self.sched
@@ -53,7 +53,7 @@ class Popups:
         self.stats.log("break", self.minute(), kind=self.sched.next_kind(), result="postponed", sec=0)
         self.sched.postpone()
 
-    # --- перерва ---
+    # --- break ---
 
     def trigger_break(self):
         if self.break_state:
@@ -62,14 +62,14 @@ class Popups:
         self.show_break(self.sched.next_kind())
 
     def show_demo_break(self, kind):
-        """Перегляд вікна перерви з поточними налаштуваннями — без впливу на таймер і статистику."""
+        """A preview of the break window with the current settings, without touching the timer or statistics."""
         if self.break_state and not self.break_state["demo"]:
             return
         self.show_break(kind, demo=True)
 
     def show_break(self, kind, demo=False):
         if self.toast_kind == "warning" and not demo:
-            self.close_toast()  # перерва почалась — попередження більше не потрібне
+            self.close_toast()  # the break started: the warning isn't needed anymore
         self.close_break_windows()
         steps = build_break(kind, self.cfg)
         multi = len(steps) > 1
@@ -112,7 +112,7 @@ class Popups:
             widgets["text"].pack()
             widgets["timer"].pack(pady=(8 * UNIT, UNIT))
             widgets["info"].pack(pady=(0, 5 * UNIT))
-            # Вибір групи м'язів: замінює поточну (і наступні) вправи
+            # Choosing a muscle group replaces the current (and following) exercises
             chips = tk.Frame(frame, bg=C["bg"])
             chips.pack(pady=(0, 6 * UNIT if self.cfg["group_buttons"] else 2 * UNIT))
             widgets["chips"] = {}
@@ -168,7 +168,7 @@ class Popups:
             widgets["info"].configure(text=info)
 
     def choose_group(self, group):
-        """Кнопка групи м'язів на екрані перерви. Повторне натискання дає іншу вправу тієї ж групи."""
+        """A muscle group button on the break screen. Pressing it again gives another exercise of the same group."""
         state = self.break_state
         if not state:
             return
@@ -179,7 +179,7 @@ class Popups:
             new["secs"] = current["secs"]
             steps[0] = new
             if state["kind"] == "mini":
-                state["left"] = new["secs"]  # нова міні-вправа — на повний час
+                state["left"] = new["secs"]  # a new mini exercise gets the full time
         else:
             regroup_workout(steps, index if current["kind"] == "work" else index + 1, self.cfg["intensity"], group)
             if current["kind"] == "work":
@@ -230,11 +230,11 @@ class Popups:
             if self.main_win:
                 self.main_win.focus_force()
             return
-        # Перерва дійшла до кінця, а людини весь цей час не було — це не «зроблена» перерва, а відсутність
+        # The break ran to the end, but the person was away the whole time: not a "done" break but an absence
         away = result == "done" and system.idle_seconds() >= self.sched.away_after()
         if elapsed and not away:
             self.stats.add("active_sec", elapsed)
-        if not away:  # відсутність журнал запише сам, коли людина повернеться ("back")
+        if not away:  # the log records the absence itself when the person comes back ("back")
             results = {"done": "done", "skip": "skipped", "postpone": "postponed"}
             started = dt.datetime.now() - dt.timedelta(seconds=elapsed)
             self.stats.log("break", self.minute(started), kind=kind, result=results[result], sec=elapsed)
@@ -246,18 +246,18 @@ class Popups:
             self.beep()
         elif result == "skip":
             self.stats.add("skipped")
-            self.sched.finish_break(skipped=True)  # пропущена довга повернеться наступною перервою
+            self.sched.finish_break(skipped=True)  # a skipped long break comes back as the next break
         elif result == "postpone":
             self.stats.add("postponed")
             self.sched.postpone()
 
-    # --- вода ---
+    # --- water ---
 
     def show_water(self, demo=False):
         if self.water_win:
             if not self.water_demo or demo:
                 return
-            self.water_win.destroy()  # справжнє нагадування важливіше за демо
+            self.water_win.destroy()  # a real reminder matters more than a demo
             self.water_win = None
         self.water_demo = demo
         keep = self.kept_toast()
@@ -280,7 +280,7 @@ class Popups:
             tip = random.choice(content("water_tips"))
         tk.Label(win, text=tip, bg=C["panel"], fg=C["text"], font=font(11),
                  wraplength=width - 2 * EDGE - 4, justify="left").pack(anchor="w", padx=EDGE)
-        drank = t(f"drank_{self.cfg['water_profile']}")  # «Випила» / «Випив» / нейтральне «Готово»
+        drank = t(f"drank_{self.cfg['water_profile']}")  # feminine / masculine / neutral "Done"
         self.popup_buttons(win, ((t("later"), lambda: self.end_water(False), False),
                                  (drank, lambda: self.end_water(True), True)), C["water"], C["on_water"])
         self.place_in_corner(win, width, right, bottom)
@@ -289,22 +289,22 @@ class Popups:
             win.focus_force()
         self.beep()
 
-    # --- харчування ---
+    # --- meals ---
 
     def show_meal(self, meal, demo=False):
-        """«Час обідати»: «Йду їсти» ставить перерви й воду на паузу, «Через 15 хв» — нагадає ще раз."""
+        """"Lunch time": "Going to eat" pauses breaks and water, "In 15 min" reminds again."""
         self.show_meal_window(meal, "remind", demo)
 
     def show_meal_over(self):
-        """Пауза на їжу скінчилась — питаємо, чи продовжувати. Без відповіді перерви так і стоять."""
+        """The meal pause is over: ask whether to continue. Without an answer breaks stay stopped."""
         self.show_meal_window(self.sched.eating, "over")
 
     def show_meal_window(self, meal, mode, demo=False):
-        """Віконце їжі за зразком води: тарілки за день, текст, порада й кнопки.
-        mode: "remind" — час їсти, "over" — «Продовжуємо?». Само не зникає: людина могла відійти."""
+        """The meal window, modelled on water: the day's plates, text, a tip and buttons.
+        mode: "remind" means time to eat, "over" means "Continue?". It doesn't close by itself: the person may be away."""
         if self.meal_win:
             if demo and not self.meal_demo:
-                return  # справжнє нагадування важливіше за демо
+                return  # a real reminder matters more than a demo
             self.meal_win.destroy()
             self.meal_win = None
         self.meal_demo = demo
@@ -317,7 +317,7 @@ class Popups:
         title = t(f"meal_title_{meal}") if mode == "remind" else t("meal_over_title")
         self.popup_head(win, title, C["meal"], t("x_of_y", a=meals.index(meal) + 1, b=len(meals)),
                         demo, self.close_meal_window)
-        # Тарілки за день: з'їдено / зараз / ще буде / пропущено — як склянки у воді
+        # The day's plates: eaten / now / still to come / skipped, like glasses for water
         plates = tk.Frame(win, bg=C["panel"])
         plates.pack(anchor="w", padx=EDGE - 2, pady=(2 * UNIT, 3 * UNIT))
         for i, m in enumerate(meals):
@@ -376,7 +376,7 @@ class Popups:
             self.finish_meal()
 
     def go_eat(self):
-        if self.break_state and not self.break_state["demo"]:  # перерва почалась, поки висіло нагадування
+        if self.break_state and not self.break_state["demo"]:  # a break started while the reminder was open
             self.close_break_windows()
             self.sched.finish_break()
         meal = self.sched.meal_open
@@ -386,18 +386,18 @@ class Popups:
         self.icon.update_menu()
 
     def set_meal_eaten(self, meal, eaten):
-        """Позначка «з'їдено» для їжі за сьогодні: з нагадування («Йду їсти») або тарілкою на «Стані»."""
+        """Marks today's meal eaten: from the reminder ("Going to eat") or with the plate on Status."""
         today = self.today()
         now = dt.datetime.now()
         self.stats.set(f"ate_{meal}", int(eaten))
         self.stats.set("meals", sum(self.stats.day(today)[f"ate_{m}"] for m in MEALS))
-        # Коли насправді поїли — на шкалі дня тарілка стоїть у цей момент, а не в запланований
+        # When the meal was actually eaten: the plate on the timeline stands at this moment, not the planned one
         self.stats.set_times(f"ate_{meal}_at", [minute_of_day(now)] if eaten else [])
         if eaten:
             self.stats.log("meal", self.minute(now), replace=("meal",), meal=meal)
         else:
             self.stats.unlog("meal", meal=meal)
-        if self.sched.mark_meal(meal, eaten, now) and not self.meal_demo:  # нагадування більше не потрібне
+        if self.sched.mark_meal(meal, eaten, now) and not self.meal_demo:  # the reminder is no longer needed
             self.close_meal_window()
         self.refresh_main()
 
@@ -405,10 +405,10 @@ class Popups:
         self.sched.finish_meal()
         self.icon.update_menu()
 
-    # --- кінець робочого дня ---
+    # --- end of the workday ---
 
     def show_day_end(self, demo=False):
-        """«Робочий день скінчився» з підсумком дня. «Завершити день» — пауза до ранку."""
+        """"The workday is over" with the day's summary. "Finish the day" pauses until morning."""
         today = self.stats.day(self.today())
         text = t("day_end_text", breaks=today["mini_done"] + today["long_done"], volume=fmt_volume(today["water"]))
         answer = (lambda _answer: None) if demo else self.answer_day_end
@@ -421,12 +421,12 @@ class Popups:
     def answer_day_end(self, answer):
         self.sched.day_end_answered(answer)
         if answer == "finish":
-            self.handle(("pause", None))  # пауза «до ранку» сама запише, коли завершили день
+            self.handle(("pause", None))  # the "until morning" pause records when the day was finished
 
     def show_overwork(self, demo=False):
-        """Сьогоднішній час за комп'ютером дійшов до ліміту (max_work_hours): «Завершити день» чи «Пізніше».
-        Стоїть у куті, як і кінець дня (kind="day_end"), — завершення дня прибирає обидва."""
-        if demo:  # у демо — сам ліміт (чи типові 9 год, якщо його вимкнено)
+        """Today's time at the computer reached the limit (max_work_hours): "Finish the day" or "Later".
+        It stands in the corner like day end (kind="day_end"); finishing the day removes both."""
+        if demo:  # in the demo, the limit itself (or the default 9 h if it's off)
             seconds = (self.cfg["max_work_hours"] or DEFAULTS["max_work_hours"]) * 3600
         else:
             seconds = self.stats.day(self.today())["work_sec"] + self.work_pending
@@ -443,11 +443,11 @@ class Popups:
         if answer == "finish":
             self.handle(("pause", None))
 
-    # --- власні сповіщення ---
+    # --- own notifications ---
 
     def corner(self, *below):
-        """Правий нижній кут робочої області (без панелі завдань) для нового віконця;
-        якщо там уже стоять віконця з `below` — над ними."""
+        """The bottom right corner of the work area (without the taskbar) for a new window;
+        if windows from `below` are already there, above them."""
         _left, _top, right, bottom = system.work_area(self.root)
         for win in below:
             if win:
@@ -455,15 +455,15 @@ class Popups:
         return right, bottom
 
     def kept_toast(self):
-        """Віконця живуть у тому самому куті: попередження про перерву й кінець дня лишаються, а нове
-        віконце стає над ними; решта сповіщень закривається. Повертає сповіщення, що лишилось."""
+        """Windows share one corner: the break warning and day end stay, and a new window
+        goes above them; other notifications close. Returns the notification that stayed."""
         if self.toast_kind in ("warning", "day_end"):
             return self.toast_win
         self.close_toast()
         return None
 
     def corner_window(self, color):
-        """Віконце поверх усього, без рамки ОС, з кольоровою рамкою (однаковою й у фокусі)."""
+        """A window above everything, without an OS frame, with a coloured border (the same when focused)."""
         win = tk.Toplevel(self.root, bg=C["panel"], highlightthickness=2, highlightbackground=color,
                           highlightcolor=color)
         win.overrideredirect(True)
@@ -471,14 +471,14 @@ class Popups:
         return win
 
     def place_in_corner(self, win, width, right, bottom):
-        """Розмір за вмістом (не вужче за width) і місце в правому нижньому куті над `bottom`."""
+        """Size by content (no narrower than width) and a place in the bottom right corner above `bottom`."""
         win.update_idletasks()
         width = max(width, win.winfo_reqwidth())
         height = win.winfo_reqheight()
         win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
 
     def popup_head(self, win, title, color, counter, demo, close):
-        """Шапка віконця води чи їжі: заголовок, «2 з 3» праворуч і, для демо, позначка й Esc."""
+        """The header of the water or meal window: the title, "2 of 3" on the right and, for a demo, the badge and Esc."""
         head = tk.Frame(win, bg=C["panel"])
         head.pack(fill="x", padx=EDGE, pady=(EDGE, 0))
         tk.Label(head, text=title, bg=C["panel"], fg=color, font=font(16, "semibold")).pack(side="left")
@@ -488,7 +488,7 @@ class Popups:
             win.bind("<Escape>", lambda e: close())
 
     def popup_buttons(self, win, actions, color, on_color):
-        """Кнопки внизу праворуч: actions — [(напис, дія, головна?)]; головна — у кольорі віконця з галочкою."""
+        """Buttons at the bottom right: actions = [(label, action, primary?)]; the primary one is in the window colour with a check mark."""
         row = tk.Frame(win, bg=C["panel"])
         row.pack(anchor="e", padx=EDGE - UNIT, pady=4 * UNIT)
         for label, command, primary in actions:
@@ -497,13 +497,13 @@ class Popups:
                         image=check_mark(16, on_color) if primary else None).pack(side="left", padx=4)
 
     def show_toast(self, title, text, actions=(), timeout_ms=10_000, kind="info", on_dismiss=None, demo=False):
-        """Спливаюче віконце в куті екрана. Не покладаємося на системні сповіщення:
-        користувач міг їх вимкнути (на Windows вони тоді просто мовчки зникають),
-        а на macOS вони ненадійні для програм без підпису Apple.
-        actions: [(напис, функція, головна_кнопка?)]; on_dismiss — якщо віконце зникло без натискання кнопки
-        (тайм-аут або його витіснило інше сповіщення)."""
+        """A popup in the screen corner. We don't rely on system notifications:
+        the user may have turned them off (on Windows they then silently disappear),
+        and on macOS they are unreliable for apps not signed by Apple.
+        actions: [(label, function, primary_button?)]; on_dismiss runs if the window closed without a button
+        (a timeout, or another notification pushed it out)."""
         self.close_toast()
-        right, bottom = self.corner(self.water_win, self.meal_win)  # не перекриваємо воду й їжу
+        right, bottom = self.corner(self.water_win, self.meal_win)  # don't cover water and meals
         width = 380
         win = self.corner_window(C["accent"])
         head = tk.Frame(win, bg=C["panel"])
@@ -526,7 +526,7 @@ class Popups:
         else:
             for widget in (win, *win.winfo_children()):
                 widget.bind("<Button-1>", lambda e: self.close_toast())
-        self.place_in_corner(win, width, right, bottom)  # три кнопки можуть бути ширшими за стандартну ширину
+        self.place_in_corner(win, width, right, bottom)  # three buttons may be wider than the standard width
         self.toast_win = win
         self.toast_kind = kind
         self.toast_on_dismiss = on_dismiss
@@ -556,13 +556,13 @@ class Popups:
         if drank:
             self.stats.add("water")
             self.log_water_times(1)
-        else:  # «Пізніше» чи нагадування зникло без відповіді — на шкалі дня це пропущена склянка
+        else:  # "Later", or the reminder closed without an answer: a missed glass on the day timeline
             self.stats.log("water_missed", self.minute())
-        self.sync_day()  # темп наступної склянки — з урахуванням щойно випитої
+        self.sync_day()  # the next glass's pace, counting the one just drunk
         self.sched.water_answered(drank)
 
     def log_water_times(self, delta):
-        """Час кожної склянки — для шкали дня: додані склянки — «зараз», зняті — останні з кінця."""
+        """Each glass's time, for the day timeline: added glasses are "now", removed ones are the last ones."""
         today = self.today()
         times = self.stats.times(today, "water_at")
         if delta > 0:

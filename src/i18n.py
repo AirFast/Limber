@@ -1,4 +1,4 @@
-"""Переклади Rhythmos: рядки інтерфейсу, поради про воду та форматування чисел (uk, en)."""
+"""Rhythmos translations: UI strings, water tips and number formatting (uk, en)."""
 
 LANGUAGES = {"uk": "Українська", "en": "English"}
 DEFAULT_LANGUAGE = "uk"
@@ -6,7 +6,7 @@ DEFAULT_LANGUAGE = "uk"
 _current = DEFAULT_LANGUAGE
 
 
-SEP = "  •  "  # єдиний роздільник у рядках «назва: значення  •  назва: значення» (тест стежить за однаковістю)
+SEP = "  •  "  # the single separator in "name: value  •  name: value" lines (a test keeps it consistent)
 
 
 def set_language(code):
@@ -56,13 +56,13 @@ def fmt_times(v):
 
 
 def fmt_clock(v):
-    """Хвилини від півночі → «08:00»; після півночі робочого дня (від 24:00) — знову з «00:00»."""
+    """Minutes from midnight → "08:00"; after the workday's midnight (from 24:00) again from "00:00"."""
     v %= 24 * 60
     return f"{v // 60:02d}:{v % 60:02d}"
 
 
 def fmt_after_minis(v):
-    """«Довга перерва — після 2 міні-перерв»."""
+    """"Long break after 2 mini breaks"."""
     if _current == "uk":
         return f"після {v} {'міні-перерви' if v % 10 == 1 and v % 100 != 11 else 'міні-перерв'}"
     return f"after {v} mini {'break' if v == 1 else 'breaks'}"
@@ -78,11 +78,11 @@ def fmt_warn(v):
     return t("off") if v == 0 else fmt_seconds(v)
 
 
-GLASS_LITERS = 0.25  # стандартна склянка — 250 мл
+GLASS_LITERS = 0.25  # a standard glass is 250 ml
 
 
 def fmt_volume(glasses):
-    """Приблизний об'єм води: 5 склянок → «≈1,25 л» / «≈1.25 L»."""
+    """Approximate water volume: 5 glasses → "≈1,25 л" / "≈1.25 L"."""
     liters = f"{glasses * GLASS_LITERS:g}"
     if _current == "uk":
         return f"≈{liters.replace('.', ',')} л"
@@ -103,7 +103,7 @@ STRINGS = {
     "uk": {
         "tagline": "ритм здорового дня",
         "language": "Мова",
-        # трей
+        # tray
         "open": "Відкрити",
         "break_now": "Перерва зараз",
         "reset": "Скинути таймер",
@@ -123,7 +123,7 @@ STRINGS = {
         "warn_title_workout": "Скоро довга перерва — тренування",
         "warn_countdown": "Почнеться через {time}",
         "ok": "Ок",
-        # екран перерви
+        # break screen
         "demo_esc": "Esc — закрити",
         "break_other_screen": "Перерва",
         "postpone_btn": "Відкласти на {min} хв (ще {left})",
@@ -147,7 +147,7 @@ STRINGS = {
         "phase_cooldown": "ЗАМИНКА",
         "rest_title": "Відпочинок",
         "rest_next": "Далі: {title}",
-        # вода
+        # water
         "water_title": "Час випити води",
         "x_of_y": "{a} з {b}",
         "demo_tag": "демо",
@@ -155,8 +155,8 @@ STRINGS = {
         "later": "Пізніше",
         "drank_female": "Випила",
         "drank_male": "Випив",
-        "drank_custom": "Готово",  # стать не вказано — нейтрально
-        # головне вікно
+        "drank_custom": "Готово",  # gender not specified: neutral
+        # main window
         "tab_status": "Стан",
         "tab_stats": "Статистика",
         "tab_settings": "Налаштування",
@@ -176,7 +176,7 @@ STRINGS = {
         "water_now": "Час пити!",
         "water_today": "сьогодні {n} з {goal}  •  {volume}",
         "water_next": "до наступної склянки\n{progress}",
-        # статистика
+        # statistics
         "m_breaks": "перерв зроблено",
         "m_postponed": "відкладено",
         "stats_today": "Сьогодні, {date}",
@@ -198,7 +198,7 @@ STRINGS = {
         "tip_active": "Рух",
         "tip_meals": "Їжа",
         "tip_day_end": "День завершено",
-        # вкладка «Стан»
+        # Status tab
         "card_schedule": "Розклад на сьогодні",
         "meals_today": "сьогодні {n} з {total}",
         "meal_next_breakfast": "до сніданку",
@@ -234,7 +234,7 @@ STRINGS = {
         "lg_meals": "їжа (заповнений — усі прийоми)",
         "today": "Сьогодні",
         "weekdays": "Пн Вт Ср Чт Пт Сб Нд",
-        # налаштування
+        # settings
         "card_breaks": "Перерви",
         "card_long": "Довгі перерви",
         "card_other": "Інше",
@@ -306,7 +306,7 @@ STRINGS = {
         "intensity_2": "середньо",
         "intensity_3": "енергійно",
         "autostart_error": "Не вдалося змінити автозапуск: {e}",
-        # харчування
+        # meals
         "card_meals": "Їжа",
         "meal_breakfast": "Сніданок",
         "meal_lunch": "Обід",
@@ -327,7 +327,7 @@ STRINGS = {
         "meal_until_breakfast": "сніданок до {time}",
         "meal_until_lunch": "обід до {time}",
         "meal_until_dinner": "вечеря до {time}",
-        # кінець робочого дня
+        # end of the workday
         "card_day_end": "Робочий день",
         "workdays_label": "Робочі дні: їжа й кінець дня",
         "s_workday_start": "Початок дня",
@@ -379,7 +379,7 @@ STRINGS = {
                         "«Завершити день» поставить Rhythmos на паузу до ранку.",
         "day_end_finish": "Завершити день",
         "day_end_snooze": "Ще {min} хв",
-        # одиниці
+        # units
         "u_min": "{n} хв",
         "u_h": "{h} год",
         "u_h_min": "{h} год {m} хв",

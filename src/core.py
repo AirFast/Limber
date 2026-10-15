@@ -1,5 +1,5 @@
-"""Логіка Rhythmos без інтерфейсу: налаштування, розклад перерв, води, їжі й кінця дня,
-збирання перерв і статистика. Саме це покривають тести."""
+"""Rhythmos logic without the UI: settings, the schedule of breaks, water, meals and day end,
+building breaks, and statistics. This is what the tests cover."""
 
 import datetime as dt
 import json
@@ -17,7 +17,7 @@ APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 STATS_PATH = os.path.join(DATA_DIR, "stats.json")
-STATE_PATH = os.path.join(DATA_DIR, "state.json")  # стан таймерів — щоб перезапуск не обнуляв день
+STATE_PATH = os.path.join(DATA_DIR, "state.json")  # timer state, so a restart doesn't reset the day
 ICON_PATH = os.path.join(DATA_DIR, "rhythmos.ico")
 LOG_PATH = os.path.join(DATA_DIR, "rhythmos.log")
 
@@ -32,33 +32,33 @@ DEFAULTS = {
     "water_enabled": True,
     "water_interval_min": 60,
     "water_goal": 8,
-    "water_profile": "custom",  # "female" / "male" — мета й інтервал за рекомендацією; "custom" — вручну
-    "breakfast_enabled": False,  # сніданок і вечеря часто не за комп'ютером — за замовчуванням вимкнені
-    "breakfast_at": 8 * 60,      # хвилини від півночі
+    "water_profile": "custom",  # "female" / "male": goal and interval from the recommendation; "custom": manual
+    "breakfast_enabled": False,  # breakfast and dinner are often away from the computer, so off by default
+    "breakfast_at": 8 * 60,      # minutes from midnight
     "lunch_enabled": True,
     "lunch_at": 13 * 60,
     "dinner_enabled": False,
     "dinner_at": 18 * 60 + 30,
-    "meal_pause_min": 45,    # на скільки «Йду їсти» ставить перерви й воду на паузу
-    "day_end_enabled": True,     # нагадування «робочий день скінчився»
+    "meal_pause_min": 45,    # how long "Going to eat" pauses breaks and water
+    "day_end_enabled": True,     # the "workday is over" reminder
     "day_end_at": 18 * 60,
-    "workdays": [0, 1, 2, 3, 4],  # дні тижня (0 — понеділок), коли нагадувати про їжу й кінець дня
-    "workday_start": 0,          # початок робочого дня, хвилини від півночі; 0 — за першою дією з мишею
-    "max_work_hours": 9,         # після стількох годин за комп'ютером — попередження; 0 — вимкнено
-    "pause_min": 30,         # тривалість паузи з кнопки «Пауза» (вкладка «Стан», попередження про перерву)
+    "workdays": [0, 1, 2, 3, 4],  # weekdays (0 is Monday) with meal and day-end reminders
+    "workday_start": 0,          # workday start, minutes from midnight; 0: from the first mouse/keyboard input
+    "max_work_hours": 9,         # warn after this many hours at the computer; 0: off
+    "pause_min": 30,         # length of the pause from the Pause button (Status tab, break warning)
     "intensity": 2,
     "workout_enabled": True,
     "sound": True,
-    "language": "",  # "" — за мовою системи; інсталятор записує мову, вибрану під час встановлення
+    "language": "",  # "": the system language; the installer writes the language chosen during setup
     "check_updates": True,
-    "sound_name": "",        # системний звук сповіщення; "" — перший доступний
-    "group_buttons": True,   # кнопки груп м'язів на екрані перерви; вимкнено — вправи випадкові
-    "notified_version": "",  # про яку нову версію вже показали сповіщення
+    "sound_name": "",        # system notification sound; "": the first available one
+    "group_buttons": True,   # muscle group buttons on the break screen; off: random exercises
+    "notified_version": "",  # the new version a notification was already shown for
 }
-MAX_GLASSES = 30          # верхня межа ручного введення води за день
+MAX_GLASSES = 30          # upper limit for manually entered water per day
 
 
-# Повзунки налаштувань: ключ → (мінімум, максимум, крок, формат); підпис — t("s_<ключ>")
+# Settings sliders: key → (minimum, maximum, step, format); the label is t("s_<key>")
 SLIDERS = {
     "mini_interval_min": (5, 120, 5, fmt_minutes),
     "mini_duration_sec": (10, 300, 5, fmt_seconds),
@@ -79,63 +79,63 @@ SLIDERS = {
     "workday_start": (5 * 60 + 45, 12 * 60, 15, lambda v: t("auto") if v < 6 * 60 else fmt_clock(v)),
     "max_work_hours": (5, 12, 1, lambda v: t("off") if v < 6 else fmt_minutes(v * 60)),
 }
-# Крайнє ліве положення цих повзунків означає 0 у налаштуваннях: «авто» чи «вимкнено»
+# The leftmost position of these sliders means 0 in the settings: "auto" or "off"
 SLIDER_ZERO = {"workday_start": 5 * 60 + 45, "max_work_hours": 5}
 
 
 def slider_position(key, value):
-    """Значення з налаштувань → положення повзунка."""
+    """Setting value → slider position."""
     return SLIDER_ZERO[key] if key in SLIDER_ZERO and not value else value
 
 
 def setting_value(key, position):
-    """Положення повзунка → значення для налаштувань."""
+    """Slider position → setting value."""
     return 0 if SLIDER_ZERO.get(key) == position else position
 
 MEALS = ("breakfast", "lunch", "dinner")
-MEAL_WINDOW_MIN = 60   # комп'ютер прокинувся пізніше, ніж на годину після часу їжі, — нагадування вже ні до чого
-MEAL_SNOOZE_MIN = 15   # «Через 15 хв» і «Ще 15 хв»
-DAY_END_SNOOZE_MIN = 30   # «Ще 30 хв» — людина ще працює, нагадаємо знову
-WATER_LATER_MIN = 15      # «Пізніше» у нагадуванні про воду
-WATER_MIN_PACE_MIN = 15   # розумний темп води: не частіше, ніж раз на стільки хвилин
-MORNING = dt.time(6, 0)         # до коли триває пауза «до ранку»
-EARLIEST_START = dt.time(4, 0)  # початок робочого дня — перша дія не раніше: до того — ще ніч
-ACTIVE_IDLE_SEC = 60            # людина за комп'ютером, якщо миша чи клавіатура були не довше хвилини тому
-MIN_AWAY_MIN = 2                # відсутність — не коротша за це, навіть якщо довга перерва коротша
-FINISH_GRACE_MIN = 3            # після «Завершити день»: якщо людина працює далі довше — день триває
-BREAK_HOLD_MAX_MIN = 30         # перерву під час дзвінка чи презентації тримаємо не довше за це
-STATE_MAX_AGE_H = 12            # старіший збережений стан таймерів після перезапуску не відновлюємо
+MEAL_WINDOW_MIN = 60   # the computer woke up more than an hour after meal time: the reminder is pointless
+MEAL_SNOOZE_MIN = 15   # "In 15 min" and "15 more min"
+DAY_END_SNOOZE_MIN = 30   # "30 more min": the person is still working, remind again
+WATER_LATER_MIN = 15      # "Later" in the water reminder
+WATER_MIN_PACE_MIN = 15   # sensible water pace: no more often than once in this many minutes
+MORNING = dt.time(6, 0)         # when the "until morning" pause ends
+EARLIEST_START = dt.time(4, 0)  # the workday starts with the first input no earlier than this; before is night
+ACTIVE_IDLE_SEC = 60            # the person is at the computer if mouse or keyboard were used within a minute
+MIN_AWAY_MIN = 2                # an absence is never shorter than this, even if the long break is shorter
+FINISH_GRACE_MIN = 3            # after "Finish the day": working on longer than this continues the day
+BREAK_HOLD_MAX_MIN = 30         # a break held during a call or presentation waits no longer than this
+STATE_MAX_AGE_H = 12            # an older saved timer state is not restored after a restart
 
-# Рекомендована денна мета води, склянок по 250 мл. EFSA: загалом 2,0 л на день жінкам і 2,5 л чоловікам,
-# близько 20% з цього дає їжа — тож пити ≈1,6 і ≈2,0 л (жінкам округлено вгору до 7 склянок)
+# Recommended daily water goal in 250 ml glasses. EFSA: 2.0 L a day in total for women and 2.5 L for men,
+# about 20% of it comes from food, so drink ≈1.6 and ≈2.0 L (rounded up to 7 glasses for women)
 WATER_PROFILES = {"female": 7, "male": 8}
-WORKDAY_MIN = 8 * 60  # тривалість робочого дня, поки її не видно з початку й кінця дня
-TYPICAL_START = 9 * 60  # початок дня, коли ще немає жодного визначеного
-WORKDAY_LIMITS = (4 * 60, 14 * 60)  # розумні межі тривалості робочого дня для розрахунку інтервалу води
+WORKDAY_MIN = 8 * 60  # workday length until the day's start and end are known
+TYPICAL_START = 9 * 60  # day start when none has been detected yet
+WORKDAY_LIMITS = (4 * 60, 14 * 60)  # sensible workday length limits for the water interval
 
 
 def workday_span(start, end):
-    """(початок, кінець) робочого дня в хвилинах: кінець — «Кінець робочого дня» з налаштувань
-    (None — вимкнено, тоді 8 годин від початку); тривалість — у розумних межах."""
+    """(start, end) of the workday in minutes: the end is "Workday ends at" from the settings
+    (None when off, then 8 hours from the start); the length stays within sensible limits."""
     lo, hi = WORKDAY_LIMITS
     end = start + WORKDAY_MIN if end is None else end
     return start, start + min(max(end - start, lo), hi)
 
 
 def water_interval_for(goal, workday=WORKDAY_MIN):
-    """Найбільший інтервал (кратний кроку повзунка), з яким `goal` склянок встигаємо за робочий день."""
+    """The longest interval (a multiple of the slider step) that fits `goal` glasses into the workday."""
     lo, hi, step, _fmt = SLIDERS["water_interval_min"]
     return min(max(workday // goal // step * step, lo), hi)
 
 
 def water_plan(profile, workday=WORKDAY_MIN):
-    """(мета, інтервал у хв) для профілю або None, якщо налаштування ручні."""
+    """(goal, interval in min) for a profile, or None for manual settings."""
     goal = WATER_PROFILES.get(profile)
     return (goal, water_interval_for(goal, workday)) if goal else None
 
 
 def apply_water_profile(cfg, workday=WORKDAY_MIN):
-    """Профіль «жінка»/«чоловік» перекриває мету й інтервал рекомендованими значеннями."""
+    """The female/male profile overrides the goal and interval with the recommended values."""
     if cfg["water_profile"] not in WATER_PROFILES:
         cfg["water_profile"] = "custom"
     plan = water_plan(cfg["water_profile"], workday)
@@ -150,7 +150,7 @@ def step(title, text, secs, kind="exercise", phase=""):
 
 
 def pick_many(pool, count):
-    """`count` вправ без повторів, поки вистачає пулу."""
+    """`count` exercises without repeats while the pool lasts."""
     picks = []
     while len(picks) < count:
         picks += random.sample(pool, min(len(pool), count - len(picks)))
@@ -158,7 +158,7 @@ def pick_many(pool, count):
 
 
 def link_rests(steps):
-    """Підписи «Далі: …» у кроках відпочинку — за наступною вправою."""
+    """"Next: …" captions in rest steps, from the following exercise."""
     for i, s in enumerate(steps):
         if s["kind"] == "rest":
             upcoming = next((n for n in steps[i + 1:] if n["kind"] == "work"), None)
@@ -167,7 +167,7 @@ def link_rests(steps):
 
 
 def build_workout(total, level, group=None):
-    """Інтервальне тренування рівно на `total` секунд: розминка, робота/відпочинок, заминка."""
+    """An interval workout of exactly `total` seconds: warm-up, work/rest, cool-down."""
     count = max(1, (total - 2 * WARMUP_SEC + REST_SEC) // (WORK_SEC + REST_SEC))
     while count > 1 and total - WARMUP_SEC - count * WORK_SEC - (count - 1) * REST_SEC < 20:
         count -= 1
@@ -185,7 +185,7 @@ def build_workout(total, level, group=None):
 
 
 def regroup_workout(steps, start, level, group):
-    """Замінює вправи тренування, починаючи з кроку `start`, на вправи вибраної групи."""
+    """Replaces the workout exercises from step `start` on with exercises of the chosen group."""
     targets = [s for s in steps[start:] if s["kind"] == "work"]
     for s, (title, text, _group) in zip(targets, pick_many(exercises.workout_pool(level, group), len(targets))):
         s["title"], s["text"] = title, text
@@ -193,12 +193,12 @@ def regroup_workout(steps, start, level, group):
 
 
 def single_break_step(kind, cfg, group=None, avoid=None):
-    """Один крок міні-перерви або довгої перерви без тренування."""
+    """One step of a mini break or a long break without a workout."""
     if kind == "mini":
         pool = exercises.mini_pool(cfg["intensity"], group)
     else:
         pool = exercises.long_pool(group)
-    fresh = [e for e in pool if e[0] != avoid] or pool  # повторний вибір групи дає іншу вправу
+    fresh = [e for e in pool if e[0] != avoid] or pool  # choosing the group again gives another exercise
     title, body, _group = random.choice(fresh)
     if kind == "mini":
         return step(title, body, cfg["mini_duration_sec"], phase=t("phase_mini"))
@@ -207,14 +207,14 @@ def single_break_step(kind, cfg, group=None, avoid=None):
 
 
 def build_break(kind, cfg, group=None):
-    """Список кроків перерви. Міні та звичайна довга перерва — один крок."""
+    """The list of break steps. A mini break and a plain long break are one step."""
     total = cfg["long_duration_min"] * 60
     if kind == "long" and cfg["workout_enabled"] and total >= 120:
         return build_workout(total, cfg["intensity"], group)
     return [single_break_step(kind, cfg, group)]
 
 
-# ---------- дані ----------
+# ---------- data ----------
 
 def load_json(path, default):
     try:
@@ -233,8 +233,8 @@ def save_json(path, data):
 
 
 def migrate_config(saved):
-    """Налаштування старих версій → нинішні ключі. «Їжа й кінець дня — лише в будні» (workdays_only)
-    стало списком робочих днів: вимкнений перемикач означав «щодня»."""
+    """Old settings → current keys. "Meals and day end on weekdays only" (workdays_only)
+    became a list of workdays: the switch turned off meant "every day"."""
     saved = dict(saved)
     if "workdays" not in saved and saved.get("workdays_only") is False:
         saved["workdays"] = list(range(7))
@@ -249,19 +249,19 @@ def load_config():
     cfg = dict(DEFAULTS)
     saved = migrate_config(load_json(CONFIG_PATH, {}))
     cfg.update({k: v for k, v in saved.items() if k in DEFAULTS})
-    cfg["workdays"] = list(cfg["workdays"])  # власний список, а не спільний з DEFAULTS
+    cfg["workdays"] = list(cfg["workdays"])  # an own list, not the one shared with DEFAULTS
     apply_water_profile(cfg)
     i18n.set_language(cfg["language"] or system.system_language())
     return cfg
 
 
-DERIVED_KEYS = ("water_goal", "water_interval_min")  # у нормі «Жінка/Чоловік» — рахуються, а не задаються
+DERIVED_KEYS = ("water_goal", "water_interval_min")  # computed, not set, under the Female/Male norm
 
 
 def save_config(cfg):
-    """Зберігає налаштування людини — і лише їх. Застосунок ніколи не змінює налаштувань замість неї:
-    у нормі «Жінка/Чоловік» мета й інтервал води похідні (рахуються щоразу за робочим днем), тож у файлі
-    лишаються її власні значення для «Вручну», а не розраховані."""
+    """Saves the person's settings, and only them. The app never changes settings on their behalf:
+    under the Female/Male norm the water goal and interval are derived (recomputed from the workday), so
+    the file keeps the person's own Custom values, not the computed ones."""
     data = dict(cfg)
     if cfg.get("water_profile") in WATER_PROFILES:
         saved = load_json(CONFIG_PATH, {})
@@ -271,49 +271,49 @@ def save_config(cfg):
 
 
 def restore_manual_water(cfg):
-    """Перемкнули на «Вручну» — повертаємо власні значення людини з файлу, а не розраховані нормою."""
+    """Switched to Custom: bring back the person's own values from the file, not the ones computed by the norm."""
     saved = load_json(CONFIG_PATH, {})
     for key in DERIVED_KEYS:
         cfg[key] = saved.get(key, DEFAULTS[key])
 
 
 def set_language_setting(code):
-    """--set-language: інсталятор зберігає мову, вибрану під час встановлення."""
+    """--set-language: the installer saves the language chosen during setup."""
     cfg = load_json(CONFIG_PATH, {})
     cfg["language"] = code if code in i18n.LANGUAGES else ""
     save_json(CONFIG_PATH, cfg)
 
 
 def minute_of_day(moment):
-    """Хвилини від півночі: 13:45 → 825. Так у налаштуваннях і статистиці зберігається час дня."""
+    """Minutes from midnight: 13:45 → 825. Times of day are stored like this in settings and statistics."""
     return moment.hour * 60 + moment.minute
 
 
 def day_minute(date, moment):
-    """Хвилини від півночі робочого дня `date`: після півночі — понад 24:00 (00:30 → 1470).
-    Так у журналі подій зберігається час — проміжки й порядок лишаються правильними й уночі."""
+    """Minutes from midnight of the workday `date`: after midnight, past 24:00 (00:30 → 1470).
+    The event log stores time like this, so spans and order stay correct at night too."""
     return int((moment - dt.datetime.combine(date, dt.time())).total_seconds() // 60)
 
 
 def at_minute(date, minutes):
-    """Мить дня `date` через `minutes` хвилин від півночі."""
+    """The moment of day `date`, `minutes` minutes after midnight."""
     return dt.datetime.combine(date, dt.time()) + dt.timedelta(minutes=minutes)
 
 
 def workday_date(moment):
-    """День, до якого належить мить, — звичайна календарна дата: доба від 00:00 до 24:00.
-    Саме ця дата — ключ статистики й «сьогодні» для нагадувань."""
+    """The day a moment belongs to is the plain calendar date: from 00:00 to 24:00.
+    This date is the statistics key and "today" for reminders."""
     return moment.date()
 
 
 def at_workday_minute(date, minutes):
-    """Мить дня `date` за хвилинами від півночі (час із налаштувань)."""
+    """The moment of day `date` by minutes from midnight (a time from the settings)."""
     return at_minute(date, minutes)
 
 
 def work_started(now, idle_seconds):
-    """Хвилина дня, коли почали працювати, або None: людина за комп'ютером (миша чи клавіатура щойно),
-    і вже не ніч — початок дня не раніше EARLIEST_START. Момент — остання дія, а не цей тік."""
+    """The minute of the day work started, or None: the person is at the computer (recent mouse or keyboard)
+    and it is no longer night, the day starts no earlier than EARLIEST_START. The moment is the last input, not this tick."""
     started = now - dt.timedelta(seconds=idle_seconds)
     if idle_seconds > ACTIVE_IDLE_SEC or started.time() < EARLIEST_START or started.date() != now.date():
         return None
@@ -324,9 +324,9 @@ ACTIVITY_EVENTS = ("water", "meal", "break", "day_start")
 
 
 def first_activity(rec):
-    """Початок дня — найраніша відома дія: записаний day_start, склянки, їжа, перерви з журналу.
-    Визначення першої дії могло з'явитися посеред дня (оновлення) — тоді раніші склянки чи їжа точніші.
-    Вночі (до EARLIEST_START) — не початок дня."""
+    """The day starts with the earliest known activity: the recorded day_start, glasses, meals, logged breaks.
+    First-input detection may have appeared mid-day (an update), and then earlier glasses or meals are more accurate.
+    Night (before EARLIEST_START) is not a day start."""
     earliest = EARLIEST_START.hour * 60 + EARLIEST_START.minute
     times = [rec.get("day_start", 0)] + list(rec.get("water_at", []))
     times += [m for meal in MEALS for m in rec.get(f"ate_{meal}_at", [])]
@@ -336,7 +336,7 @@ def first_activity(rec):
 
 
 def average_minute(minutes):
-    """Середній час дня (хвилини від півночі) для днів, де він є; None — якщо таких днів немає."""
+    """Average time of day (minutes from midnight) over the days that have it; None if there are none."""
     minutes = [m for m in minutes if m]
     return round(sum(minutes) / len(minutes)) if minutes else None
 
@@ -349,17 +349,17 @@ def fmt_time(seconds):
 
 
 class Stats:
-    # work_sec — час за комп'ютером (таймер іде: не пауза, не перерва, не їжа), active_sec — час на перервах,
-    # meals — скільки разів поїли (сума ate_*), ate_<їжа> — 1, якщо цю їжу сьогодні з'їдено («Йду їсти»
-    # або тарілка на «Стані»); day_start — коли почали працювати (перша дія з мишею чи клавіатурою),
-    # day_end — коли завершили день; обидва — хвилини від півночі, 0 — ще не було
+    # work_sec: time at the computer (the timer runs: no pause, break or meal), active_sec: time on breaks,
+    # meals: how many meals were eaten (sum of ate_*), ate_<meal>: 1 if that meal was eaten today ("Going to eat"
+    # or the plate on Status); day_start: when work started (first mouse or keyboard input),
+    # day_end: when the day was finished; both in minutes from midnight, 0 when not yet
     KEYS = ("mini_done", "long_done", "skipped", "postponed", "water", "work_sec", "active_sec", "meals",
             "day_start", "day_end", "ate_breakfast", "ate_lunch", "ate_dinner")
-    MOMENTS = ("day_start", "day_end")  # час дня, а не лічильник: не підсумовуються
+    MOMENTS = ("day_start", "day_end")  # times of day, not counters: never summed
 
     def __init__(self, today=None):
         self.data = load_json(STATS_PATH, {})
-        self.today = today or dt.date.today  # поточний робочий день (App.today: з межею доби)
+        self.today = today or dt.date.today  # the current workday (App.today)
 
     def add(self, key, amount=1):
         rec = self.data.setdefault(self.today().isoformat(), {})
@@ -367,7 +367,7 @@ class Stats:
         save_json(STATS_PATH, self.data)
 
     def set(self, key, value):
-        """Ручне виправлення лічильника за сьогодні (наприклад, кількості склянок води)."""
+        """Manual correction of today's counter (for example, the number of water glasses)."""
         rec = self.data.setdefault(self.today().isoformat(), {})
         rec[key] = max(0, int(value))
         save_json(STATS_PATH, self.data)
@@ -379,7 +379,7 @@ class Stats:
         return day
 
     def times(self, date, key):
-        """Список моментів події за день (хвилини від півночі), наприклад water_at — коли пили воду."""
+        """The day's list of event moments (minutes from midnight), e.g. water_at: when water was drunk."""
         return list(self.data.get(date.isoformat(), {}).get(key, []))
 
     def set_times(self, key, values):
@@ -387,24 +387,24 @@ class Stats:
         rec[key] = list(values)
         save_json(STATS_PATH, self.data)
 
-    # --- журнал подій дня ---
-    # Кожен день, крім лічильників, має список подій "events" — з нього малюємо шкалу дня й рахуємо
-    # регулярність. Подія — словник: "type" і "at" (хвилина робочого дня, day_minute), далі — за типом:
-    #   break     kind (mini/long), result (done/skipped/postponed), sec — скільки тривала;
-    #   away      to — людини не було з at до to;
-    #   pause     to, kind (timed/eating/finished), meal — для eating;
-    #   held      to, reason (fullscreen/camera/microphone) — перерва чекала кінця дзвінка чи показу;
-    #   water, meal (meal), day_start, day_end, overwork — моменти.
-    # Проміжок, що ще триває (пауза, перерва чекає), має to = None — його закриває close().
-    # Лічильники вище пишемо далі: у старих днях подій немає, і решта коду читає саме їх
+    # --- the day's event log ---
+    # Besides counters, each day has an "events" list: it drives the day timeline and the regularity
+    # facts. An event is a dict: "type" and "at" (minute of the workday, day_minute), then per type:
+    #   break     kind (mini/long), result (done/skipped/postponed), sec: how long it lasted;
+    #   away      to: the person was away from at to to;
+    #   pause     to, kind (timed/eating/finished), meal: for eating;
+    #   held      to, reason (fullscreen/camera/microphone): the break waited for a call or a presentation;
+    #   water, meal (meal), day_start, day_end, overwork: moments.
+    # A span still in progress (a pause, a held break) has to = None; close() ends it.
+    # The counters above are still written: old days have no events, and the rest of the code reads them
 
     def events(self, date):
         return [dict(e) for e in self.data.get(date.isoformat(), {}).get("events", [])]
 
     def log(self, event_type, at, /, date=None, replace=None, **fields):
-        """Подія `event_type` о хвилині `at` у журнал дня `date` (за замовчуванням — сьогодні); один запис
-        на диск. replace — кортеж полів: подію того самого типу з такими самими значеннями цих полів
-        замінюємо (кінець дня, з'їдена їжа), а не додаємо ще одну. Повертає номер події в журналі дня."""
+        """Logs `event_type` at minute `at` in the log of day `date` (today by default); one disk
+        write. replace is a tuple of fields: an event of the same type with the same values of these fields
+        is replaced (day end, an eaten meal) instead of adding another. Returns the event's index in the day's log."""
         rec = self.data.setdefault((date or self.today()).isoformat(), {})
         events = rec.setdefault("events", [])
         event = {"type": event_type, "at": int(at), **fields}
@@ -420,14 +420,14 @@ class Stats:
         return index
 
     def close(self, date, index, to):
-        """Проміжок, що тривав (to = None), закінчився о хвилині `to`."""
+        """A span in progress (to = None) ended at minute `to`."""
         events = self.data.get(date.isoformat(), {}).get("events", [])
         if 0 <= index < len(events) and events[index].get("to") is None:
             events[index]["to"] = max(int(to), events[index]["at"])
             save_json(STATS_PATH, self.data)
 
     def unlog(self, event_type, /, date=None, **match):
-        """Прибирає події `event_type` з такими полями (позначку «з'їдено» зняли)."""
+        """Removes `event_type` events with these fields (the "eaten" mark was taken off)."""
         rec = self.data.get((date or self.today()).isoformat(), {})
         events = rec.get("events", [])
         kept = [e for e in events if not (e.get("type") == event_type and all(e.get(k) == v for k, v in match.items()))]
@@ -436,12 +436,12 @@ class Stats:
             save_json(STATS_PATH, self.data)
 
     def open_spans(self, dates):
-        """[(дата, номер, подія)] проміжків, що досі тривають (to = None), — щоб закрити їх після перезапуску."""
+        """[(date, index, event)] of spans still in progress (to = None), to close them after a restart."""
         return [(date, i, e) for date in dates for i, e in enumerate(self.events(date))
                 if e.get("type") in SPAN_TYPES and e.get("to") is None]
 
     def dates(self):
-        """Усі дні зі статистикою, за порядком."""
+        """All days with statistics, in order."""
         found = []
         for key in self.data:
             try:
@@ -451,14 +451,14 @@ class Stats:
         return sorted(found)
 
 
-SPAN_TYPES = ("away", "pause", "held")   # події-проміжки: мають кінець "to"
-PAUSE_KINDS = {"paused": "timed", "eating": "eating", "finished": "finished"}  # режим → вид паузи в журналі
+SPAN_TYPES = ("away", "pause", "held")   # span events: they have an end "to"
+PAUSE_KINDS = {"paused": "timed", "eating": "eating", "finished": "finished"}  # mode → pause kind in the log
 
 
 def absence_span(date, now, seconds, day_start):
-    """(від, до) відсутності в хвилинах робочого дня `date`, що скінчилась у `now` і тривала `seconds`;
-    None — якщо робочий день ще не почався (ніч і ранок до першої дії — не відсутність). Початок — не
-    раніше за початок дня: після паузи «до ранку» людина «відсутня» ще з учорашнього вечора."""
+    """(from, to) of an absence in minutes of the workday `date` that ended at `now` and lasted `seconds`;
+    None if the workday hasn't started yet (the night and the morning before the first input are not an absence).
+    The start is no earlier than the day start: after an "until morning" pause the person is "away" since last evening."""
     if not day_start:
         return None
     end = day_minute(date, now)
@@ -467,22 +467,22 @@ def absence_span(date, now, seconds, day_start):
 
 
 def event_end(event, now=None, last=None):
-    """Кінець проміжку: записаний, або «зараз» (now — для сьогодні), або остання відома хвилина дня."""
+    """End of a span: the recorded one, or "now" (now, for today), or the last known minute of the day."""
     if event.get("to") is not None:
         return event["to"]
     return max(event["at"], now if now is not None else (last if last is not None else event["at"]))
 
 
 def event_spans(events, now=None):
-    """Проміжки дня: [(тип, від, до, подія)] — відсутності, паузи й перерви, що чекали, за порядком.
-    Незакритий проміжок триває до now (сьогодні) або до останньої події дня."""
+    """The day's spans: [(type, from, to, event)]: absences, pauses and held breaks, in order.
+    An open span lasts until now (today) or until the day's last event."""
     last = max((e.get("to") or e["at"] for e in events), default=None)
     spans = [(e["type"], e["at"], event_end(e, now, last), e) for e in events if e.get("type") in SPAN_TYPES]
     return sorted(spans, key=lambda s: s[1])
 
 
 def day_bounds(events, now=None):
-    """(початок, кінець) робочого дня з журналу: day_start і day_end, або перша подія й now/остання подія."""
+    """(start, end) of the workday from the log: day_start and day_end, or the first event and now/the last event."""
     if not events:
         return None
     start = next((e["at"] for e in events if e["type"] == "day_start"), None)
@@ -494,10 +494,10 @@ def day_bounds(events, now=None):
 
 
 def regularity(events, now=None):
-    """Регулярність дня з журналу (None — подій немає): перерви вчасно (без відкладання), після
-    відкладання й пропущені; скільки разів і скільки хвилин людини не було; найдовший відрізок роботи
-    без перерви (перерва, відсутність чи пауза на їжу або звичайна — це відпочинок); скільки разів
-    перерва чекала кінця дзвінка."""
+    """The day's regularity from the log (None without events): breaks on time (not postponed), after
+    postponing, and skipped; how many times and minutes the person was away; the longest stretch of work
+    without a break (a break, an absence, or a meal or plain pause is rest); how many times
+    a break waited for a call to end."""
     if not events:
         return None
     result = {"on_time": 0, "late": 0, "skipped": 0, "postponed": 0, "away": 0, "away_min": 0,
@@ -524,15 +524,15 @@ def regularity(events, now=None):
             result["away"] += 1
             result["away_min"] += end - start
             rests.append((start, end))
-        elif kind == "pause":  # і пауза «до ранку»: після «Завершити день» — уже не робота
+        elif kind == "pause":  # the "until morning" pause too: after "Finish the day" it's no longer work
             rests.append((start, end))
     result["longest_min"] = longest_work_stretch(day_bounds(events, now), rests)
     return result
 
 
 def current_stretch(events, now):
-    """Скільки хвилин людина працює поспіль зараз: від кінця останнього відпочинку (зроблена перерва,
-    відсутність, пауза) або від початку дня; `now` — хвилина дня. 0 — день ще не почався."""
+    """How many minutes the person has been working in a row: since the end of the last rest (a done break,
+    an absence, a pause) or since the day start; `now` is a minute of the day. 0 if the day hasn't started."""
     bounds = day_bounds(events, now)
     if not bounds:
         return 0
@@ -547,7 +547,7 @@ def current_stretch(events, now):
 
 
 def longest_work_stretch(bounds, rests):
-    """Найдовший відрізок між відпочинками (хвилини) у межах робочого дня `bounds`."""
+    """The longest stretch between rests (minutes) within the workday `bounds`."""
     if not bounds:
         return 0
     start, end = bounds
@@ -566,9 +566,9 @@ EVENT_COLUMNS = ("date", "time", "type", "until", "kind", "result", "seconds", "
 
 
 def export_csv(stats, path, now=None, today=None):
-    """Уся статистика в CSV: `path` — рядок на день (лічильники й регулярність з журналу),
-    поруч `<назва>-events.csv` — усі події журналу. Час — «ГГ:ХХ». Повертає шляхи обох файлів.
-    UTF-8 з BOM — щоб Excel не ламав кирилицю."""
+    """All statistics as CSV: `path` has a row per day (counters and regularity from the log),
+    next to it `<name>-events.csv` has every logged event. Times are "HH:MM". Returns both paths.
+    UTF-8 with BOM so Excel doesn't break Cyrillic."""
     import csv
     base, ext = os.path.splitext(path)
     events_path = f"{base}-events{ext or '.csv'}"
@@ -596,15 +596,15 @@ def export_csv(stats, path, now=None, today=None):
 
 
 def split_balanced(heights, columns, gap=14):
-    """Ділить картки (у заданому порядку) на `columns` послідовних груп так, щоб найвища колонка
-    була якомога нижчою: порядок читання — згори вниз, зліва направо — зберігається.
-    Повертає списки індексів карток для кожної колонки."""
+    """Splits cards (in the given order) into `columns` consecutive groups so the tallest column
+    is as short as possible: the reading order (top to bottom, left to right) is kept.
+    Returns lists of card indices for each column."""
     return _best_split(heights, columns, gap)[1]
 
 
 def split_orders(heights, orders, columns, gap=14):
-    """Те саме для кількох допустимих порядків карток (усі — логічні за темами): обирає порядок, що
-    дає найнижчі й найрівніші колонки. Повертає групи індексів у `heights`, кожна — в порядку читання."""
+    """The same for several allowed card orders (all grouped logically by theme): picks the order that
+    gives the shortest and evenest columns. Returns groups of indices into `heights`, each in reading order."""
     best = min((_best_split([heights[i] for i in order], columns, gap), order) for order in orders)
     (_score, groups), order = best
     return [[order[i] for i in group] for group in groups]
@@ -625,9 +625,9 @@ def _best_split(heights, columns, gap):
             groups = groups + [list(range(start, n))]
             heights_now = [height(g) for g in groups]
             worst = max(heights_now)
-            # Спершу — найнижча найвища колонка. Далі — найменше порожнього місця на одну картку:
-            # коротші колонки розтягують свої картки до висоти найвищої, і краще, щоб запас ділили
-            # кілька карток, ніж щоб одна картка стояла з великим порожнім низом
+            # First, the shortest tallest column. Then the least empty space per card:
+            # shorter columns stretch their cards to the height of the tallest, and it's better when several
+            # cards share the slack than when one card stands with a large empty bottom
             slack = max((worst - h) / len(g) for h, g in zip(heights_now, groups))
             score = (worst, slack)
             if best is None or score < best[0]:
@@ -641,8 +641,8 @@ def _best_split(heights, columns, gap):
 
 
 def main_layout(available_width):
-    """Розкладка головного вікна під ширину робочої області екрана: скільки колонок у налаштуваннях,
-    скільки карток статистики в ряд і бажана ширина вікна."""
+    """Main window layout for the width of the screen's work area: settings columns,
+    statistics cards per row, and the preferred window width."""
     if available_width >= 1300:
         return {"columns": 4, "stat_cards": 6, "width": 1280}
     if available_width >= 1100:
@@ -651,15 +651,15 @@ def main_layout(available_width):
 
 
 def completion_rate(rec):
-    """Частка зроблених перерв серед зроблених і пропущених, %; None — перерв не було."""
+    """Share of done breaks among done and skipped ones, %; None if there were no breaks."""
     done = rec["mini_done"] + rec["long_done"]
     total = done + rec["skipped"]
     return round(100 * done / total) if total else None
 
 
 def water_streak(stats, goal, today):
-    """Скільки днів поспіль виконано норму води. Сьогодні ще не вечір — тож, якщо норми поки немає,
-    рахуємо від учора."""
+    """How many days in a row the water goal was met. Today isn't over yet, so if the goal isn't met
+    so far, count from yesterday."""
     day = today if stats.day(today)["water"] >= goal else today - dt.timedelta(days=1)
     streak = 0
     while stats.day(day)["water"] >= goal:
@@ -669,16 +669,16 @@ def water_streak(stats, goal, today):
 
 
 def fmt_hm(seconds):
-    """Тривалість у картці: 6 год 5 хв → «6:05»."""
+    """Duration on a card: 6 h 5 min → "6:05"."""
     minutes = int(seconds) // 60
     return f"{minutes // 60}:{minutes % 60:02d}"
 
 
-# ---------- таймер ----------
+# ---------- timer ----------
 
 def stale(due, now):
-    """Відкладене нагадування застаріло: його час минув понад MEAL_WINDOW_MIN тому (комп'ютер спав),
-    і показувати його тепер — зранку чи після обіду — вже недоречно."""
+    """A snoozed reminder is stale: its time passed more than MEAL_WINDOW_MIN ago (the computer slept),
+    and showing it now, in the morning or after lunch, no longer makes sense."""
     return now - due > dt.timedelta(minutes=MEAL_WINDOW_MIN)
 
 
@@ -694,36 +694,36 @@ def _date(text):
     return dt.date.fromisoformat(text) if text else None
 
 
-# Стан людини (Scheduler.mode). AWAY ніхто не вибирає — його визначає бездіяльність, і він лише
-# накладається на режим (Scheduler.state): пауза чи «до ранку» мають тривати й тоді, коли людина відійшла
+# The person's state (Scheduler.mode). Nobody chooses AWAY: idleness decides it, and it only
+# overlays the mode (Scheduler.state): a pause or "until morning" must go on while the person is away
 WORKING, BREAK, EATING, PAUSED, FINISHED, AWAY = "working", "break", "eating", "paused", "finished", "away"
 MODES = (WORKING, BREAK, EATING, PAUSED, FINISHED)
 
-# Що стоїть у кожному стані: відлік до перерви, відлік до води, нагадування за годинником (їжа, кінець
-# дня, переробка). Єдине місце, де це вирішується
+# What each state stops: the break countdown, the water countdown, wall-clock reminders (meals, day
+# end, overwork). The single place where this is decided
 BREAKS, WATER, CLOCK = "breaks", "water", "clock"
 FREEZES = {
     WORKING: frozenset(),
-    PAUSED: frozenset({BREAKS}),                  # звичайна пауза зупиняє лише перерви
+    PAUSED: frozenset({BREAKS}),                  # a plain pause stops only breaks
     BREAK: frozenset({BREAKS, WATER, CLOCK}),
-    EATING: frozenset({BREAKS, WATER, CLOCK}),    # до «Продовжити» після їжі
-    FINISHED: frozenset({BREAKS, WATER, CLOCK}),  # «до ранку»: робочий день скінчився
-    AWAY: frozenset({BREAKS, WATER, CLOCK}),      # нагадування не спливають у порожню кімнату
+    EATING: frozenset({BREAKS, WATER, CLOCK}),    # until "Continue" after the meal
+    FINISHED: frozenset({BREAKS, WATER, CLOCK}),  # "until morning": the workday is over
+    AWAY: frozenset({BREAKS, WATER, CLOCK}),      # reminders don't pop up into an empty room
 }
 STATE_VERSION = 1
-BREAK_RESUME_SEC = 60  # перерва, яку перервав вихід із програми, почнеться через хвилину після запуску
+BREAK_RESUME_SEC = 60  # a break interrupted by quitting the app starts a minute after launch
 
 
 class Reminder:
-    """Нагадування з однаковими для всіх правилами; Scheduler.tick щосекунди опитує їх по черзі (poll).
+    """A reminder with rules shared by all; Scheduler.tick polls them in turn every second (poll).
 
-    Нагадування стоїть — ні відліку, ні показу, — якщо стан людини заморожує його ворота `gate`
-    (FREEZES) або quiet(now): вимкнено, вихідний, уже відповіли, день завершено, мету досягнуто.
-    Відкрите (open) чекає на відповідь і вдруге не спливає; нове спливає лише тоді, коли не висить
-    нагадування з груп `waits` (кінець дня чекає, поки відповідять про їжу). Відкладене спрацьовує
-    о snoozed_until, а застаріле (stale: комп'ютер спав) відкидається. Інакше — власний тригер
-    triggered(now); shown — робочий день, коли воно вже спрацювало за власним часом.
-    Відповідь "snooze" відкладає на snooze_min, будь-яка інша — остаточна до кінця робочого дня."""
+    A reminder stands still (no countdown, no popup) if the person's state freezes its gate `gate`
+    (FREEZES) or quiet(now): disabled, a day off, already answered, the day finished, the goal reached.
+    An open one waits for an answer and doesn't pop up twice; a new one pops up only when no
+    reminder from the `waits` groups is open (day end waits for meal answers). A snoozed one fires
+    at snoozed_until, a stale one (stale: the computer slept) is dropped. Otherwise its own trigger
+    triggered(now); shown is the workday when it already fired at its own time.
+    The answer "snooze" postpones by snooze_min; any other answer is final until the end of the workday."""
     gate = CLOCK
     group = None
     waits = ()
@@ -734,7 +734,7 @@ class Reminder:
         self.open = False
         self.snoozed_until = None
         self.shown = None
-        self.answered = None  # (робочий день, відповідь)
+        self.answered = None  # (workday, answer)
 
     @property
     def cfg(self):
@@ -750,10 +750,10 @@ class Reminder:
         return False
 
     def advance(self, seconds):
-        """Відлік робочого часу — лише в нагадувань з відліком (вода)."""
+        """Work-time countdown, only for reminders with a countdown (water)."""
 
     def poll(self, seconds, now, frozen):
-        """Один тік; True — нагадування щойно спрацювало (тепер воно відкрите)."""
+        """One tick; True if the reminder just fired (it is open now)."""
         if self.gate in frozen or self.quiet(now) or self.open:
             return False
         self.advance(seconds)
@@ -761,9 +761,9 @@ class Reminder:
             return False
         if self.snoozed_until is not None:
             if stale(self.snoozed_until, now):
-                self.snoozed_until = None  # комп'ютер спав — відкладене вже ні до чого
+                self.snoozed_until = None  # the computer slept: the snoozed reminder is pointless now
             elif now >= self.snoozed_until:
-                # Відкладене нагадує про той самий день — shown не перезаписуємо
+                # A snoozed reminder is about the same day: shown is not overwritten
                 self.snoozed_until = None
                 self.open = True
                 return True
@@ -783,25 +783,25 @@ class Reminder:
             self.answered = (self.sched.workday(now), answer)
 
     def cancel(self):
-        """День завершено: відкрите й відкладене більше не потрібні (інакше спрацювали б уранці)."""
+        """The day is finished: open and snoozed reminders aren't needed (they would fire in the morning)."""
         self.open = False
         self.snoozed_until = None
 
     def snapshot(self):
-        # Віконця після перезапуску вже немає — відкрите нагадування спливе знову
+        # The popup is gone after a restart: an open reminder pops up again
         return {"snoozed_until": _iso(self.snoozed_until), "shown": None if self.open else _iso(self.shown),
                 "answered": [self.answered[0].isoformat(), self.answered[1]] if self.answered else None}
 
     def parse(self, data):
-        """Збережене snapshot() → атрибути; зіпсовані дані — KeyError/TypeError/ValueError."""
+        """Saved snapshot() → attributes; broken data raises KeyError/TypeError/ValueError."""
         answered = data["answered"]
         return {"open": False, "snoozed_until": _moment(data["snoozed_until"]), "shown": _date(data["shown"]),
                 "answered": (_date(answered[0]), str(answered[1])) if answered else None}
 
 
 class WaterReminder(Reminder):
-    """Вода: відлік робочого часу. «Випив» — наступна склянка в розумному темпі (Scheduler.water_interval),
-    «Пізніше» — через WATER_LATER_MIN; мовчить, коли нагадування вимкнено чи денну мету досягнуто."""
+    """Water: a work-time countdown. "Done" schedules the next glass at a sensible pace (Scheduler.water_interval),
+    "Later" in WATER_LATER_MIN; silent when the reminder is off or the daily goal is reached."""
     gate = WATER
 
     def __init__(self, sched):
@@ -829,8 +829,8 @@ class WaterReminder(Reminder):
 
 
 class MealReminder(Reminder):
-    """Сніданок, обід чи вечеря: о своїй годині, але не пізніше ніж за MEAL_WINDOW_MIN по ній
-    (комп'ютер прокинувся пізніше — нагадування вже ні до чого). Відповіді: "eat", "skip", "snooze"."""
+    """Breakfast, lunch or dinner: at its time, but no later than MEAL_WINDOW_MIN after it
+    (the computer woke up later, so the reminder is pointless). Answers: "eat", "skip", "snooze"."""
     group = "meal"
     waits = ("meal",)
 
@@ -844,8 +844,8 @@ class MealReminder(Reminder):
 
 
 class MealOverReminder(Reminder):
-    """Пауза на їжу скінчилась — «Продовжуємо?». Питає один раз і чекає відповіді: пауза на їжу сама
-    не закінчується. «Ще 15 хв» відсуває її кінець (Scheduler.extend_meal)."""
+    """The meal pause is over: "Continue?". Asks once and waits for the answer: the meal pause doesn't
+    end by itself. "15 more min" moves its end (Scheduler.extend_meal)."""
     gate = None
     group = "meal_over"
 
@@ -857,8 +857,8 @@ class MealOverReminder(Reminder):
 
 
 class DayEndReminder(Reminder):
-    """Робочий день скінчився (у свій час чи після «Ще 30 хв»), а людина досі за комп'ютером.
-    Відповіді: "snooze", "finish" (паузу «до ранку» ставить App)."""
+    """The workday is over (at its time or after "30 more min") and the person is still at the computer.
+    Answers: "snooze", "finish" (App sets the "until morning" pause)."""
     group = "day"
     waits = ("meal", "day")
     snooze_min = DAY_END_SNOOZE_MIN
@@ -872,8 +872,8 @@ class DayEndReminder(Reminder):
 
 
 class OverworkReminder(Reminder):
-    """За комп'ютером сьогодні вже більше за денний ліміт (max_work_hours) — раз на день.
-    Відповіді: "later", "finish" (паузу «до ранку» ставить App)."""
+    """More than the daily limit (max_work_hours) at the computer today, once a day.
+    Answers: "later", "finish" (App sets the "until morning" pause)."""
     group = "day"
     waits = ("meal", "day")
 
@@ -887,36 +887,36 @@ class OverworkReminder(Reminder):
 
 
 class Scheduler:
-    """Розклад дня: стан людини (mode), відлік робочого часу до перерви й нагадування (reminders).
-    Відлік скидається лише після перерви, відсутності чи на вимогу — блокування екрана його не обнуляє.
-    Переходи між станами — лише методами нижче; що заморожує кожен стан — FREEZES."""
+    """The day's schedule: the person's state (mode), the work-time countdown to a break, and reminders.
+    The countdown resets only after a break, an absence or on request; locking the screen doesn't reset it.
+    State changes happen only through the methods below; what each state freezes is FREEZES."""
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.mode = WORKING
-        self.until = None          # кінець паузи, «до ранку» чи паузи на їжу
-        self.meal = None           # яку їжу їдять (EATING)
-        self.finished_at = None    # коли натиснули «Завершити день» (паузу «до ранку»)
-        self.active_since = None   # з якого моменту людина безперервно працює після «Завершити день»
-        self.away = False          # людини немає за комп'ютером (див. away_after)
-        self.away_idle = 0.0       # найдовша бездіяльність за цю відсутність
-        self.last_away = 0.0       # скільки секунд тривала остання відсутність (для журналу на подію "back")
+        self.until = None          # end of a pause, "until morning" or a meal pause
+        self.meal = None           # which meal is being eaten (EATING)
+        self.finished_at = None    # when "Finish the day" was pressed (the "until morning" pause)
+        self.active_since = None   # since when the person has worked continuously after "Finish the day"
+        self.away = False          # the person isn't at the computer (see away_after)
+        self.away_idle = 0.0       # the longest idleness during this absence
+        self.last_away = 0.0       # how many seconds the last absence lasted (logged on the "back" event)
         self.breaks_taken = 0
         self.postpones = 0
-        self.long_skipped = False  # довгу перерву пропустили — наступна знову довга (один раз)
-        self.held = None           # скільки секунд перерву тримає зайнятість; None — не тримає
-        # Що відомо App про сьогодні (update_day): для темпу води й ліміту роботи
+        self.long_skipped = False  # a long break was skipped: the next one is long again (once)
+        self.held = None           # seconds the break has been held by busyness; None when not held
+        # What App knows about today (update_day): for the water pace and the work limit
         self.drunk = 0
         self.workday_end = None
         self.worked = 0
-        self.water_done = False    # денну мету води досягнуто — до завтра без нагадувань
+        self.water_done = False    # the daily water goal is reached: no reminders until tomorrow
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
         self.water = WaterReminder(self)
         self.meals = {meal: MealReminder(self, meal, "meal") for meal in MEALS}
         self.meal_over = MealOverReminder(self, "meal_over", "meal_over")
         self.day_end = DayEndReminder(self, "day_end", "day_end")
         self.overwork = OverworkReminder(self, "overwork", "overwork")
-        # Порядок — пріоритет: з тих, що чекають одне на одного (waits), за тік спливає лише перше
+        # The order is the priority: of those waiting for each other (waits), only the first pops up per tick
         self.reminders = [self.water, *self.meals.values(), self.meal_over, self.day_end, self.overwork]
 
     def _set_countdown(self, seconds):
@@ -924,17 +924,17 @@ class Scheduler:
         self.warned = False
         self.held = None
 
-    # --- стан ---
+    # --- state ---
 
     @property
     def state(self):
-        """Режим, а якщо людини немає — AWAY."""
+        """The mode, or AWAY if the person is away."""
         return AWAY if self.away else self.mode
 
     def frozen(self):
         return FREEZES[self.state]
 
-    # Властивості лише для читання — для інтерфейсу
+    # Read-only properties for the UI
     @property
     def in_break(self):
         return self.mode == BREAK
@@ -949,7 +949,7 @@ class Scheduler:
 
     @property
     def pause_water(self):
-        """Пауза «до ранку» зупиняє й воду, звичайна — лише перерви."""
+        """The "until morning" pause stops water too, a plain one only breaks."""
         return self.mode == FINISHED
 
     @property
@@ -970,7 +970,7 @@ class Scheduler:
 
     @property
     def meal_open(self):
-        """Про яку їжу зараз висить нагадування."""
+        """Which meal has an open reminder now."""
         return next((meal for meal, r in self.meals.items() if r.open), None)
 
     @property
@@ -986,50 +986,50 @@ class Scheduler:
         return self.day_end.snoozed_until
 
     def workday(self, now):
-        """День для миті `now` — календарна дата."""
+        """The day of the moment `now`: the calendar date."""
         return workday_date(now)
 
     def moment(self, now, minutes):
-        """Мить сьогодні за хвилинами від півночі (час із налаштувань)."""
+        """A moment today by minutes from midnight (a time from the settings)."""
         return at_workday_minute(self.workday(now), minutes)
 
     def morning(self, now):
-        """Кінець паузи «до ранку»: найближчі MORNING (06:00) — після півночі це цей самий ранок,
-        а не наступний (інакше пауза тривала б ~30 год)."""
+        """End of the "until morning" pause: the nearest MORNING (06:00); after midnight that is this same
+        morning, not the next one (otherwise the pause would last ~30 h)."""
         morning = dt.datetime.combine(now.date(), MORNING)
         return morning if now < morning else morning + dt.timedelta(days=1)
 
     def away_after(self):
-        """Скільки секунд без миші й клавіатури — це відсутність: як довга перерва, але не менше MIN_AWAY_MIN."""
+        """Seconds without mouse and keyboard that count as an absence: like a long break, but at least MIN_AWAY_MIN."""
         return max(MIN_AWAY_MIN, self.cfg["long_duration_min"]) * 60
 
     def reminders_today(self, now):
-        """Чи нагадувати сьогодні про їжу й кінець дня: лише в робочі дні з налаштувань."""
+        """Whether to remind about meals and day end today: only on the workdays from the settings."""
         return self.workday(now).weekday() in self.cfg["workdays"]
 
     def day_finished(self, now):
         return self.finished_at is not None and self.workday(self.finished_at) == self.workday(now)
 
     def update_day(self, drunk, workday_end=None, worked=0):
-        """Що App знає про сьогодні: склянок випито, кінець робочого дня (datetime чи None)
-        і скільки секунд уже працювали."""
+        """What App knows about today: glasses drunk, the workday end (datetime or None)
+        and how many seconds were already worked."""
         self.drunk, self.workday_end, self.worked = drunk, workday_end, worked
         self.water_done = drunk >= self.cfg["water_goal"]
 
-    # --- щосекундний відлік ---
+    # --- per-second countdown ---
 
     def tick(self, seconds, now=None, idle=0.0, busy=False):
-        """Один крок. idle — скільки секунд не було миші й клавіатури (system.idle_seconds); busy — людина
-        на дзвінку чи показує екран: перерва почекає (не довше BREAK_HOLD_MAX_MIN). Повертає події:
+        """One step. idle: seconds without mouse and keyboard (system.idle_seconds); busy: the person
+        is on a call or sharing the screen, so the break waits (no longer than BREAK_HOLD_MAX_MIN). Returns events:
         "warn", "break", "break_held", "water", "meal", "meal_over", "day_end", "overwork",
         "day_continued", "back"."""
         now = now or dt.datetime.now()
         events = []
         if self.mode in (PAUSED, FINISHED) and now >= self.until:
-            self.mode, self.until = WORKING, None  # пауза скінчилась сама
-        # День завершили, а людина працює далі (FINISH_GRACE_MIN без перерв у діях, а не мить глянути в
-        # пошту) — день триває й більше не завершений: таймери йдуть, «Завершити день» знову доступне,
-        # а про кінець дня вже не питаємо. Так само й після перезапуску, коли «завершено» відновилося зі статистики
+            self.mode, self.until = WORKING, None  # the pause ended by itself
+        # The day was finished but the person keeps working (FINISH_GRACE_MIN of continuous input, not a moment
+        # to glance at mail): the day goes on and is no longer finished; timers run, "Finish the day" is back,
+        # and day end isn't asked again. The same after a restart, when "finished" was restored from statistics
         if self.day_finished(now) and self.mode in (FINISHED, WORKING) and idle < ACTIVE_IDLE_SEC:
             if self.active_since is None:
                 self.active_since = now
@@ -1038,8 +1038,8 @@ class Scheduler:
                 events.append("day_continued")
         else:
             self.active_since = None
-        # Людини немає довше за довгу перерву — це природна перерва: таймери стоять, а коли повернеться,
-        # відлік до перерви почнеться з початку
+        # Away for longer than a long break is a natural break: timers stand, and on return
+        # the countdown to the break starts over
         if idle >= self.away_after() and self.mode not in (BREAK, EATING):
             self.away = True
             self.away_idle = max(self.away_idle, idle)
@@ -1048,13 +1048,13 @@ class Scheduler:
             events.append("back")
         if BREAKS not in self.frozen():
             events += self._count_down(seconds, busy)
-        frozen = self.frozen()  # перерва могла щойно початися
+        frozen = self.frozen()  # a break may have just started
         events += [r.event for r in self.reminders if r.poll(seconds, now, frozen)]
         return events
 
     def _count_down(self, seconds, busy):
-        """Відлік до перерви. Поки людина зайнята, попередження й перерва чекають (відлік стоїть на нулі),
-        але не довше BREAK_HOLD_MAX_MIN; "break_held" — один раз, коли почали чекати."""
+        """Countdown to the break. While the person is busy, the warning and the break wait (the countdown stays at zero),
+        but no longer than BREAK_HOLD_MAX_MIN; "break_held" fires once, when the waiting starts."""
         self.remaining = max(0, self.remaining - seconds)
         warn = self.cfg["warn_before_sec"]
         warn_due = bool(warn) and not self.warned and 0 < self.remaining <= warn
@@ -1075,8 +1075,8 @@ class Scheduler:
         return ["break"]
 
     def come_back(self):
-        """Людина повернулася: відсутність була природною перервою — відлік до перерви з початку.
-        Відсутність, удвічі довша за довгу перерву, — це й була довга перерва: до наступної — повний цикл."""
+        """The person is back: the absence was a natural break, the countdown starts over.
+        An absence twice as long as the long break was the long break: a full cycle until the next one."""
         self.away = False
         self.postpones = 0
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
@@ -1087,10 +1087,10 @@ class Scheduler:
         self.last_away = self.away_idle
         self.away_idle = 0.0
 
-    # --- перерви ---
+    # --- breaks ---
 
     def breaks_until_long(self):
-        """Скільки перерв лишилось до довгої, включно з нею: 1 — наступна перерва довга."""
+        """Breaks left until the long one, including it: 1 means the next break is long."""
         if self.long_skipped:
             return 1
         every = max(1, self.cfg["long_every"])
@@ -1100,13 +1100,13 @@ class Scheduler:
         return "long" if self.breaks_until_long() == 1 else "mini"
 
     def start_break(self):
-        """«Перерва зараз»: перерва важливіша за паузу чи їжу."""
+        """"Break now": a break matters more than a pause or a meal."""
         self.mode, self.until, self.meal = BREAK, None, None
         self.meal_over.open = False
 
     def finish_break(self, skipped=False):
-        """Перерва скінчилась (зроблена, пропущена чи перервана паузою). Пропущена довга повертається:
-        наступна перерва — знову довга, але лише раз; далі ритм іде своїм ходом."""
+        """The break is over (done, skipped, or interrupted by a pause). A skipped long break comes back:
+        the next break is long again, but only once; then the rhythm goes on as usual."""
         long = self.next_kind() == "long"
         if self.mode == BREAK:
             self.mode = WORKING
@@ -1131,11 +1131,11 @@ class Scheduler:
         self.postpones = 0
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
 
-    # --- пауза й кінець дня ---
+    # --- pause and day end ---
 
     def pause(self, minutes, now=None):
-        """minutes=None — «до ранку»: день завершено, тож відкладені нагадування про їжу й кінець дня
-        теж скасовуються, інакше вони спрацювали б уранці."""
+        """minutes=None means "until morning": the day is finished, so snoozed meal and day-end reminders
+        are cancelled too, otherwise they would fire in the morning."""
         now = now or dt.datetime.now()
         self.meal = None
         self.meal_over.cancel()
@@ -1152,19 +1152,19 @@ class Scheduler:
             self.mode, self.until = WORKING, None
 
     def day_end_answered(self, answer, now=None):
-        """answer: "snooze" — нагадати через 30 хв, "finish" — день завершено (паузу ставить App)."""
+        """answer: "snooze" reminds again in 30 min, "finish" finishes the day (App sets the pause)."""
         self.day_end.answer(answer, now or dt.datetime.now())
 
     def overwork_answered(self, answer, now=None):
-        """answer: "later" — більше сьогодні не нагадувати, "finish" — день завершено (паузу ставить App)."""
+        """answer: "later" means no more reminders today, "finish" finishes the day (App sets the pause)."""
         self.overwork.answer(answer, now or dt.datetime.now())
 
-    # --- вода ---
+    # --- water ---
 
     def water_interval(self, now):
-        """Секунд до наступної склянки. Коли відомі мета й кінець робочого дня — розумний темп: решту часу
-        ділимо на решту склянок (відстаємо — частіше, випереджаємо — рідше), у межах від
-        WATER_MIN_PACE_MIN до подвоєного інтервалу з налаштувань."""
+        """Seconds until the next glass. When the goal and the workday end are known, a sensible pace: the rest of
+        the time is divided by the remaining glasses (behind: more often, ahead: less often), between
+        WATER_MIN_PACE_MIN and twice the interval from the settings."""
         base = self.cfg["water_interval_min"] * 60
         left = self.cfg["water_goal"] - self.drunk
         if self.workday_end is None or left <= 0 or now >= self.workday_end:
@@ -1175,28 +1175,28 @@ class Scheduler:
     def water_answered(self, drank, now=None):
         self.water.answer(drank, now or dt.datetime.now())
 
-    # --- їжа ---
+    # --- meals ---
 
     def meal_answered(self, answer, now=None):
-        """answer: "eat" — пауза на їжу, "snooze" — нагадати через 15 хв, "skip" — не нагадувати."""
+        """answer: "eat" starts the meal pause, "snooze" reminds in 15 min, "skip" doesn't remind."""
         now = now or dt.datetime.now()
         meal = self.meal_open
         if not meal:
             return
         self.meals[meal].answer(answer, now)
-        if answer == "eat":  # їжа важливіша за звичайну паузу
+        if answer == "eat":  # a meal matters more than a plain pause
             self.mode, self.meal = EATING, meal
             self.until = now + dt.timedelta(minutes=self.cfg["meal_pause_min"])
             self.meal_over.cancel()
 
     def extend_meal(self, now=None):
-        """«Ще 15 хв» після паузи на їжу."""
+        """"15 more min" after the meal pause."""
         if self.mode == EATING:
             self.until = (now or dt.datetime.now()) + dt.timedelta(minutes=MEAL_SNOOZE_MIN)
             self.meal_over.open = False
 
     def finish_meal(self, now=None):
-        """«Продовжити»: їжа вже була довгою перервою, тож обидва таймери — з початку."""
+        """"Continue": the meal was already a long break, so both timers start over."""
         if self.mode != EATING:
             return
         self.mode, self.until, self.meal = WORKING, None, None
@@ -1206,8 +1206,8 @@ class Scheduler:
         self.water.remaining = self.water_interval(now or dt.datetime.now())
 
     def mark_meal(self, meal, eaten, now=None):
-        """Тарілка на «Стані» чи «Йду їсти»: їжу сьогодні з'їдено (або позначку знято).
-        True — висіло нагадування про цю їжу, і воно більше не потрібне."""
+        """The plate on Status or "Going to eat": the meal is eaten today (or the mark was removed).
+        True if a reminder about this meal was open and is no longer needed."""
         reminder, day = self.meals[meal], self.workday(now or dt.datetime.now())
         if not eaten:
             if reminder.answer_on(day) == "eat":
@@ -1218,8 +1218,8 @@ class Scheduler:
         return was_open
 
     def meal_state(self, meal, now):
-        """Стан їжі сьогодні для розкладу: (стан, час). Стани: "eating" (до часу), "eat", "skip",
-        "snoozed" (нагадаю о), "open" (нагадування висить), "upcoming" (о), "due" (ось-ось), "missed"."""
+        """Today's meal state for the schedule: (state, time). States: "eating" (until), "eat", "skip",
+        "snoozed" (remind at), "open" (reminder open), "upcoming" (at), "due" (any moment), "missed"."""
         if self.eating == meal:
             return "eating", self.until
         reminder = self.meals[meal]
@@ -1236,7 +1236,7 @@ class Scheduler:
         return ("due" if now < at + dt.timedelta(minutes=MEAL_WINDOW_MIN) else "missed"), at
 
     def next_meal(self, now):
-        """Наступна їжа: (їжа, коли) або (їжа, None), якщо час їсти вже зараз; None — на сьогодні все."""
+        """The next meal: (meal, when) or (meal, None) if it's time to eat now; None when done for today."""
         if not self.reminders_today(now):
             return None
         best = None
@@ -1250,7 +1250,7 @@ class Scheduler:
                 best = (meal, when)
         return best
 
-    # --- налаштування, статистика, перезапуск ---
+    # --- settings, statistics, restart ---
 
     def apply_config(self, now=None):
         interval = self.cfg["mini_interval_min"] * 60
@@ -1259,8 +1259,8 @@ class Scheduler:
         self.water.remaining = min(self.water.remaining, self.water_interval(now or dt.datetime.now()))
 
     def restore_day(self, day, eaten=(), finished_minute=0, day_end_asked=False):
-        """Що про сьогодні вже записано в статистиці (на випадок, коли state.json немає): з'їдене
-        не нагадуємо, завершений день і питання про кінець дня не повторюємо."""
+        """What statistics already recorded about today (in case there is no state.json): eaten meals
+        aren't reminded, a finished day and the day-end question aren't repeated."""
         for meal in eaten:
             self.meals[meal].answered = (day, "eat")
         if finished_minute and not (self.finished_at and self.workday(self.finished_at) == day):
@@ -1269,7 +1269,7 @@ class Scheduler:
             self.day_end.shown = day
 
     def snapshot(self, now):
-        """Стан для state.json (лише JSON-типи): App зберігає його щохвилини й під час виходу."""
+        """State for state.json (JSON types only): App saves it every minute and on quit."""
         return {
             "version": STATE_VERSION, "saved_at": now.isoformat(), "workday": self.workday(now).isoformat(),
             "mode": self.mode, "until": _iso(self.until), "meal": self.meal, "finished_at": _iso(self.finished_at),
@@ -1279,9 +1279,9 @@ class Scheduler:
         }
 
     def restore(self, data, now):
-        """Відновлює snapshot() після перезапуску, якщо він з того самого робочого дня й не старший за
-        STATE_MAX_AGE_H. Перерва, яку перервав вихід, почнеться за хвилину; довгий час без програми —
-        як відсутність (come_back). True — відновлено; зіпсований файл просто ігнорується."""
+        """Restores snapshot() after a restart if it's from the same workday and no older than
+        STATE_MAX_AGE_H. A break interrupted by quitting starts in a minute; a long time without the app
+        counts as an absence (come_back). True if restored; a broken file is simply ignored."""
         try:
             saved = _moment(data["saved_at"])
             if (data.get("version") != STATE_VERSION or _date(data["workday"]) != self.workday(now)

@@ -1,8 +1,8 @@
-"""Rhythmos — нагадування про перерви з вправами, водою, їжею та статистикою (Windows, macOS).
+"""Rhythmos: break reminders with exercises, water, meals and statistics (Windows, macOS).
 
-Точка входу й сам застосунок: трей, щосекундний цикл, черга дій, оновлення, smoke-тест.
-Логіка — у core.py, малювання — у graphics.py, віджети — у widgets.py,
-вікна поверх роботи — у popups.py, головне вікно — у main_window.py."""
+The entry point and the app itself: tray, the per-second loop, the action queue, updates, the smoke test.
+Logic lives in core.py, drawing in graphics.py, widgets in widgets.py,
+windows over the work in popups.py, the main window in main_window.py."""
 import datetime as dt
 import importlib
 import os
@@ -16,11 +16,11 @@ import webbrowser
 
 import system
 
-if sys.stderr is None:  # збірка без консолі: помилки імпорту інакше зникли б безслідно
+if sys.stderr is None:  # a build without a console: import errors would otherwise vanish without a trace
     os.makedirs(system.data_dir(), exist_ok=True)
     sys.stderr = sys.stdout = open(os.path.join(system.data_dir(), "rhythmos.log"), "a", encoding="utf-8", buffering=1)
 
-import pystray  # noqa: E402 — після перенаправлення stderr, щоб помилки імпорту потрапили в журнал
+import pystray  # noqa: E402 — after redirecting stderr, so import errors reach the log
 
 import i18n  # noqa: E402
 import updates  # noqa: E402
@@ -36,9 +36,9 @@ from popups import Popups  # noqa: E402
 __version__ = "2.13.1"
 
 UPDATE_CHECK_DELAY_MS = 30_000
-UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # щогодини: раз на добу нова версія могла чекати до завтра
-UPDATE_RECHECK_ON_OPEN_SEC = 10 * 60        # відкриття головного вікна теж перевіряє, але не частіше
-STATE_SAVE_INTERVAL_SEC = 60                # стан таймерів (state.json) — щохвилини й під час виходу
+UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # hourly: with a daily check a new version could wait until tomorrow
+UPDATE_RECHECK_ON_OPEN_SEC = 10 * 60        # opening the main window checks too, but no more often than this
+STATE_SAVE_INTERVAL_SEC = 60                # timer state (state.json): every minute and on quit
 
 
 class App(Popups, MainWindow):
@@ -56,12 +56,12 @@ class App(Popups, MainWindow):
         system.init_tk(self.root)
         if system.IS_WINDOWS:
             try:
-                self.root.iconbitmap(default=ensure_icon_file())  # для всіх вікон і панелі завдань
+                self.root.iconbitmap(default=ensure_icon_file())  # for all windows and the taskbar
             except (OSError, tk.TclError):
                 pass
 
         self.main_win = None
-        self.w = {}  # віджети головного вікна; порожній, поки вікно не відкрите
+        self.w = {}  # main window widgets; empty while the window isn't open
         self.break_wins = []
         self.break_state = None
         self.water_win = None
@@ -71,26 +71,26 @@ class App(Popups, MainWindow):
         self.last_tick = time.monotonic()
         self.icon_key = None
         self.tooltip = None
-        self.instance = None  # system.SingleInstance — щоб друга копія могла попросити показати вікно
-        self.update_info = None  # (версія, адреса релізу), якщо на GitHub є новіша версія
-        self.last_update_check = None  # time.monotonic() останньої перевірки
-        self.stats_range = 7  # графік статистики: 7 чи 30 днів
-        self.work_pending = 0.0  # час за комп'ютером, ще не записаний у статистику (пишемо раз на хвилину)
-        self.updating = False  # завантажується й встановлюється оновлення
-        self.busy = None  # чому перерва чекає: "fullscreen" / "camera" / "microphone" (system.busy_reason)
-        self.day_start_noted = None  # дата, для якої початок робочого дня вже записано
-        # Сповіщення в куті (popups.show_toast): одне за раз
+        self.instance = None  # system.SingleInstance, so a second copy can ask to show the window
+        self.update_info = None  # (version, release URL) if GitHub has a newer version
+        self.last_update_check = None  # time.monotonic() of the last check
+        self.stats_range = 7  # the statistics chart: 7 or 30 days
+        self.work_pending = 0.0  # time at the computer not yet written to statistics (written once a minute)
+        self.updating = False  # an update is downloading and installing
+        self.busy = None  # why the break waits: "fullscreen" / "camera" / "microphone" (system.busy_reason)
+        self.day_start_noted = None  # the date whose workday start is already recorded
+        # Corner notifications (popups.show_toast): one at a time
         self.toast_win = self.toast_text = self.toast_kind = self.toast_after = self.toast_on_dismiss = None
-        # Головне вікно (main_window): сторінки, кеші перемальовування, позначка «Збережено»
+        # The main window (main_window): pages, redraw caches, the "Saved" mark
         self.pages, self.page_frames, self.tab_buttons = {}, {}, {}
         self.current_page = None
         self.chart_info = None
         self._timeline_key = self._ring_key = None
-        self.timeline_points = []  # [(x, підказка)] позначок шкали дня без підпису
-        self.timeline_spans = []   # [(x0, x1, підказка)] проміжків на смузі дня: відсутність, пауза
-        self.state_saved_at = None  # коли востаннє збережено state.json перед цим запуском
+        self.timeline_points = []  # [(x, tooltip)] of unlabelled day timeline marks
+        self.timeline_spans = []   # [(x0, x1, tooltip)] of spans on the day bar: absence, pause
+        self.state_saved_at = None  # when state.json was last saved before this launch
         self.restore_state()
-        self.restore_today()  # після стану вище: перерахунок води звертається до self.w
+        self.restore_today()  # after the state above: recomputing water uses self.w
         self.adopt_open_spans()
         self.saved_check = self._saved_after = None
 
@@ -103,19 +103,19 @@ class App(Popups, MainWindow):
         self.root.after(UPDATE_CHECK_DELAY_MS, self.check_updates)
 
     def today(self):
-        """Поточний день — календарна дата (доба від 00:00 до 24:00). Ключ статистики."""
+        """The current day is the calendar date (00:00 to 24:00). The statistics key."""
         return workday_date(dt.datetime.now())
 
     def restore_state(self):
-        """Стан таймерів з state.json (той самий робочий день, не старший за 12 год): відлік до перерви,
-        ритм довгих перерв, вода, пауза чи їжа, відповіді на нагадування."""
+        """Timer state from state.json (same workday, no older than 12 h): the countdown to the break,
+        the long-break rhythm, water, a pause or a meal, answers to reminders."""
         data = load_json(STATE_PATH, None)
         try:
             self.state_saved_at = dt.datetime.fromisoformat(data["saved_at"])
         except (TypeError, KeyError, ValueError):
             self.state_saved_at = None
         if data and self.sched.restore(data, dt.datetime.now()):
-            print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} відновлено стан таймерів ({self.sched.mode})",
+            print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} timer state restored ({self.sched.mode})",
                   file=sys.stderr)
 
     def save_state(self):
@@ -126,8 +126,8 @@ class App(Popups, MainWindow):
             traceback.print_exc()
 
     def restore_today(self):
-        """Що вже сталося сьогодні до перезапуску (зі статистики — на випадок, коли state.json немає):
-        з'їдене не нагадуємо, завершений день і питання про кінець дня не повторюємо."""
+        """What already happened today before the restart (from statistics, in case there is no state.json):
+        eaten meals aren't reminded, a finished day and the day-end question aren't repeated."""
         today = self.today()
         rec = self.stats.day(today)
         self.sched.restore_day(today, eaten=[meal for meal in MEALS if rec[f"ate_{meal}"]],
@@ -136,12 +136,12 @@ class App(Popups, MainWindow):
         self.refresh_water_plan()
 
     def minute(self, moment=None):
-        """Хвилина сьогоднішнього робочого дня (після півночі — понад 24:00) — час подій у журналі."""
+        """The minute of today's workday (after midnight, past 24:00): the time of logged events."""
         return day_minute(self.today(), moment or dt.datetime.now())
 
     def adopt_open_spans(self):
-        """Після перезапуску: пауза чи очікування перерви, що досі тривають, ведемо далі; ті, що вже
-        скінчились, поки програми не було, закриваємо часом останнього збереженого стану."""
+        """After a restart: a pause or a held break still in progress goes on; those that ended
+        while the app wasn't running are closed at the time of the last saved state."""
         self.open_spans = {}
         today = self.today()
         wanted = self.span_state()
@@ -152,16 +152,16 @@ class App(Popups, MainWindow):
                 self.open_spans[key] = (date, index, value)
             else:
                 end = self.state_saved_at or dt.datetime.now()
-                self.stats.close(date, index, day_minute(date, end))  # не раніше за початок — стежить close
+                self.stats.close(date, index, day_minute(date, end))  # close keeps it no earlier than the start
 
     def span_state(self):
-        """Які проміжки зараз тривають: вид паузи (timed/eating/finished) і чи чекає перерва."""
+        """Which spans are in progress: the pause kind (timed/eating/finished) and whether a break is held."""
         s = self.sched
         return {"pause": PAUSE_KINDS.get(s.mode), "held": "held" if s.held is not None else None}
 
     def track_spans(self):
-        """Щосекунди й після дій: проміжки журналу за станом планувальника. Почалась пауза, їжа, «до ранку»
-        чи очікування перерви — подія з to = None; скінчилась — закриваємо (день — той, коли почалась)."""
+        """Every second and after actions: log spans from the scheduler state. A pause, a meal, "until morning"
+        or a held break started: an event with to = None; it ended: close it (the day is the one it started on)."""
         now = dt.datetime.now()
         for key, value in self.span_state().items():
             opened = self.open_spans.get(key)
@@ -180,15 +180,15 @@ class App(Popups, MainWindow):
                 self.open_spans[key] = (today, index, value)
 
     def log_away(self):
-        """Людина повернулася: відсутність — у журнал (від останньої дії до повернення)."""
+        """The person is back: log the absence (from the last input to the return)."""
         today = self.today()
         span = absence_span(today, dt.datetime.now(), self.sched.last_away, self.stats.day(today)["day_start"])
         if span:
             self.stats.log("away", span[0], to=span[1])
 
     def workday(self):
-        """(початок, кінець) сьогоднішнього робочого дня в хвилинах: початок — з налаштувань («Початок
-        дня»), або визначений сьогодні, або середній за два тижні, або типовий; кінець — «Робочий день до»."""
+        """(start, end) of today's workday in minutes: the start from the settings ("Workday starts
+        at"), or detected today, or the two-week average, or typical; the end is "Day end"."""
         today = self.today()
         start = (self.cfg["workday_start"] or self.stats.day(today)["day_start"]
                  or average_minute(self.stats.day(today - dt.timedelta(days=i))["day_start"] for i in range(1, 15))
@@ -196,9 +196,9 @@ class App(Popups, MainWindow):
         return workday_span(start, self.cfg["day_end_at"] if self.cfg["day_end_enabled"] else None)
 
     def is_busy(self):
-        """Людина на дзвінку, показує екран чи дивиться щось на весь екран — перерва почекає
-        (Scheduler.tick(busy=…)). Питаємо ОС лише тоді, коли це має значення: попередження чи перерва
-        от-от, або перерва вже чекає; на macOS перевірка звертається до аудіо- й відеосистеми."""
+        """The person is on a call, sharing the screen or watching something fullscreen: the break waits
+        (Scheduler.tick(busy=…)). The OS is asked only when it matters: a warning or a break is
+        imminent, or a break is already waiting; on macOS the check queries the audio and video systems."""
         s = self.sched
         warn = self.cfg["warn_before_sec"]
         if not s.in_break and (s.held is not None or s.remaining <= max(warn, 0) + 2):
@@ -208,14 +208,14 @@ class App(Popups, MainWindow):
         return self.busy is not None
 
     def sync_day(self):
-        """Передає планувальнику, що відомо про сьогодні: склянки, кінець робочого дня, час роботи."""
+        """Tells the scheduler what's known about today: glasses, the workday end, work time."""
         today = self.today()
         rec = self.stats.day(today)
         end = at_workday_minute(today, self.workday()[1])
         self.sched.update_day(rec["water"], end, rec["work_sec"] + int(self.work_pending))
 
     def ask_autostart(self):
-        """macOS, перший запуск: запускати під час входу в систему? Вирішує людина."""
+        """macOS, first launch: open at login? The person decides."""
         def enable():
             try:
                 system.set_autostart(True, __file__)
@@ -226,8 +226,8 @@ class App(Popups, MainWindow):
                         [(t("no"), lambda: None, False), (t("yes"), enable, True)], timeout_ms=10 * 60_000)
 
     def refresh_water_plan(self):
-        """Норма «жінка»/«чоловік»: інтервал води — так, щоб денну мету встигнути за фактичний робочий день.
-        Лише під час роботи: у файл налаштувань розраховане не пишеться (save_config)."""
+        """The female/male norm: a water interval that meets the daily goal within the actual workday.
+        Runtime only: the computed values aren't written to the settings file (save_config)."""
         start, end = self.workday()
         before = (self.cfg["water_goal"], self.cfg["water_interval_min"])
         apply_water_profile(self.cfg, end - start)
@@ -236,11 +236,11 @@ class App(Popups, MainWindow):
         if self.w.get("water_hint"):
             self.refresh_water_profile()
 
-    # --- оновлення ---
+    # --- updates ---
 
     def check_updates(self, repeat=True):
-        """Щогодини питає GitHub про останній реліз; мережа — у фоновому потоці.
-        repeat=False — позачергова перевірка (відкриття головного вікна), без нового розкладу."""
+        """Asks GitHub for the latest release every hour; the network runs in a background thread.
+        repeat=False is an extra check (opening the main window), without rescheduling."""
         if self.cfg["check_updates"] and not self.updating:
             self.last_update_check = time.monotonic()
             threading.Thread(target=lambda: self.queue.put(("update", updates.fetch_latest())), daemon=True).start()
@@ -248,7 +248,7 @@ class App(Popups, MainWindow):
             self.root.after(UPDATE_CHECK_INTERVAL_MS, self.check_updates)
 
     def recheck_updates_soon(self):
-        """Відкрили головне вікно — варто знати про нову версію, не чекаючи щогодинної перевірки."""
+        """The main window opened: worth knowing about a new version without waiting for the hourly check."""
         last = self.last_update_check
         if last is not None and time.monotonic() - last >= UPDATE_RECHECK_ON_OPEN_SEC:
             self.check_updates(repeat=False)
@@ -256,7 +256,7 @@ class App(Popups, MainWindow):
     def on_update_result(self, result, install_now=False):
         if not result or not updates.is_newer(result[0], current_version()):
             return
-        print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} доступне оновлення {result[0]}", file=sys.stderr)
+        print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} update available: {result[0]}", file=sys.stderr)
         self.update_info = result
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
@@ -274,8 +274,8 @@ class App(Popups, MainWindow):
         webbrowser.open(self.update_info[1] if self.update_info else updates.LATEST_PAGE)
 
     def start_update(self):
-        """Кнопка «Оновити»: завантажити, перевірити й встановити нову версію самостійно.
-        Якщо це неможливо (запуск із коду, немає файлу для цієї системи) — відкрити сторінку релізу."""
+        """The Update button: download, verify and install the new version by itself.
+        If that's impossible (running from source, no file for this system), open the release page."""
         if self.updating or not self.update_info:
             return
         asset = updates.pick_asset(self.update_info[2])
@@ -302,19 +302,19 @@ class App(Popups, MainWindow):
             if self.toast_text:
                 self.toast_text.configure(text=t("updating_progress", percent=value))
         elif kind == "update_ready":
-            print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} встановлюю оновлення з {value}", file=sys.stderr)
+            print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} installing update from {value}", file=sys.stderr)
             if self.toast_text:
                 self.toast_text.configure(text=t("updating_install"))
                 self.root.update()
             updates.install(value, autostart=system.get_autostart(), language=i18n.get_language())
-            self.handle("quit")  # інсталятор (Windows) чи скрипт (macOS) запустить нову версію
+            self.handle("quit")  # the installer (Windows) or script (macOS) starts the new version
         elif kind == "update_failed":
             self.updating = False
             self.show_toast(t("update_failed_title"), t("update_failed_text"),
                             [(t("download"), self.open_update, True), (t("later"), lambda: None, False)],
                             timeout_ms=60_000)
 
-    # --- трей ---
+    # --- tray ---
 
     def build_menu(self):
         def post(action):
@@ -328,7 +328,7 @@ class App(Popups, MainWindow):
             item(t("break_now"), post("break_now")),
             item(t("reset"), post("reset")),
             pystray.Menu.SEPARATOR,
-            # Швидкі дії — без головного вікна
+            # Quick actions, without the main window
             item(t("tray_drink"), post("drink"), visible=lambda i: self.cfg["water_enabled"]),
             item(t("day_end_finish"), post(("pause", None)),
                  visible=lambda i: not self.sched.day_finished(dt.datetime.now())),
@@ -366,7 +366,7 @@ class App(Popups, MainWindow):
             self.set_water(self.stats.day(self.today())["water"] + 1)
         elif action == "resume":
             if self.sched.eating:
-                self.close_meal_window()  # «Продовжуємо?» більше не потрібне
+                self.close_meal_window()  # "Continue?" isn't needed anymore
                 self.sched.finish_meal()
             self.sched.resume()
             self.track_spans()
@@ -375,7 +375,7 @@ class App(Popups, MainWindow):
             if self.break_state:
                 self.close_break_windows()
                 self.sched.finish_break()
-            if action[1] is None:  # «до ранку» — це «Завершити день»
+            if action[1] is None:  # "until morning" is "Finish the day"
                 self.finish_day()
             self.sched.pause(action[1])
             self.track_spans()
@@ -392,19 +392,19 @@ class App(Popups, MainWindow):
             self.flush_work_time()
             self.save_state()
             if system.IS_MAC:
-                self.icon.visible = False  # stop() зупинив би спільний з Tk цикл NSApplication
+                self.icon.visible = False  # stop() would stop the NSApplication loop shared with Tk
             else:
                 self.icon.stop()
             self.root.destroy()
 
 
     def finish_day(self):
-        """День завершено (кнопкою у віконці кінця дня чи паузою «до ранку»): час — у статистику,
-        віконця, що чекали на відповідь, — геть."""
+        """The day is finished (with the button in the day-end window or the "until morning" pause): the time goes
+        to statistics, windows waiting for an answer go away."""
         if not self.stats.day(self.today())["day_end"]:
             self.stats.set("day_end", minute_of_day(dt.datetime.now()))
             self.stats.log("day_end", self.minute(), replace=())
-        if self.toast_kind == "day_end":  # і «Робочий день скінчився», і ліміт роботи
+        if self.toast_kind == "day_end":  # both "The workday is over" and the work limit
             self.close_toast(dismissed=False)
         if not self.meal_demo:
             self.close_meal_window()
@@ -420,7 +420,7 @@ class App(Popups, MainWindow):
         elif s.in_break:
             title = t("tip_break", app=APP_NAME)
             key = ("break",)
-        elif s.held is not None:  # перерва настала, але людина зайнята — чекає
+        elif s.held is not None:  # the break is due but the person is busy: it waits
             title = t("tip_held", app=APP_NAME)
             key = ("run", 24)
         else:
@@ -436,11 +436,11 @@ class App(Popups, MainWindow):
             progress = 1 if key[0] == "break" else (key[1] / 24 if key[0] == "run" else 0)
             self.icon.icon = make_icon(progress, key[0] == "paused")
 
-    # --- головний цикл ---
+    # --- main loop ---
 
     def loop(self):
         now = time.monotonic()
-        # Не більше 5 с за крок: час сну комп'ютера не зараховується як робота.
+        # No more than 5 s per step: the computer's sleep time doesn't count as work.
         delta = min(now - self.last_tick, 5.0)
         self.last_tick = now
         was_paused = self.sched.paused_until is not None
@@ -458,25 +458,25 @@ class App(Popups, MainWindow):
             elif event == "meal_over":
                 self.show_meal_over()
             elif event == "day_end":
-                self.stats.set_times("day_end_asked", [minute_of_day(dt.datetime.now())])  # не питати після перезапуску
+                self.stats.set_times("day_end_asked", [minute_of_day(dt.datetime.now())])  # don't ask after a restart
                 self.show_day_end()
             elif event == "overwork":
                 self.stats.log("overwork", self.minute())
                 self.show_overwork()
             elif event == "day_continued":
-                # День триває — він не завершений: прибираємо час завершення, кнопка «Завершити день» повертається
+                # The day goes on, so it isn't finished: clear the finish time, the "Finish the day" button comes back
                 self.stats.set("day_end", 0)
                 self.stats.unlog("day_end")
                 self.icon.update_menu()
             elif event == "back":
                 self.log_away()
-            # "break_held" (перерва чекає кінця дзвінка) і "back" (повернувся) окремого віконця не мають;
-            # очікування перерви, як і паузи, журнал бачить за станом (track_spans)
+            # "break_held" (the break waits for a call to end) and "back" (returned) have no window of their own;
+            # the log sees a held break, like a pause, from the state (track_spans)
         self.track_spans()
         if was_paused and self.sched.paused_until is None:
             self.icon.update_menu()
         self.note_day_start(idle)
-        if self.sched.state == WORKING:  # перерва, їжа, пауза, відсутність — не робота
+        if self.sched.state == WORKING:  # a break, a meal, a pause, an absence are not work
             self.work_pending += delta
             if self.work_pending >= 60:
                 self.flush_work_time()
@@ -488,7 +488,7 @@ class App(Popups, MainWindow):
         self.root.after(1000, self.loop)
 
     def note_day_start(self, idle):
-        """Перша дія з мишею чи клавіатурою сьогодні — початок робочого дня (раз на день)."""
+        """The first mouse or keyboard input today is the workday start (once a day)."""
         today = self.today()
         if self.day_start_noted == today:
             return
@@ -500,7 +500,7 @@ class App(Popups, MainWindow):
             self.stats.set("day_start", minute)
             self.stats.log("day_start", minute, replace=())
             self.day_start_noted = today
-            self.refresh_water_plan()  # відомий початок дня — точніший інтервал води
+            self.refresh_water_plan()  # a known day start gives a more accurate water interval
 
     def flush_work_time(self):
         seconds = int(self.work_pending)
@@ -513,13 +513,13 @@ class App(Popups, MainWindow):
             system.beep("info", self.sound_name())
 
 def current_version():
-    """Версія для порівняння з релізами. RHYTHMOS_VERSION_OVERRIDE — лише для перевірки
-    самооновлення в CI: зібрана програма «вдає» стару версію й оновлюється до останнього релізу."""
+    """The version to compare with releases. RHYTHMOS_VERSION_OVERRIDE is only for testing
+    self-update in CI: the built app "pretends" to be an old version and updates to the latest release."""
     return os.environ.get("RHYTHMOS_VERSION_OVERRIDE") or __version__
 
 
 def quartz_available():
-    """Для smoke-тесту: чи є в збірці Quartz (без нього на macOS не видно бездіяльності)."""
+    """For the smoke test: whether the build has Quartz (without it macOS can't see idleness)."""
     if not system.IS_MAC:
         return "n/a"
     try:
@@ -530,8 +530,8 @@ def quartz_available():
 
 
 def run_smoke_test(app, out_dir):
-    """--smoke-test: проходить усі вікна без участі людини й робить знімки екрана.
-    Потрібен для перевірки збірки на macOS-сервері GitHub Actions, де немає кому дивитися."""
+    """--smoke-test: walks through every window without a person and takes screenshots.
+    Needed to check the build on the GitHub Actions macOS runner, where nobody can look."""
     os.makedirs(out_dir, exist_ok=True)
     original_language = app.cfg["language"]
     counter = [0]
@@ -550,7 +550,7 @@ def run_smoke_test(app, out_dir):
              f"(asks {area.inner.winfo_reqwidth()}x{area.inner.winfo_reqheight()})")
 
     def note(text):
-        """Рядок у журнал і в info.txt поруч зі знімками: на macOS stderr зібраної програми не зберігається."""
+        """A line to the log and to info.txt next to the screenshots: on macOS the built app's stderr isn't kept."""
         print(f"smoke test: {text}", file=sys.stderr)
         with open(os.path.join(out_dir, "info.txt"), "a", encoding="utf-8") as f:
             f.write(text + "\n")
@@ -559,10 +559,10 @@ def run_smoke_test(app, out_dir):
         (app.open_main, None),
         (lambda: note(f"main window {app.main_win.winfo_width()}x{app.main_win.winfo_height()}, "
                       f"screen {app.root.winfo_screenwidth()}x{app.root.winfo_screenheight()}"), None),
-        # Бездіяльність (для початку робочого дня): на macOS — через Quartz, який має потрапити в збірку
+        # Idleness (for the workday start): on macOS through Quartz, which must be in the build
         (lambda: note(f"idle {system.idle_seconds():.1f} s, day start {app.stats.day(app.today())['day_start']}, "
                       f"quartz {quartz_available()}"), None),
-        # Зайнятість (дзвінок, повний екран): на macOS — справжні виклики CoreAudio, CoreMediaIO й Quartz
+        # Busyness (a call, fullscreen): on macOS real CoreAudio, CoreMediaIO and Quartz calls
         (lambda: note(f"busy {system.busy_reason()}"), None),
         (lambda: page("status"), "status"),
         (lambda: page("stats"), "stats"),
@@ -589,7 +589,7 @@ def run_smoke_test(app, out_dir):
         (app.close_toast, None),
         (lambda: (setattr(app.sched, "warned", True), app.show_break_warning()), "break_warning"),
         (app.close_toast, None),
-        # Мережа й сертифікати: на macOS без certifi HTTPS у зібраній програмі не працює
+        # Network and certificates: on macOS HTTPS doesn't work in the built app without certifi
         (lambda: print(f"smoke test: update check -> {updates.fetch_latest()}", file=sys.stderr), None),
     ]
 
@@ -619,7 +619,7 @@ def run_smoke_test(app, out_dir):
 
 def main():
     system.init_process()
-    # Команди для інсталятора: увімкнути/вимкнути автозапуск, задати мову — і вийти
+    # Installer commands: turn autostart on/off, set the language, and exit
     commands = [arg for arg in sys.argv[1:] if arg.startswith(("--set-autostart=", "--set-language="))]
     for arg in commands:
         name, value = arg[2:].split("=", 1)
@@ -632,16 +632,16 @@ def main():
 
     instance = system.SingleInstance()
     if not instance.acquire():
-        return  # уже запущена копія сама покаже вікно
+        return  # the running copy shows the window itself
 
     smoke_dir = sys.argv[sys.argv.index("--smoke-test") + 1] if "--smoke-test" in sys.argv else None
-    # macOS: інсталятора з галочкою немає (програму просто перетягують у «Програми»), тож під час першого
-    # запуску питаємо про автозапуск — самі його не вмикаємо: налаштування вирішує людина
+    # macOS: there's no installer with a checkbox (the app is just dragged to Applications), so on the first
+    # launch we ask about autostart and never turn it on ourselves: the person decides the settings
     ask_autostart = system.IS_MAC and getattr(sys, "frozen", False) and not smoke_dir and not os.path.exists(CONFIG_PATH)
 
     app = App()
     if ask_autostart:
-        save_config(app.cfg)  # лише щоб не питати вдруге; значення — типові
+        save_config(app.cfg)  # only so we don't ask twice; the values are the defaults
         app.root.after(3000, app.ask_autostart)
     app.instance = instance
     if smoke_dir:
@@ -652,7 +652,7 @@ def main():
         app.root.after(1500, lambda: (setattr(app.sched.water, "open", True), app.show_water()))
     if "--open" in sys.argv:
         app.root.after(500, app.open_main)
-    if "--update-now" in sys.argv:  # перевірка самооновлення: одразу шукаємо реліз і оновлюємося
+    if "--update-now" in sys.argv:  # self-update test: look for a release and update right away
         threading.Thread(target=lambda: app.queue.put(("update_now", updates.fetch_latest())), daemon=True).start()
     app.root.mainloop()
     if smoke_dir:
@@ -660,14 +660,14 @@ def main():
 
 
 def setup_logging():
-    """pythonw не має консолі, тож помилки інакше зникають безслідно — пишемо їх у rhythmos.log."""
+    """pythonw has no console, so errors would otherwise vanish without a trace: write them to rhythmos.log."""
     if getattr(sys.stderr, "name", "") == LOG_PATH:
-        log = sys.stderr  # вже відкрито на початку файлу
+        log = sys.stderr  # already opened at the top of the file
     else:
         os.makedirs(DATA_DIR, exist_ok=True)
         log = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
     threading.excepthook = lambda a: traceback.print_exception(a.exc_type, a.exc_value, a.exc_traceback, file=log)
-    print(f"--- {dt.datetime.now():%Y-%m-%d %H:%M:%S} старт {sys.argv[1:]}", file=log)
+    print(f"--- {dt.datetime.now():%Y-%m-%d %H:%M:%S} start {sys.argv[1:]}", file=log)
     return log
 
 
@@ -676,7 +676,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        # Без raise: збірка без консолі інакше показує вікно з помилкою й чекає на клік —
-        # під час тихого встановлення натиснути його нікому
+        # No raise: a build without a console would otherwise show an error window and wait for a click,
+        # and during a silent install there's nobody to click it
         traceback.print_exc(file=log)
         sys.exit(1)

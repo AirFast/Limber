@@ -1,2 +1,2 @@
-# Скрипти для macOS мусять мати LF, інакше bash спіткнеться об \r
+# macOS scripts must have LF, otherwise bash trips over \r
 *.sh text eol=lf

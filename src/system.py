@@ -1,7 +1,7 @@
-"""Усе, що залежить від операційної системи: Windows і macOS.
+"""Everything that depends on the operating system: Windows and macOS.
 
-Решта програми звертається лише до функцій цього модуля, тож платформні бібліотеки
-(winreg, ctypes.windll, AppKit) імпортуються тільки всередині відповідних гілок.
+The rest of the app only calls this module's functions, so platform libraries
+(winreg, ctypes.windll, AppKit) are imported only inside the matching branches.
 """
 import os
 import plistlib
@@ -12,22 +12,22 @@ IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 
 APP_NAME = "Rhythmos"
-APP_ID = "Rhythmos.BreakReminder"            # Windows: AppUserModelID для власної іконки в панелі завдань
-BUNDLE_ID = "com.airfast.rhythmos"           # macOS: ідентифікатор програми й LaunchAgent
-TASK_NAME = "Rhythmos"                       # Windows: завдання Планувальника
+APP_ID = "Rhythmos.BreakReminder"            # Windows: AppUserModelID for our own taskbar icon
+BUNDLE_ID = "com.airfast.rhythmos"           # macOS: the app and LaunchAgent identifier
+TASK_NAME = "Rhythmos"                       # Windows: the Task Scheduler task
 MUTEX_NAME = "Local\\RhythmosSingleInstance"
 SHOW_EVENT_NAME = "Local\\RhythmosShowWindow"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 def data_dir():
-    """Папка налаштувань, статистики й журналу."""
+    """The folder for settings, statistics and the log."""
     if IS_MAC:
         return os.path.expanduser("~/Library/Application Support/Rhythmos")
     return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Rhythmos")
 
 
-# ---------- шрифти ----------
+# ---------- fonts ----------
 
 if IS_MAC:
     _FAMILY = "Helvetica Neue"
@@ -36,17 +36,17 @@ else:
 
 
 def font(size, style="regular"):
-    """Шрифт інтерфейсу: regular, semibold або light."""
+    """The UI font: regular, semibold or light."""
     if IS_MAC:
         return (_FAMILY, size, "bold") if style == "semibold" else (_FAMILY, size)
     family = {"semibold": "Segoe UI Semibold", "light": "Segoe UI Light"}.get(style, _FAMILY)
     return (family, size)
 
 
-# ---------- процес і вікна ----------
+# ---------- process and windows ----------
 
 def init_process():
-    """До створення вікон: чіткі шрифти на Windows і власна іконка в панелі завдань."""
+    """Before creating windows: crisp fonts on Windows and our own taskbar icon."""
     if not IS_WINDOWS:
         return
     import ctypes
@@ -61,12 +61,12 @@ def init_process():
 
 
 def init_tk(root):
-    """macOS рахує шрифти в пунктах при 72 dpi — масштабуємо як на Windows (96 dpi),
-    щоб розмітка вікон виглядала однаково."""
+    """macOS counts fonts in points at 72 dpi; scale as on Windows (96 dpi)
+    so window layouts look the same."""
     if IS_MAC:
         root.tk.call("tk", "scaling", 96 / 72)
-        # Tk під час старту робить програму звичайною (Dock, меню «File Edit…»), ігноруючи
-        # LSUIElement з Info.plist. Повертаємо режим програми рядка меню.
+        # On startup Tk turns the app into a regular one (Dock, the "File Edit…" menu), ignoring
+        # LSUIElement from Info.plist. Switch back to a menu-bar app.
         try:
             from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
             NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -75,13 +75,13 @@ def init_tk(root):
 
 
 def style_window(win):
-    """Темний заголовок вікна під темний інтерфейс програми."""
+    """A dark window title bar to match the app's dark UI."""
     if IS_WINDOWS:
         import ctypes
         try:
             hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
             on = ctypes.c_int(1)
-            for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (нові та старі збірки Windows 10)
+            for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (newer and older Windows 10 builds)
                 if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
                     break
         except (AttributeError, OSError):
@@ -94,14 +94,14 @@ def style_window(win):
 
 
 def on_reopen(root, callback):
-    """macOS: повторне відкриття вже запущеної програми (Finder, Launchpad, Spotlight) не стартує
-    другу копію, а надсилає першій подію «reopen» — показуємо на неї вікно."""
+    """macOS: reopening the running app (Finder, Launchpad, Spotlight) doesn't start
+    a second copy but sends the first one a "reopen" event; we show the window on it."""
     if IS_MAC:
         root.createcommand("::tk::mac::ReopenApplication", callback)
 
 
 def activate_app():
-    """macOS: програма рядка меню неактивна, тож перед повноекранною перервою виводимо її наперед."""
+    """macOS: a menu-bar app is inactive, so bring it to the front before a fullscreen break."""
     if IS_MAC:
         try:
             from AppKit import NSApplication
@@ -111,7 +111,7 @@ def activate_app():
 
 
 def monitors():
-    """[(x, y, w, h, (робоча область l, t, r, b), основний?)] — основний монітор першим."""
+    """[(x, y, w, h, (work area l, t, r, b), primary?)], the primary monitor first."""
     if IS_MAC:
         return _monitors_mac()
     if IS_WINDOWS:
@@ -120,7 +120,7 @@ def monitors():
 
 
 def idle_seconds():
-    """Скільки секунд не було ні миші, ні клавіатури. 0 — якщо ОС не відповіла (тоді вважаємо, що людина тут)."""
+    """Seconds without mouse or keyboard. 0 if the OS didn't answer (then the person is assumed present)."""
     try:
         if IS_WINDOWS:
             import ctypes
@@ -132,7 +132,7 @@ def idle_seconds():
             info.cbSize = ctypes.sizeof(info)
             if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
                 return 0.0
-            # Обидва лічильники — 32-бітні мілісекунди від старту системи, тож різниця — по модулю 2^32
+            # Both counters are 32-bit milliseconds since system start, so the difference is modulo 2^32
             return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000
         if IS_MAC:
             from Quartz import (CGEventSourceSecondsSinceLastEventType, kCGAnyInputEventType,
@@ -145,7 +145,7 @@ def idle_seconds():
 
 
 def work_area(root):
-    """Робоча область основного екрана (без панелі завдань / рядка меню й Dock): (l, t, r, b)."""
+    """The primary screen's work area (without the taskbar / menu bar and Dock): (l, t, r, b)."""
     screens = monitors()
     if screens:
         return screens[0][4]
@@ -183,7 +183,7 @@ def _monitors_windows():
 
 
 def _monitors_mac():
-    """NSScreen рахує y знизу вгору від основного екрана, Tk — згори вниз."""
+    """NSScreen counts y from the bottom up from the primary screen, Tk from the top down."""
     try:
         from AppKit import NSScreen
     except ImportError:
@@ -204,7 +204,7 @@ def _monitors_mac():
 
 
 def screenshot(path):
-    """Знімок усього екрана (для --smoke-test)."""
+    """A screenshot of the whole screen (for --smoke-test)."""
     if IS_MAC:
         subprocess.run(["screencapture", "-x", path], check=False)
     else:
@@ -212,15 +212,15 @@ def screenshot(path):
         ImageGrab.grab(all_screens=True).save(path)
 
 
-# ---------- зайнятість: повноекранні програми й дзвінки ----------
+# ---------- busyness: fullscreen apps and calls ----------
 
 def busy_reason():
-    """Чи не можна зараз перебивати людину повноекранною перервою.
+    """Whether the person shouldn't be interrupted by a fullscreen break right now.
 
-    None — можна; інакше коротка причина: "fullscreen" (гра, відео, презентація на весь екран),
-    "camera" або "microphone" (найімовірніше — дзвінок). Дешева (кілька мілісекунд), тож її можна
-    викликати хоч щосекунди; на macOS — з головного потоку (NSScreen). Ніколи не кидає винятків:
-    якщо ОС не відповіла — вважаємо, що людина не зайнята."""
+    None means fine; otherwise a short reason: "fullscreen" (a game, video, fullscreen presentation),
+    "camera" or "microphone" (most likely a call). Cheap (a few milliseconds), so it can be
+    called even every second; on macOS from the main thread (NSScreen). Never raises:
+    if the OS didn't answer, the person is assumed not busy."""
     if IS_WINDOWS:
         checks = (("fullscreen", _fullscreen_windows),
                   ("camera", lambda: _device_in_use(_consent_apps("webcam"))),
@@ -240,43 +240,43 @@ def busy_reason():
 
 
 def _covers_monitor(window_rect, monitor_rect):
-    """Чи закриває вікно весь монітор. Обидва прямокутники — (left, top, right, bottom).
-    Розгорнуте вікно сюди не потрапляє: воно закінчується над панеллю завдань / Dock."""
+    """Whether a window covers the whole monitor. Both rectangles are (left, top, right, bottom).
+    A maximized window doesn't count: it ends above the taskbar / Dock."""
     left, top, right, bottom = window_rect
     m_left, m_top, m_right, m_bottom = monitor_rect
     return (m_right > m_left and m_bottom > m_top
             and left <= m_left and top <= m_top and right >= m_right and bottom >= m_bottom)
 
 
-# Windows: робочий стіл і панель завдань теж «вікна на весь екран» — їх пропускаємо
+# Windows: the desktop and the taskbar are "fullscreen windows" too; skip them
 _SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
 
 
 def _is_fullscreen_window(class_name, pid, own_pid, rect, monitor, maximized_with_title=False):
-    """Windows: чи є активне вікно повноекранною програмою.
-    Власні вікна не рахуємо — екран перерви Rhythmos сам повноекранний. Розгорнуте вікно із
-    заголовком при автоприховуванні панелі завдань теж закриває монітор, але це не повний екран."""
+    """Windows: whether the active window is a fullscreen app.
+    Our own windows don't count: the Rhythmos break screen is fullscreen itself. A maximized window with
+    a title bar and an auto-hidden taskbar covers the monitor too, but it isn't fullscreen."""
     if pid == own_pid or class_name in _SHELL_CLASSES or maximized_with_title:
         return False
     return _covers_monitor(rect, monitor)
 
 
 def _device_in_use(apps):
-    """apps — значення реєстру ConsentStore для кожної програми (словники).
-    Пристрій зайнятий, якщо якась програма почала ним користуватися (LastUsedTimeStart ≠ 0)
-    і ще не закінчила (LastUsedTimeStop = 0)."""
+    """apps: the ConsentStore registry values for each app (dicts).
+    The device is busy if some app started using it (LastUsedTimeStart ≠ 0)
+    and hasn't finished yet (LastUsedTimeStop = 0)."""
     return any(app.get("LastUsedTimeStart") and app.get("LastUsedTimeStop") == 0 for app in apps)
 
 
-# macOS: системні вікна, які можуть займати весь екран, але не означають, що людина зайнята
+# macOS: system windows that may cover the whole screen but don't mean the person is busy
 _MAC_SYSTEM_OWNERS = {"Dock", "Window Server", "SystemUIServer", "Control Center", "Notification Center",
                       "WindowManager"}
 
 
 def _fullscreen_in(windows, screens, own_pid):
-    """macOS: чи є серед вікон (словники CGWindowListCopyWindowInfo) звичайне (шар 0) непрозоре
-    вікно іншої програми, що закриває якийсь екран. screens — [(left, top, right, bottom)] у
-    координатах Quartz (від верхнього лівого кута основного екрана)."""
+    """macOS: whether the windows (CGWindowListCopyWindowInfo dicts) include a regular (layer 0) opaque
+    window of another app that covers some screen. screens: [(left, top, right, bottom)] in
+    Quartz coordinates (from the top left corner of the primary screen)."""
     for window in windows:
         if window.get("kCGWindowLayer") != 0 or window.get("kCGWindowOwnerPID") == own_pid:
             continue
@@ -294,8 +294,8 @@ _user32 = None
 
 
 def _user32_api():
-    """Окремий екземпляр user32 з точними типами (дескриптори 64-бітні), щоб не змінювати
-    спільний ctypes.windll.user32, яким користується решта модуля."""
+    """A separate user32 instance with exact types (64-bit handles), so the shared
+    ctypes.windll.user32 used by the rest of the module isn't changed."""
     global _user32
     if _user32 is None:
         import ctypes
@@ -318,7 +318,7 @@ def _user32_api():
 
 
 def _fullscreen_windows():
-    """Windows: активне вікно іншої програми закриває весь свій монітор (разом із панеллю завдань)."""
+    """Windows: the active window of another app covers its whole monitor (taskbar included)."""
     import ctypes
     from ctypes import wintypes
 
@@ -329,7 +329,7 @@ def _fullscreen_windows():
     user32 = _user32_api()
     hwnd = user32.GetForegroundWindow()
     if not hwnd or not user32.IsWindowVisible(hwnd):
-        return False  # заблокований екран, перемикання вікон
+        return False  # a locked screen, window switching
     name = ctypes.create_unicode_buffer(64)
     user32.GetClassNameW(hwnd, name, 64)
     pid = wintypes.DWORD()
@@ -353,10 +353,10 @@ _CONSENT_STORE = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessMan
 
 
 def _consent_apps(capability):
-    """Windows: значення LastUsedTimeStart/Stop кожної програми, що зверталася до пристрою
-    (webcam або microphone) — ті самі дані, з яких Windows показує значок камери/мікрофона в треї.
-    Програми з Microsoft Store — прямо під ключем пристрою, звичайні — під «NonPackaged».
-    Генератор: busy_reason зупиняється на першій програмі, що зараз користується пристроєм."""
+    """Windows: LastUsedTimeStart/Stop of each app that used the device
+    (webcam or microphone): the same data Windows uses for the camera/microphone icon in the tray.
+    Microsoft Store apps are right under the device key, regular ones under "NonPackaged".
+    A generator: busy_reason stops at the first app that is using the device now."""
     import winreg
     for path in (rf"{_CONSENT_STORE}\{capability}", rf"{_CONSENT_STORE}\{capability}\NonPackaged"):
         try:
@@ -385,8 +385,8 @@ def _consent_apps(capability):
 
 
 def _fullscreen_mac():
-    """macOS: вікно іншої програми на весь екран (повноекранний режим, відео, презентація).
-    Список вікон і їхні межі доступні без дозволу «Запис екрана» — потрібні лише назви вікон."""
+    """macOS: another app's window is fullscreen (fullscreen mode, video, presentation).
+    The window list and bounds are available without the Screen Recording permission; only window names need it."""
     from Quartz import (CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
                         kCGWindowListOptionOnScreenOnly)
     screens = [(x, y, x + w, y + h) for x, y, w, h, _work, _main in _monitors_mac()]
@@ -395,18 +395,18 @@ def _fullscreen_mac():
     return _fullscreen_in(windows, screens, os.getpid())
 
 
-# macOS: CoreAudio і CoreMediaIO викликаємо через ctypes — без додаткових пакетів pyobjc
+# macOS: CoreAudio and CoreMediaIO are called through ctypes, without extra pyobjc packages
 _mac_frameworks = {}
 
 
 def _fourcc(code):
-    """Чотирисимвольний код Apple ('dIn ') → UInt32."""
+    """An Apple four-character code ('dIn ') → UInt32."""
     return int.from_bytes(code.encode("ascii"), "big")
 
 
 def _mac_property_api(framework):
-    """(GetPropertyDataSize, GetPropertyData, структура адреси властивості) для CoreAudio або CoreMediaIO.
-    Обидві мають однакову модель «об'єкт → властивість {selector, scope, element}»."""
+    """(GetPropertyDataSize, GetPropertyData, the property address struct) for CoreAudio or CoreMediaIO.
+    Both share the same "object → property {selector, scope, element}" model."""
     if framework not in _mac_frameworks:
         import ctypes
 
@@ -428,8 +428,8 @@ def _mac_property_api(framework):
 
 
 def _mac_property(framework, obj, selector, as_list=False):
-    """Значення UInt32-властивості об'єкта (або список, якщо as_list). None — якщо ОС не відповіла
-    (зокрема, властивості немає в цій версії macOS)."""
+    """The value of an object's UInt32 property (or a list if as_list). None if the OS didn't answer
+    (in particular, the property doesn't exist in this macOS version)."""
     import ctypes
     size_fn, data_fn, PropertyAddress = _mac_property_api(framework)
     address = PropertyAddress(_fourcc(selector), _fourcc("glob"), 0)  # scope global, element main
@@ -447,11 +447,11 @@ def _mac_property(framework, obj, selector, as_list=False):
 
 
 def _microphone_in_use_mac():
-    """macOS: хтось записує звук із мікрофона — та сама ознака, що й помаранчева крапка в рядку меню.
-    macOS 14+: перебираємо аудіопроцеси (kAudioHardwarePropertyProcessObjectList) і дивимося, чи
-    котрийсь (не ми) має активний вхід. Старіші версії: чи працює стандартний пристрій введення
-    (kAudioDevicePropertyDeviceIsRunningSomewhere) — менш точно: USB-гарнітура з одним пристроєм на
-    вхід і вихід «працює» й тоді, коли в ній просто грає музика. Дозволу на мікрофон не потрібно."""
+    """macOS: someone is recording from the microphone, the same signal as the orange dot in the menu bar.
+    macOS 14+: go through the audio processes (kAudioHardwarePropertyProcessObjectList) and check whether
+    any of them (not us) has an active input. Older versions: whether the default input device is running
+    (kAudioDevicePropertyDeviceIsRunningSomewhere), less precise: a USB headset with one device for
+    input and output is "running" even when it's just playing music. No microphone permission needed."""
     processes = _mac_property("CoreAudio", 1, "prs#", as_list=True)  # 1 — kAudioObjectSystemObject
     if processes is not None:
         own = os.getpid()
@@ -462,19 +462,19 @@ def _microphone_in_use_mac():
 
 
 def _camera_in_use_mac():
-    """macOS: якась програма зараз знімає камерою (зелена крапка біля камери).
-    CoreMediaIO віддає список камер і kCMIODevicePropertyDeviceIsRunningSomewhere для кожної
-    без дозволу на камеру — на сам потік ми не підписуємося. Віртуальні камери (OBS тощо) теж
-    рахуються, коли їх хтось використовує."""
+    """macOS: some app is using the camera now (the green dot next to the camera).
+    CoreMediaIO gives the camera list and kCMIODevicePropertyDeviceIsRunningSomewhere for each
+    without camera permission; we never subscribe to the stream itself. Virtual cameras (OBS etc.) also
+    count when someone uses them."""
     devices = _mac_property("CoreMediaIO", 1, "dev#", as_list=True)  # 1 — kCMIOObjectSystemObject
     return any(_mac_property("CoreMediaIO", d, "gone") for d in devices or [])
 
 
-# ---------- звук і сповіщення ----------
+# ---------- sound and notifications ----------
 
-# Windows: події стандартної звукової схеми («Панель керування → Звук → Звуки»).
-# Звук беремо з поточної схеми користувача — якщо він змінить його у Windows, Rhythmos зіграє його ж.
-# Ідентифікатор → подія; підпис для інтерфейсу — i18n "snd_<ідентифікатор>".
+# Windows: events of the standard sound scheme ("Control Panel → Sound → Sounds").
+# The sound comes from the user's current scheme: if they change it in Windows, Rhythmos plays theirs.
+# Identifier → event; the UI label is i18n "snd_<identifier>".
 _WINDOWS_EVENTS = [
     ("notification", "Notification.Default"),
     ("reminder", "Notification.Reminder"),
@@ -483,13 +483,13 @@ _WINDOWS_EVENTS = [
     ("chime", "Notification.Proximity"),
     ("default", ".Default"),
 ]
-# Якщо у схемі звуків немає (наприклад, «Без звуків») — стандартні файли Windows напряму
+# If the scheme has no sounds (e.g. "No Sounds"), the standard Windows files directly
 _WINDOWS_FALLBACK = [
     ("notification", "Windows Notify System Generic.wav"), ("reminder", "Windows Notify Calendar.wav"),
     ("message", "Windows Notify Messaging.wav"), ("mail", "Windows Notify Email.wav"),
     ("chime", "Windows Proximity Notification.wav"), ("default", "Windows Background.wav"),
 ]
-# Інші стандартні звуки Windows (C:\Windows\Media), приємні як сигнал перерви
+# Other standard Windows sounds (C:\Windows\Media) that work well as a break signal
 _WINDOWS_EXTRA = [
     ("ding", "Windows Ding.wav"), ("nudge", "Windows Message Nudge.wav"), ("balloon", "Windows Balloon.wav"),
     ("classic", "Windows Notify.wav"), ("exclamation", "Windows Exclamation.wav"),
@@ -497,33 +497,33 @@ _WINDOWS_EXTRA = [
     ("print", "Windows Print complete.wav"), ("logon", "Windows Logon.wav"),
     ("chimes", "chimes.wav"), ("chord", "chord.wav"), ("tada", "tada.wav"),
 ]
-# macOS: стандартні звуки сповіщень («Системні параметри → Звук»)
+# macOS: standard notification sounds ("System Settings → Sound")
 _MAC_SOUNDS = ["Glass", "Ping", "Hero", "Pop", "Purr", "Submarine", "Funk", "Bottle", "Blow", "Frog", "Morse",
                "Sosumi", "Tink", "Basso"]
-# Новіші звуки сповіщень macOS (Sonoma і пізніші): є не в усіх версіях — беремо, якщо знайдуться
+# Newer macOS notification sounds (Sonoma and later): not in every version, used if found
 _MAC_MODERN_DIR = "/System/Library/PrivateFrameworks/ToneLibrary.framework/Versions/A/Resources/AlertTones/Modern"
 
 
 def _scheme_sound(event):
-    """Файл, призначений події в поточній звуковій схемі Windows, або None."""
+    """The file assigned to the event in the current Windows sound scheme, or None."""
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"AppEvents\Schemes\Apps\.Default\{event}\.Current") as key:
             path = os.path.expandvars(winreg.QueryValue(key, None) or "")
     except OSError:
         return None
-    if path and not os.path.isabs(path):  # схема може містити лише ім'я файлу з папки Media
+    if path and not os.path.isabs(path):  # the scheme may hold just a file name from the Media folder
         path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media", path)
     return path if path and os.path.exists(path) else None
 
 
 def available_sounds():
-    """[(ідентифікатор, шлях до файлу)] стандартних системних звуків, які є на цьому комп'ютері."""
+    """[(identifier, file path)] of the standard system sounds present on this computer."""
     if IS_WINDOWS:
         sounds, seen = [], set()
         for sound_id, event in _WINDOWS_EVENTS:
             path = _scheme_sound(event)
-            if path and path.lower() not in seen:  # кілька подій можуть мати той самий файл
+            if path and path.lower() not in seen:  # several events may share the same file
                 seen.add(path.lower())
                 sounds.append((sound_id, path))
         media = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media")
@@ -550,7 +550,7 @@ def available_sounds():
 
 
 def play_sound(path):
-    """Програє файл звуку, не блокуючи інтерфейс."""
+    """Plays a sound file without blocking the UI."""
     try:
         if IS_WINDOWS:
             import winsound
@@ -562,7 +562,7 @@ def play_sound(path):
 
 
 def beep(kind="info", sound=None):
-    """kind: info — початок/кінець перерви (звук на вибір користувача), step — зміна вправи."""
+    """kind: info is a break start/end (the user's chosen sound), step is an exercise change."""
     if kind == "info" and sound:
         path = dict(available_sounds()).get(sound)
         if path:
@@ -576,7 +576,7 @@ def beep(kind="info", sound=None):
 
 
 def system_language():
-    """Мова інтерфейсу системи: українська → uk, будь-яка інша → en."""
+    """The system UI language: Ukrainian → uk, anything else → en."""
     if IS_WINDOWS:
         import ctypes
         try:
@@ -593,12 +593,12 @@ def system_language():
     return "en"
 
 
-# ---------- іконка в треї / рядку меню ----------
+# ---------- tray / menu bar icon ----------
 
 def start_tray(icon, root):
-    """Windows: власний цикл pystray в окремому потоці.
-    macOS: обидві бібліотеки мусять жити в головному потоці, тож pystray під'єднується
-    до циклу NSApplication, який уже крутить Tk."""
+    """Windows: pystray's own loop in a separate thread.
+    macOS: both libraries must live on the main thread, so pystray attaches
+    to the NSApplication loop that Tk already runs."""
     if IS_MAC:
         icon.run_detached(setup=lambda _icon: None)
         root.after(300, lambda: setattr(icon, "visible", True))
@@ -614,10 +614,10 @@ def make_tray_icon(pystray, name, image, title, menu):
     return pystray.Icon(name, image, title, menu)
 
 
-# ---------- одна копія програми ----------
+# ---------- single instance ----------
 
 class SingleInstance:
-    """Друга копія не стартує, а просить першу показати вікно."""
+    """A second copy doesn't start but asks the first one to show the window."""
 
     def __init__(self):
         self._handle = None
@@ -664,7 +664,7 @@ class SingleInstance:
         return True
 
     def show_requested(self):
-        """Викликається з головного циклу: чи просила друга копія показати вікно."""
+        """Called from the main loop: whether a second copy asked to show the window."""
         if IS_WINDOWS:
             import ctypes
             return bool(self._event) and ctypes.windll.kernel32.WaitForSingleObject(self._event, 0) == 0
@@ -674,10 +674,10 @@ class SingleInstance:
         return False
 
 
-# ---------- автозапуск ----------
+# ---------- autostart ----------
 
 def launch_target(script):
-    """(програма, аргументи) для запуску Rhythmos: зібраний exe/app або python + скрипт."""
+    """(program, arguments) to launch Rhythmos: the built exe/app, or python + the script."""
     if getattr(sys, "frozen", False):
         return sys.executable, []
     exe = sys.executable
@@ -707,7 +707,7 @@ def _launch_agent_path():
 
 
 def _set_autostart_mac(enabled, script):
-    """LaunchAgent запускає Rhythmos під час входу в macOS."""
+    """A LaunchAgent starts Rhythmos at macOS login."""
     path = _launch_agent_path()
     if not enabled:
         if os.path.exists(path):
@@ -725,20 +725,20 @@ def _set_autostart_mac(enabled, script):
 
 
 def _run_powershell(script, **env):
-    """Скрипт отримує значення через змінні середовища — без проблем з лапками у шляхах."""
+    """The script gets values through environment variables, so quotes in paths are no problem."""
     return subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                           env=dict(os.environ, **env), capture_output=True, stdin=subprocess.DEVNULL,
                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=60)
 
 
 def _set_autostart_windows(enabled, script):
-    """Завдання Планувальника «під час входу» із затримкою — надійніше за реєстр Run."""
+    """A Task Scheduler "at logon" task with a delay, more reliable than the Run registry key."""
     if not enabled:
         _run_powershell("Unregister-ScheduledTask -TaskName $env:L_TASK -Confirm:$false -ErrorAction SilentlyContinue",
                         L_TASK=TASK_NAME)
         return
     target, arguments = launch_target(script)
-    # Встановлений Rhythmos.exe запускається без аргументів, а порожній -Argument PowerShell не приймає
+    # The installed Rhythmos.exe starts without arguments, and PowerShell rejects an empty -Argument
     ps = (
         "$a = if ($env:L_ARGS) { New-ScheduledTaskAction -Execute $env:L_EXE -Argument $env:L_ARGS "
         "-WorkingDirectory $env:L_DIR } else { New-ScheduledTaskAction -Execute $env:L_EXE -WorkingDirectory $env:L_DIR }; "

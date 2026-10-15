@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Збирає Rhythmos.app і Rhythmos-<версія>-macos.dmg (запускати на macOS).
-# Використання:  ./build_mac.sh            — версія береться з src/rhythmos.py
+# Builds Rhythmos.app and Rhythmos-<version>-macos.dmg (run on macOS).
+# Usage:  ./build_mac.sh            — the version is taken from src/rhythmos.py
 #                ./build_mac.sh 1.3.0
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,12 +23,12 @@ python3 -m PyInstaller --noconfirm --clean --windowed \
 
 APP="dist/Rhythmos.app"
 PLIST="$APP/Contents/Info.plist"
-# Програма рядка меню: без іконки в Dock і без головного меню
+# A menu-bar app: no Dock icon and no main menu
 plutil -replace LSUIElement -bool true "$PLIST"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
 plutil -replace CFBundleVersion -string "$VERSION" "$PLIST"
 plutil -replace NSHighResolutionCapable -bool true "$PLIST"
-# Після зміни Info.plist підпис треба оновити (ad-hoc: без акаунта Apple Developer)
+# After changing Info.plist the signature must be updated (ad-hoc: no Apple Developer account)
 codesign --force --deep --sign - "$APP"
 
 DMG_DIR="build/dmg"
@@ -38,4 +38,4 @@ ln -s /Applications "$DMG_DIR/Applications"
 DMG="dist/Rhythmos-$VERSION-macos-$ARCH.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Rhythmos" -srcfolder "$DMG_DIR" -ov -format UDZO "$DMG"
-echo "Готово: $DMG"
+echo "Done: $DMG"

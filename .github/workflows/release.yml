@@ -38,7 +38,7 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '' }
           if ($version) { ./build.ps1 -Version $version } else { ./build.ps1 }
 
-      # Запускає зібраний Rhythmos.exe, проходить усі вікна й робить знімки екрана (як і на macOS)
+      # Runs the built Rhythmos.exe, walks through every window and takes screenshots (as on macOS)
       - name: Smoke test (UI screenshots)
         timeout-minutes: 5
         shell: pwsh
@@ -83,17 +83,17 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           bash build_mac.sh $VERSION
 
-      # Запускає зібраний Rhythmos.app, проходить усі вікна й робить знімки екрана
+      # Runs the built Rhythmos.app, walks through every window and takes screenshots
       - name: Smoke test (UI screenshots)
         timeout-minutes: 5
         run: dist/Rhythmos.app/Contents/MacOS/Rhythmos --smoke-test "$PWD/smoke"
 
-      # Самооновлення: копія зібраної програми «вдає» версію 0.0.1, сама завантажує
-      # останній реліз із GitHub, замінює себе й перезапускається
+      # Self-update: a copy of the built app "pretends" to be version 0.0.1, downloads
+      # the latest release from GitHub itself, replaces itself and restarts
       - name: Self-update test
         timeout-minutes: 5
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # без нього спільні IP раннерів упираються в ліміт API
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # without it the runners' shared IPs hit the API rate limit
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           LATEST=$(gh release view --repo AirFast/Rhythmos --json tagName --jq '.tagName' | sed 's/^v//')

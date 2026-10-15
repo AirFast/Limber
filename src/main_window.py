@@ -1,4 +1,4 @@
-"""Головне вікно: вкладки «Стан», «Статистика», «Налаштування» й розкладка під екран."""
+"""The main window: the Status, Statistics and Settings tabs, and the layout for the screen."""
 
 import datetime as dt
 import os
@@ -21,19 +21,19 @@ from system import font
 from widgets import CARD, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
 
-TIMELINE_HEIGHT = 100     # шкала дня в картці «Сьогодні»
-TIMELINE_Y = 62           # де на шкалі смуга: над нею — підписи у два яруси, під нею — години (з повітрям)
-TITLE_BAR = 32            # приблизна висота заголовка вікна ОС — щоб вікно вміщалося в робочу область
-STATS_RANGES = (7, 30)    # перемикач періоду на графіку статистики
+TIMELINE_HEIGHT = 100     # the day timeline in the Today card
+TIMELINE_Y = 62           # where the bar is: labels above it in two tiers, hours below it (with air)
+TITLE_BAR = 32            # approximate OS title bar height, so the window fits the work area
+STATS_RANGES = (7, 30)    # the period switch on the statistics chart
 
 
 class MainWindow:
-    """Частина App: головне вікно та його сторінки."""
+    """Part of App: the main window and its pages."""
 
-    # --- головне вікно ---
+    # --- main window ---
 
     def open_main(self):
-        system.activate_app()  # macOS: інакше вікно програми рядка меню відкривається позаду інших
+        system.activate_app()  # macOS: otherwise a menu-bar app's window opens behind the others
         self.recheck_updates_soon()
         if self.main_win:
             self.main_win.deiconify()
@@ -41,8 +41,8 @@ class MainWindow:
             self.main_win.focus_force()
             return
         win = tk.Toplevel(self.root, bg=C["bg"])
-        # Приховане, доки не побудовані сторінки й не відомий розмір: на macOS розмір, заданий уже
-        # показаному вікну, не застосовувався — лишалась сама шапка (2.2.0–2.5.0)
+        # Hidden until the pages are built and the size is known: on macOS a size set on an already
+        # shown window wasn't applied, leaving just the header (2.2.0–2.5.0)
         win.withdraw()
         win.title(f"{APP_NAME} {self.version}")
         win.protocol("WM_DELETE_WINDOW", self.close_main)
@@ -50,7 +50,7 @@ class MainWindow:
         win.iconphoto(False, self.window_icon)
         self.main_win = win
         self.w = {}
-        # Розкладка під екран: колонки налаштувань, картки статистики в ряд
+        # Layout for the screen: settings columns, statistics cards per row
         work = self.work_area()
         self.layout = main_layout(work[2] - work[0] - 40)
         Slider.page_scrolls = staticmethod(self.page_scrolls)
@@ -75,15 +75,15 @@ class MainWindow:
         tabs.pack(side="right")
 
         body = tk.Frame(win, bg=C["bg"])
-        # Смуга прокрутки (6 + 8 px) живе в правому відступі: правий край вмісту — на одній лінії
-        # з правим краєм кнопок вкладок (24 px від краю вікна)
+        # The scroll bar (6 + 8 px) lives in the right margin: the right edge of the content lines up
+        # with the right edge of the tab buttons (24 px from the window edge)
         body.pack(fill="both", expand=True, padx=(6 * UNIT, 6 * UNIT - ScrollArea.BAR - 2 * UNIT), pady=(TIGHT, 5 * UNIT))
         self.pages, self.page_frames, self.tab_buttons = {}, {}, {}
         self.current_page = None
         for key, builder in (("status", self.build_status_page),
                              ("stats", self.build_stats_page),
                              ("settings", self.build_settings_page)):
-            area = ScrollArea(body)  # на малому екрані сторінка прокручується
+            area = ScrollArea(body)  # on a small screen the page scrolls
             page = builder(area.inner)
             page.pack(fill="both", expand=True)
             self.pages[key], self.page_frames[key] = area, page
@@ -95,20 +95,20 @@ class MainWindow:
         self.fit_main_window(header, work)
         win.deiconify()
         win.update()
-        system.style_window(win)  # темний заголовок — уже для показаного вікна
+        system.style_window(win)  # dark title bar, for the already shown window
         self.show_page("status")
 
     def work_area(self):
         return system.work_area(self.root)
 
     def fit_main_window(self, header, work):
-        """Вікно під найбільшу сторінку, але не більше за робочу область екрана — тоді сторінки
-        прокручуються. Розмір залежить від мови, шрифтів і масштабу екрана, тож не задаємо його числами."""
+        """The window fits the largest page, but no larger than the screen's work area; then pages
+        scroll. The size depends on the language, fonts and display scaling, so it isn't set in numbers."""
         win = self.main_win
-        win.update_idletasks()  # розміри, що просять сторінки, рахуються й для прихованого вікна
+        win.update_idletasks()  # the sizes pages ask for are computed for a hidden window too
         frames = self.page_frames.values()
         left, top, right, bottom = work
-        # Відступи тіла разом зі смугою прокрутки — 24 + 24; заголовка (18 + 10) і тіла (4 + 20)
+        # Body margins together with the scroll bar, 24 + 24; header (20 + 8) and body (4 + 20)
         width = max(self.layout["width"], *(page.winfo_reqwidth() + 48 for page in frames))
         height = header.winfo_reqheight() + 28 + 24 + max(page.winfo_reqheight() for page in frames)
         width = min(width, right - left - 40)
@@ -116,8 +116,8 @@ class MainWindow:
         x = left + max(0, (right - left - width) // 2)
         y = top + max(0, (bottom - top - height - TITLE_BAR) // 2)
         win.geometry(f"{width}x{height}+{x}+{y}")
-        # Лише після розміру: на macOS resizable(False, False) фіксує поточний розмір як мінімальний
-        # і максимальний — увімкнене раніше, воно лишало вікно таким, яким його вперше показали (сама шапка)
+        # Only after the size: on macOS resizable(False, False) fixes the current size as both minimum
+        # and maximum; set earlier, it kept the window as first shown (just the header)
         win.resizable(False, False)
 
     def close_main(self):
@@ -130,11 +130,11 @@ class MainWindow:
         return bool(area and area.scrollable())
 
     def on_main_wheel(self, event):
-        """Коліщатко над будь-якою частиною головного вікна гортає поточну сторінку (якщо є куди)."""
+        """The mouse wheel over any part of the main window scrolls the current page (if it can)."""
         area = self.pages.get(self.current_page)
         if not area or not event.delta:
             return
-        units = -int(event.delta / 120) if system.IS_WINDOWS else -event.delta  # macOS дає дрібні кроки
+        units = -int(event.delta / 120) if system.IS_WINDOWS else -event.delta  # macOS gives small steps
         area.scroll(units or (-1 if event.delta > 0 else 1))
 
     def show_page(self, key):
@@ -143,8 +143,8 @@ class MainWindow:
         self.current_page = key
         area = self.pages[key]
         area.pack(fill="both", expand=True)
-        # Одразу розкласти вміст за справжнім розміром полотна: на macOS перша сторінка інакше
-        # лишалась порожньою, доки не спрацює щосекундне оновлення
+        # Lay out the content for the real canvas size right away: on macOS the first page otherwise
+        # stayed empty until the per-second refresh
         self.main_win.update_idletasks()
         area.relayout()
         area.canvas.yview_moveto(0)
@@ -168,7 +168,7 @@ class MainWindow:
         self._saved_after = self.root.after(
             1500, lambda: self.w.get("saved") and self.w["saved"].configure(text="", image=""))
 
-    # стан
+    # status
 
     def build_status_page(self, parent):
         page = tk.Frame(parent, bg=C["bg"])
@@ -182,10 +182,10 @@ class MainWindow:
         self.w["pause_btn"].pack(fill="x", pady=UNIT)
         self.w["reset_btn"] = flat_button(left, t("reset"), self.sched.reset, size=11)
         self.w["reset_btn"].pack(fill="x", pady=UNIT)
-        # «Завершити день» — лише коли настав кінець дня з налаштувань, а день ще не завершено
+        # "Finish the day": only once the day end from the settings has come and the day isn't finished
         self.w["finish_btn"] = flat_button(left, t("day_end_finish"), lambda: self.handle(("pause", None)),
                                            bg=C["accent"], fg=C["on_accent"], size=11)
-        # Розклад: довга перерва й кінець дня — рядок «назва … стан», оновлюється щосекунди
+        # Schedule: long break and day end, a "name … state" row refreshed every second
         tk.Label(left, text=t("card_schedule").upper(), bg=C["card"], fg=C["accent"],
                  font=font(9, "semibold")).pack(anchor="w", pady=(6 * UNIT, 2 * UNIT))
         self.w["schedule"] = tk.Frame(left, bg=C["card"])
@@ -195,7 +195,7 @@ class MainWindow:
         right = tk.Frame(page, bg=C["bg"])
         right.pack(side="left", fill="both", expand=True)
 
-        # Вода й харчування — поруч, однакові за будовою: відлік, рядок стану, склянки чи тарілки
+        # Water and meals side by side, built the same way: countdown, status line, glasses or plates
         top = tk.Frame(right, bg=C["bg"])
         top.pack(fill="x")
         water = card(top, t("card_water"))
@@ -210,14 +210,14 @@ class MainWindow:
         self.w["water_sub"] = wrap_to_width(tk.Label(water, bg=C["card"], fg=C["muted"], font=font(10), height=2,
                                                      justify="left", anchor="nw", wraplength=260))
         self.w["water_sub"].pack(fill="x")
-        # Склянки за сьогодні: клік по склянці виставляє кількість (як тарілки в картці «Їжа»)
+        # Today's glasses: clicking a glass sets the count (like the plates in the Meals card)
         self.w["glasses"] = tk.Frame(water, bg=C["card"])
         self.w["glasses"].pack(anchor="w", pady=(TIGHT, 0))
         self.w["glasses_key"] = None
 
         today = card(right, t("card_today"))
         today.pack(fill="both", expand=True, pady=(CARD, 0))
-        # Шкала дня внизу картки: від ранку до кінця робочого дня, їжа, кінець дня й «зараз»
+        # The day timeline at the bottom of the card: from morning to the workday end, meals, day end and "now"
         self.w["timeline"] = tk.Canvas(today, height=TIMELINE_HEIGHT, bg=C["card"], highlightthickness=0)
         self.w["timeline"].pack(side="bottom", fill="x", pady=(3 * UNIT, 0))
         self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
@@ -225,7 +225,7 @@ class MainWindow:
         self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
-        # Перерви й відпочинок — угорі; робота, безперервна робота й відсутність — унизу
+        # Breaks and rest on top; work, continuous work and absence below
         metrics = (("breaks", t("m_breaks"), C["accent"]), ("skipped", t("m_skipped"), C["muted"]),
                    ("active", t("m_active"), C["accent"]), ("work", t("m_work"), C["text"]),
                    ("stretch", t("m_stretch"), C["text"]), ("away", t("m_away"), C["muted"]))
@@ -251,18 +251,18 @@ class MainWindow:
         self.w["plates_key"] = None
 
     def set_headline(self, key, text, countdown=False):
-        """Великий підпис картки «Вода» чи «Їжа»: відлік — великим шрифтом, а текстове повідомлення
-        («Час пити!», «Нагадувань більше немає») — меншим, щоб уміщалося й у вузькій картці."""
+        """The big caption of the Water or Meals card: a countdown in a large font, a text message
+        ("Time to drink!", "No more reminders") smaller, so it fits a narrow card too."""
         self.w[key].configure(text=text, font=font(28 if countdown else 20, "light"))
 
     def refresh_meal_card(self, now):
-        """Картка «Їжа»: відлік до наступної їжі, «сьогодні 1 з 3» і тарілки увімкнених прийомів їжі."""
+        """The Meals card: countdown to the next meal, "today 1 of 3" and plates of the enabled meals."""
         s, today = self.sched, self.stats.day(self.today())
         enabled = [m for m in MEALS if self.cfg[f"{m}_enabled"]]
         eaten = sum(today[f"ate_{m}"] for m in enabled)
         progress = t("meals_today", n=eaten, total=len(enabled))
         hover = self.w.get("plate_hover")
-        if hover is not None:  # курсор на тарілці — що буде після кліку
+        if hover is not None:  # the cursor is on a plate: what a click will do
             progress += f"  →  {hover}"
         upcoming = s.next_meal(now)
         if not enabled:
@@ -275,16 +275,16 @@ class MainWindow:
             value, sub = t("meal_now"), progress
         elif upcoming:
             value = fmt_time((upcoming[1] - now).total_seconds())
-            sub = t(f"meal_next_{upcoming[0]}") + "\n" + progress  # два рядки: що далі й підсумок дня
+            sub = t(f"meal_next_{upcoming[0]}") + "\n" + progress  # two lines: what's next and the day's total
         else:
-            # Більше нагадувань сьогодні не буде: «усе» — лише якщо справді все з'їли
+            # No more reminders today: "all" only if everything was really eaten
             value, sub = t("meals_done" if eaten >= len(enabled) else "meals_no_more"), progress
         self.set_headline("meal", value, countdown=bool(upcoming and upcoming[1]) and not s.eating)
         self.w["meal_sub"].configure(text=sub)
         self.render_plates(enabled, now)
 
     def render_plates(self, enabled, now):
-        """Тарілки увімкнених прийомів їжі: клік позначає з'їденою, наведення — попередній вигляд."""
+        """Plates of the enabled meals: a click marks one eaten, hover shows a preview."""
         today = self.stats.day(self.today())
         states = []
         for meal in enabled:
@@ -302,13 +302,13 @@ class MainWindow:
         eaten_count = sum(state == "done" for state in states)
 
         def preview(index):
-            """Наведення на ще не з'їдене: клік позначить з'їденим; None — звичайний вигляд."""
+            """Hover over a meal not yet eaten: a click marks it eaten; None is the normal look."""
             self.w["plate_hover"] = None if index is None else eaten_count + 1
             for i, plate in enumerate(plates):
                 plate.configure(image=plate_image(30, "add" if i == index else states[i], C["card"]))
             self.refresh_main()
 
-        # З'їдене не скасовується: клікабельні лише ще не з'їдені тарілки
+        # Eaten can't be undone: only plates not yet eaten are clickable
         for i, (meal, state) in enumerate(zip(enabled, states)):
             done = state == "done"
             cursor = "arrow" if done else "hand2"
@@ -329,8 +329,8 @@ class MainWindow:
             plates.append(plate)
 
     def meal_time(self, meal, date):
-        """Хвилина дня для їжі: коли насправді поїли (журнал, або ate_<їжа>_at у старих днях),
-        інакше — запланований час."""
+        """The minute of the day for a meal: when it was actually eaten (the log, or ate_<meal>_at in old days),
+        otherwise the planned time."""
         if self.stats.day(date)[f"ate_{meal}"]:
             logged = [e["at"] for e in self.stats.events(date) if e["type"] == "meal" and e.get("meal") == meal]
             eaten_at = logged or self.stats.times(date, f"ate_{meal}_at")
@@ -339,11 +339,11 @@ class MainWindow:
         return self.cfg[f"{meal}_at"]
 
     def timeline_marks(self, now, events):
-        """Позначки шкали дня: (хвилина, назва, колір, стан, вид). Їжа ("done"/"now"/"later"/"skip") стоїть
-        у момент, коли поїли, — так видно регулярність; вид "day" — початок і кінець дня (з підписом).
-        Початок і кінець — з журналу подій (там час після півночі — понад 24:00), у старих днях — лічильники."""
+        """Day timeline marks: (minute, name, colour, state, kind). Meals ("done"/"now"/"later"/"skip") stand
+        at the moment they were eaten, so the regularity shows; kind "day" is the day start and end (labelled).
+        Start and end come from the event log (where times after midnight go past 24:00), in old days from counters."""
         today = self.stats.day(self.today())
-        planned = self.sched.reminders_today(now)  # у вихідні — лише те, що справді було
+        planned = self.sched.reminders_today(now)  # on days off, only what really happened
         logged = {e["type"]: e["at"] for e in events if e["type"] in ("day_start", "day_end")}
         marks = []
         for meal in MEALS:
@@ -356,8 +356,8 @@ class MainWindow:
         start = logged.get("day_start") or today["day_start"]
         if start:
             marks.append((start, t("sch_day_start"), C["accent"], "done", "day"))
-        # Запланований кінець дня (з налаштувань) лишається на своєму місці: до нього — порожній кружечок,
-        # після, якщо день триває, — приглушений, «пропущений». Справжнє завершення — окрема заповнена позначка
+        # The planned day end (from the settings) stays in place: before it, a hollow dot;
+        # after it, if the day goes on, dimmed as "skipped". The actual finish is a separate filled mark
         if self.cfg["day_end_enabled"] and planned:
             passed = self.minute(now) >= self.cfg["day_end_at"]
             marks.append((self.cfg["day_end_at"], t("sch_day_end"), C["accent"], "skip" if passed else "later", "day"))
@@ -367,10 +367,10 @@ class MainWindow:
         return sorted(marks, key=lambda mark: mark[0])
 
     def draw_timeline(self, force=False):
-        """Смуга дня: заповнена до «зараз»; на ній — проміжки з журналу (відсутність, пауза, пауза на їжу,
-        перерва чекала), маленькі зелені точки — перерви (пропущені — порожні), сині — склянки, кружечки
-        їжі й кінця дня, синій кружечок — наступне нагадування про воду; підписи — лише початок і кінець
-        дня, під смугою — години. Малюємо згладжено через Pillow і лише коли щось змінилося."""
+        """The day bar: filled up to "now"; on it, spans from the log (absence, pause, meal pause,
+        held break), small green dots for breaks (hollow when skipped), blue ones for glasses, circles
+        for meals and day end, a blue circle for the next water reminder; labels only for the day start
+        and end, hours under the bar. Drawn anti-aliased with Pillow, and only when something changed."""
         c = self.w.get("timeline")
         if not c:
             return
@@ -383,7 +383,7 @@ class MainWindow:
         minute = self.minute(now)
         marks = self.timeline_marks(now, events)
         drinks = [e["at"] for e in events if e["type"] == "water"] or self.stats.times(today, "water_at")
-        missed = [e["at"] for e in events if e["type"] == "water_missed"]  # нагадування без склянки
+        missed = [e["at"] for e in events if e["type"] == "water_missed"]  # reminders without a glass
         breaks = [e for e in events if e["type"] == "break" and e.get("result") in ("done", "skipped")]
         spans = event_spans(events, minute)
         s = self.sched
@@ -396,8 +396,8 @@ class MainWindow:
         if not force and key == self._timeline_key:
             return
         self._timeline_key = key
-        # Межі шкали: від ранку (не пізніше 8:00 чи першої події) до кінця дня (не раніше 18:00 і не раніше
-        # «зараз»), по годинах — уміщаються всі позначки й проміжки
+        # Timeline bounds: from the morning (no later than 8:00 or the first event) to the day end (no earlier
+        # than 18:00 and "now"), in whole hours, so every mark and span fits
         times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks] + [minute]
                  + [m for span in spans for m in span[1:3]])
         start = (min([8 * 60] + times) - 30) // 60 * 60
@@ -408,8 +408,8 @@ class MainWindow:
             return pad + (width - 2 * pad) * (min(max(m, start), end) - start) / (end - start)
 
         xn = x_of(minute)
-        # Відсутність — тьмяна, пауза — приглушена, їжа — бурштинова, «до ранку» — як ще не прожита смуга,
-        # «перерва чекала» — світліша за зелений, щоб виднілась на заповненій смузі
+        # Absence is faint, a pause muted, a meal amber, "until morning" like the not yet lived bar,
+        # a held break lighter than the green, so it shows on the filled bar
         span_colors = {"away": C["dim"], "timed": C["muted"], "eating": C["meal"], "finished": C["track"],
                        "held": blend(C["accent"], C["text"], 0.5)}
 
@@ -417,20 +417,20 @@ class MainWindow:
             r = 3 * sc
             d.rounded_rectangle((pad * sc - r, y * sc - r, (width - pad) * sc + r, y * sc + r), radius=r,
                                 fill=rgba(C["track"]))
-            # Зелене — робочий час: від початку дня (якщо він уже відомий) до «зараз»
+            # Green is the working time: from the day start (once known) to "now"
             day_start = self.stats.day(today)["day_start"]
             x0 = x_of(day_start) if day_start else pad
             if minute > start and xn > x0:
                 d.rounded_rectangle((x0 * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
-            # Проміжки — тонкі смужки по самій смузі дня (не вужчі за 3 px, щоб і короткі було видно)
+            # Spans are thin strips on the bar itself (at least 3 px, so short ones show too)
             for kind, a, b, event in spans:
                 color = span_colors.get(event.get("kind") if kind == "pause" else kind, C["muted"])
                 x0, x1 = x_of(a), max(x_of(b), x_of(a) + 3)
                 h = 2.2 * sc
                 d.rounded_rectangle((x0 * sc, y * sc - h, x1 * sc, y * sc + h), radius=h, fill=rgba(color))
-            # Усі позначки в одному стилі: кружечок з обідком кольору картки (відділяє від смуги й сусідів);
-            # ring — товщина контуру для порожнього кружечка («ще буде», пропущено), None — заповнений
+            # All marks in one style: a dot with a card-coloured halo (sets it off from the bar and neighbours);
+            # ring is the outline width for a hollow dot ("still to come", skipped), None means filled
             halo = 1.5 * sc
 
             def dot(x, radius, color, ring=None):
@@ -441,46 +441,46 @@ class MainWindow:
                     inner = rr - ring * sc
                     d.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=rgba(C["card"]))
 
-            for e in breaks:  # перерви — найменші, під склянками й їжею
+            for e in breaks:  # breaks are the smallest, below glasses and meals
                 if e["result"] == "done":
                     dot(x_of(e["at"]), 3.5, C["accent"])
                 else:
                     dot(x_of(e["at"]), 3.5, C["dim"], ring=1.4)
-            for m in missed:  # пропущені склянки — порожні приглушені, як пропущені перерви
+            for m in missed:  # missed glasses: hollow and dimmed, like skipped breaks
                 dot(x_of(m), 5, C["dim"], ring=1.8)
-            for m in drinks:  # випиті склянки — у момент, коли їх позначили
+            for m in drinks:  # drunk glasses, at the moment they were marked
                 dot(x_of(m), 5, C["water"])
-            # Наступне нагадування про воду — лише якщо не ховається за позначкою їжі чи кінця дня
+            # The next water reminder, only if it isn't hidden behind a meal or day-end mark
             if (next_water is not None and next_water <= end
                     and all(abs(x_of(next_water) - x_of(m[0])) >= 14 for m in marks)):
                 dot(x_of(next_water), 5, C["water"], ring=1.8)
-            for m, _name, color, state, _kind in marks:  # їжа, початок і кінець дня
+            for m, _name, color, state, _kind in marks:  # meals, day start and end
                 if state == "done":
                     dot(x_of(m), 7, color)
                 else:
                     dot(x_of(m), 7, C["dim"] if state == "skip" else color, ring=2)
-            dot(xn, 5, C["text"])  # «зараз»
+            dot(xn, 5, C["text"])  # "now"
 
         self.timeline_photo = ImageTk.PhotoImage(smooth_image(width, TIMELINE_HEIGHT, paint, C["card"]))
         c.delete("all")
         c.create_image(0, 0, anchor="nw", image=self.timeline_photo)
 
         def place(item, x):
-            """Не даємо підпису вийти за краї полотна."""
+            """Keeps a label within the canvas edges."""
             x0, _y0, x1, _y1 = c.bbox(item)
             shift = max(0, 2 - x0) - max(0, x1 - (width - 2))
             if shift:
                 c.move(item, shift, 0)
             return c.bbox(item)
 
-        # Години під смугою: крок такий, щоб підписи не злипались; після півночі — знову з 0:00
+        # Hours under the bar: a step that keeps labels apart; after midnight again from 0:00
         span = width - 2 * pad
         step = next((h for h in (1, 2, 3, 4, 6) if span * h * 60 / (end - start) >= 46), 6)
         for hour in range(-(-start // (60 * step)) * step, end // 60 + 1, step):
             place(c.create_text(x_of(hour * 60), y + 28, text=f"{hour % 24}:00", fill=C["dim"], font=font(8)),
                   x_of(hour * 60))
-        # Підписи — лише початок і кінець дня (у два яруси, якщо тісно; інакше зсув за сусіда);
-        # решта позначок — підказка при наведенні (timeline_hover)
+        # Labels only for the day start and end (in two tiers if tight, otherwise shifted past the neighbour);
+        # other marks get a hover tooltip (timeline_hover)
         placed = {0: [], 1: []}
 
         def clash(box, tier):
@@ -510,8 +510,8 @@ class MainWindow:
 
     @staticmethod
     def grouped(items, x_of, gap=10):
-        """Близькі на шкалі позначки (не далі за gap px одна від одної) — разом: одна підказка на групу.
-        items — кортежі, перший елемент яких — хвилина дня."""
+        """Marks close on the timeline (no more than gap px apart) go together: one tooltip per group.
+        items are tuples whose first element is a minute of the day."""
         groups = []
         for item in sorted(items, key=lambda i: i[0]):
             if groups and x_of(item[0]) - x_of(groups[-1][-1][0]) <= gap:
@@ -521,9 +521,9 @@ class MainWindow:
         return groups
 
     def timeline_tips(self, marks, drinks, breaks, next_water, now, x_of, end, missed=()):
-        """[(x, текст підказки)] для позначок без підпису — просто «Назва: час»: «Вечеря: 18:37»,
-        «Вода: 17:19», «Довга перерва: 10:30». Стан (з'їдено, пропущено) видно з самої позначки;
-        близькі склянки й перерви — однією підказкою з кількома часами."""
+        """[(x, tooltip text)] for unlabelled marks, simply "Name: time": "Dinner: 18:37",
+        "Water: 17:19", "Long break: 10:30". The state (eaten, skipped) shows on the mark itself;
+        close glasses and breaks share one tooltip with several times."""
         points = [(x_of(m), f"{name}: {fmt_clock(m)}") for m, name, _color, _state, kind in marks if kind == "meal"]
         for times, name in ((drinks, t("tl_water")), (missed, t("tl_water_missed"))):
             for group in self.grouped([(m,) for m in times], x_of):
@@ -545,7 +545,7 @@ class MainWindow:
         return points
 
     def timeline_span_tips(self, spans, x_of):
-        """[(x0, x1, текст)] для проміжків — «Назва: від–до»: «Вас не було: 12:05–12:40», «Обід: 13:05–13:50»."""
+        """[(x0, x1, text)] for spans, "Name: from–to": "You were away: 12:05–12:40", "Lunch: 13:05–13:50"."""
         names = {"timed": t("tl_pause"), "eating": t("tl_eating"), "finished": t("tl_finished")}
         tips = []
         for kind, a, b, event in spans:
@@ -561,9 +561,9 @@ class MainWindow:
         return tips
 
     def timeline_hover(self, event):
-        """Підказка над позначкою шкали, найближчою до курсора (у межах 9 px), а якщо курсор на проміжку,
-        а позначка не впритул (далі за 4 px), — над проміжком (найкоротшим, якщо їх кілька).
-        Підписи початку й кінця дня, які підказка накрила б, на цей час ховаємо."""
+        """A tooltip above the timeline mark nearest to the cursor (within 9 px), or, if the cursor is on a span
+        and no mark is right there (further than 4 px), above the span (the shortest, if several).
+        Day start and end labels the tooltip would cover are hidden meanwhile."""
         c = self.w.get("timeline")
         if not c:
             return
@@ -593,16 +593,16 @@ class MainWindow:
                 c.itemconfigure(label, state="hidden")
 
     def timeline_leave(self):
-        """Курсор пішов зі шкали (чи підказка змінюється): прибрати підказку й повернути підписи."""
+        """The cursor left the timeline (or the tooltip changes): remove the tooltip and bring the labels back."""
         c = self.w.get("timeline")
         if c:
             c.delete("tip")
             c.itemconfigure("label", state="normal")
 
     def schedule_rows(self, now):
-        """Рядки розкладу на сьогодні: (ключ, назва, стан, підсвітити?). Їжа — у власній картці поруч з водою."""
+        """Today's schedule rows: (key, name, state, highlight?). Meals have their own card next to water."""
         s, cfg = self.sched, self.cfg
-        timed = []  # (хвилина дня, рядок) — події з часом ідуть за ним
+        timed = []  # (minute of the day, row): events with a time are sorted by it
         left = s.breaks_until_long()
         long_row = ("long", t("sch_long"), t("long_next") if left == 1 else fmt_after_minis(left - 1), left == 1)
         started = self.stats.day(self.today())["day_start"]
@@ -624,7 +624,7 @@ class MainWindow:
         return [long_row] + [row for _minute, row in sorted(timed, key=lambda item: item[0])]
 
     def refresh_schedule(self):
-        """Перебудовує рядки лише коли змінився їх набір; тексти оновлює щосекунди."""
+        """Rebuilds the rows only when their set changed; texts are refreshed every second."""
         frame, widgets = self.w["schedule"], self.w["schedule_rows"]
         rows = self.schedule_rows(dt.datetime.now())
         if [r[0] for r in rows] != list(widgets):
@@ -665,28 +665,28 @@ class MainWindow:
         elif s.in_break:
             subtitle = t("ring_break")
         elif s.held is not None:
-            subtitle = t("ring_held")  # перерва настала, але чекає, поки людина зайнята
+            subtitle = t("ring_held")  # the break is due but waits while the person is busy
         else:
             subtitle = t(f"ring_{s.next_kind()}")
         c.create_text(size / 2, size / 2 - 10, text=fmt_time(s.remaining), fill=C["text"],
                       font=font(40, "light"))
         c.create_text(size / 2, size / 2 + 38, text=subtitle, fill=C["muted"], font=font(11))
 
-    # статистика
+    # statistics
 
     def build_stats_page(self, parent):
-        """Картки нагорі — один день (сьогодні або той, на який наведено курсор на графіку);
-        під ними графік за 7 або 30 днів і підсумки за цей період."""
+        """Cards on top show one day (today, or the one hovered on the chart);
+        below them, a 7- or 30-day chart and the totals for that period."""
         page = tk.Frame(parent, bg=C["bg"])
         self.w["stats_day"] = tk.Label(page, bg=C["bg"], fg=C["text"], font=font(12, "semibold"))
         self.w["stats_day"].pack(anchor="w", pady=(0, 2 * UNIT))
         summary = tk.Frame(page, bg=C["bg"])
         summary.pack(fill="x")
-        # Порядок, як і всюди: перерви → рух → вода → їжа → робота
+        # The order, as everywhere: breaks → movement → water → meals → work
         cards = (("day_breaks", t("m_breaks"), C["accent"]), ("day_skipped", t("m_skipped"), C["muted"]),
                  ("day_active", t("m_active"), C["accent"]), ("day_water", t("m_water"), C["water"]),
                  ("day_meals", t("m_meals"), C["meal"]), ("day_work", t("m_work"), C["text"]))
-        per_row = self.layout["stat_cards"]  # вузький екран — два ряди по три
+        per_row = self.layout["stat_cards"]  # a narrow screen: two rows of three
         for i, (key, caption, color) in enumerate(cards):
             box = card(summary)
             column = i % per_row
@@ -696,7 +696,7 @@ class MainWindow:
             self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(26, "light"))
             self.w[key].pack(anchor="w")
             tk.Label(box, text=caption, bg=C["card"], fg=C["muted"], font=font(10)).pack(anchor="w")
-            # Додатковий рядок: % виконаних, відкладені, об'єм води, кінець дня
+            # An extra line: % done, postponed, water volume, day end
             self.w[f"{key}_sub"] = tk.Label(box, bg=C["card"], fg=color if key == "day_water" else C["dim"],
                                             font=font(9))
             self.w[f"{key}_sub"].pack(anchor="w")
@@ -709,7 +709,7 @@ class MainWindow:
         self.w["chart_title"].pack(side="left")
         segments = tk.Frame(head, bg=C["panel"])
         segments.pack(side="right")
-        # Експорт усієї статистики в CSV — посилання поруч з перемикачем періоду
+        # Export all statistics to CSV: a link next to the period switch
         export = tk.Label(head, text=t("export_link"), bg=C["card"], fg=C["accent"], font=font(9), cursor="hand2")
         export.pack(side="right", padx=(0, 4 * UNIT))
         export.bind("<Button-1>", lambda e: self.export_stats())
@@ -731,7 +731,7 @@ class MainWindow:
             tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
                      font=font(10)).pack(side="left", padx=(0, 4 * UNIT))
         for key in ("range_breaks", "range_water", "range_day"):
-            # Переносяться за шириною картки: на вузькому екрані рядок підсумків довший за неї
+            # Wrap to the card width: on a narrow screen the totals line is longer than the card
             self.w[key] = wrap_to_width(tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10), justify="left",
                                                  anchor="w", wraplength=400))
             self.w[key].pack(fill="x", pady=(TIGHT, 0))
@@ -769,7 +769,7 @@ class MainWindow:
             y = bottom - (bottom - top) * i / 4
             c.create_line(0, y, width, y, fill=C["track"] if i == 0 else C["grid"])
         bar = self.chart_info["bar"]
-        week = n <= 7  # за тиждень — дні тижня й кількість склянок; за місяць — число кожного п'ятого дня
+        week = n <= 7  # a week: weekdays and glass counts; a month: the date of every fifth day
         bar_tops = []
         for i, (day, rec) in enumerate(zip(days, records)):
             cx = slot * i + slot / 2
@@ -789,8 +789,8 @@ class MainWindow:
                 label = str(day.day) if (n - 1 - i) % 5 == 0 else ""
             c.create_text(cx, bottom + 14, text=label, fill=C["text"] if day == today else C["muted"],
                           font=font(10 if week else 9))
-            # Вода й їжа: заповнений кружечок — норму / усі прийоми їжі виконано, порожній — ні;
-            # за тиждень ще й кількість
+            # Water and meals: a filled dot when the goal / all meals were met, hollow when not;
+            # for a week, the count too
             meals_planned = sum(self.cfg[f"{m}_enabled"] for m in MEALS)
             for row, (count, full, color) in enumerate((
                     (rec["water"], rec["water"] >= self.cfg["water_goal"], C["water"]),
@@ -805,7 +805,7 @@ class MainWindow:
         self.show_stats_day(n - 1)
 
     def draw_range_totals(self, n, days, records):
-        """Підсумки за період трьома рядками: перерви й рух; вода; їжа й робота."""
+        """Period totals in three lines: breaks and movement; water; meals and work."""
         total = {k: sum(r[k] for r in records) for k in Stats.KEYS if k not in Stats.MOMENTS}
         rate = completion_rate(total)
         best = max(range(n), key=lambda i: records[i]["mini_done"] + records[i]["long_done"])
@@ -825,7 +825,7 @@ class MainWindow:
             + (t("range_start", time=fmt_clock(start)) if start is not None else ""))
 
     def show_stats_day(self, index):
-        """Картки нагорі: дані одного дня з графіка (останній — сьогодні)."""
+        """Cards on top: one chart day's data (the last one is today)."""
         info = self.chart_info
         day, rec = info["days"][index], info["records"][index]
         date = f"{day:%d.%m}"
@@ -849,7 +849,7 @@ class MainWindow:
 
     @staticmethod
     def regularity_lines(reg):
-        """Регулярність дня з журналу для підказки графіка (у старих днях журналу немає — нічого)."""
+        """The day's regularity from the log for the chart tooltip (old days have no log: nothing)."""
         if not reg:
             return []
         lines = []
@@ -868,7 +868,7 @@ class MainWindow:
         return lines
 
     def export_stats(self):
-        """«Експорт CSV»: уся статистика — рядок на день, і поруч файл з усіма подіями журналу."""
+        """"Export CSV": all statistics, a row per day, and a file with every logged event next to it."""
         path = filedialog.asksaveasfilename(
             parent=self.main_win, title=t("export_dialog"), defaultextension=".csv",
             initialfile=f"rhythmos-{self.today():%Y-%m-%d}.csv", filetypes=[("CSV", "*.csv")])
@@ -883,7 +883,7 @@ class MainWindow:
                                                                events=os.path.basename(events)))
 
     def work_span(self, rec):
-        """«08:42 – 18:05» (початок і кінець дня), «з 08:42», якщо день ще триває, або «» — даних немає."""
+        """"08:42 – 18:05" (day start and end), "from 08:42" if the day goes on, or "" without data."""
         start, end = rec["day_start"], rec["day_end"]
         if start and end:
             return t("work_span", start=fmt_clock(start), end=fmt_clock(end))
@@ -899,7 +899,7 @@ class MainWindow:
         self.highlight_day(min(len(info["days"]) - 1, max(0, int(event.x // info["slot"]))) if inside else None)
 
     def highlight_day(self, index):
-        """Підсвітка стовпчика, підказка з деталями дня й картки нагорі для цього дня."""
+        """Highlights the bar, shows a tooltip with the day's details and that day in the cards on top."""
         info = self.chart_info
         c = self.w.get("chart")
         if not info or not c or index == info["hover"]:
@@ -936,7 +936,7 @@ class MainWindow:
         box_w, box_h = x1 - x0 + 24, y1 - y0 + 18
         cx, bar = slot * index + slot / 2, info["bar"]
         x = cx + bar / 2 + 10
-        if x + box_w > info["width"] - 4:  # біля правого краю — підказка ліворуч від стовпчика
+        if x + box_w > info["width"] - 4:  # near the right edge, the tooltip goes left of the bar
             x = cx - bar / 2 - 10 - box_w
         y = max(4, min(info["bar_tops"][index] - box_h / 2, bottom - box_h))
         box = c.create_rectangle(x, y, x + box_w, y + box_h, fill=C["panel"], outline=C["accent"], tags="hover")
@@ -944,7 +944,7 @@ class MainWindow:
         c.tag_raise(text, box)
         self.show_stats_day(index)
 
-    # налаштування
+    # settings
 
     def build_settings_page(self, parent):
         """Cards grouped by theme: breaks first (mini → long → postpone & pause), then the day
@@ -1147,10 +1147,10 @@ class MainWindow:
             return
         self.cfg["water_profile"] = profile
         if profile == "custom":
-            restore_manual_water(self.cfg)  # власні значення людини, а не розраховані нормою
+            restore_manual_water(self.cfg)  # the person's own values, not the ones computed by the norm
             self.sched.apply_config()
         save_config(self.cfg)
-        self.refresh_water_plan()  # норма: мета й інтервал — за нею та фактичним робочим днем
+        self.refresh_water_plan()  # a norm: goal and interval from it and the actual workday
         self.flash_saved()
         self.refresh_water_profile()
 
@@ -1163,7 +1163,7 @@ class MainWindow:
         self.icon.menu = self.build_menu()
         self.icon.update_menu()
         self.tooltip = None
-        # Вікно перебудовуємо поза обробником кліку, бо кнопка, що його викликала, теж зникне
+        # Rebuild the window outside the click handler, because the button that called it disappears too
         self.root.after(10, self.reopen_main_on_settings)
 
     def reopen_main_on_settings(self):
@@ -1174,12 +1174,12 @@ class MainWindow:
         self.flash_saved()
 
     def sound_name(self):
-        """Вибраний звук сповіщення або перший доступний на цьому комп'ютері."""
+        """The chosen notification sound, or the first one available on this computer."""
         names = [name for name, _path in system.available_sounds()]
         return self.cfg["sound_name"] if self.cfg["sound_name"] in names else (names[0] if names else "")
 
     def add_sound_slider(self, parent):
-        """Повзунок перебирає системні звуки й одразу програє вибраний — для прослуховування."""
+        """The slider steps through system sounds and plays the chosen one right away, to listen to it."""
         sounds = system.available_sounds()
         if len(sounds) < 2:
             return
@@ -1189,7 +1189,7 @@ class MainWindow:
             self.set_setting("sound_name", names[index])
             system.play_sound(sounds[index][1])
 
-        def label(index):  # Windows: перекладені назви подій; macOS: власні назви звуків (Glass, Ping…)
+        def label(index):  # Windows: translated event names; macOS: the sounds' own names (Glass, Ping…)
             key = f"snd_{names[index]}"
             return t(key) if key in i18n.STRINGS[i18n.get_language()] else names[index]
 
@@ -1197,7 +1197,7 @@ class MainWindow:
                label, choose).pack(fill="x", pady=(0, ITEM))
 
     def add_slider(self, parent, key):
-        """Повзунок налаштування; крайнє ліве положення деяких — «авто»/«вимкнено» (0 у налаштуваннях)."""
+        """A settings slider; the leftmost position of some means "auto"/"off" (0 in the settings)."""
         lo, hi, step, fmt = SLIDERS[key]
         Slider(parent, t(f"s_{key}"), lo, hi, step, slider_position(key, self.cfg[key]), fmt,
                lambda v, k=key: self.set_setting(k, setting_value(k, v))).pack(fill="x", pady=(0, ITEM))
@@ -1220,8 +1220,8 @@ class MainWindow:
             messagebox.showerror(APP_NAME, t("autostart_error", e=e), parent=self.main_win)
 
     def refresh_main(self):
-        """Щосекунди: шапка й поточна сторінка. «Стан» — найдорожча (кільце, шкала дня), тож
-        перемальовуємо його, лише коли його видно: на інших вкладках і в згорнутому вікні — ні."""
+        """Every second: the header and the current page. Status is the most expensive (ring, day timeline), so
+        it is redrawn only while visible: not on other tabs or in a minimized window."""
         if not self.main_win or "ring" not in self.w:
             return
         self.w["update"].configure(text=t("update_banner", version=self.update_info[0]) if self.update_info else "")
@@ -1237,12 +1237,12 @@ class MainWindow:
         today = self.stats.day(self.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         hover = self.w.get("glass_hover")
-        if hover is not None:  # курсор на склянці — що буде після кліку
+        if hover is not None:  # the cursor is on a glass: what a click will do
             progress += f"  →  {hover}{SEP}{fmt_volume(hover)}"
         if not self.cfg["water_enabled"]:
             self.set_headline("water", "—")
             self.w["water_sub"].configure(text=t("water_off"))
-        elif s.water_done:  # мету досягнуто — до завтра без нагадувань
+        elif s.water_done:  # goal reached: no reminders until tomorrow
             self.set_headline("water", t("water_goal_reached"))
             self.w["water_sub"].configure(text=progress)
         elif s.water_open:
@@ -1251,7 +1251,7 @@ class MainWindow:
         else:
             self.set_headline("water", fmt_time(s.water_remaining), countdown=True)
             self.w["water_sub"].configure(text=t("water_next", progress=progress))
-        work = today["work_sec"] + int(self.work_pending)  # ще не записане теж показуємо — наживо
+        work = today["work_sec"] + int(self.work_pending)  # not yet recorded time is shown too, live
         now = dt.datetime.now()
         events = self.stats.events(self.today())
         reg = regularity(events, self.minute(now)) or {}
@@ -1268,7 +1268,7 @@ class MainWindow:
         for key, (value, sub) in values.items():
             self.w[f"today_{key}"].configure(text=value)
             self.w[f"today_{key}_sub"].configure(text=sub)
-        # «Завершити день» під кнопками кільця — коли настав кінець дня з налаштувань, а день ще триває
+        # "Finish the day" under the ring buttons: once the day end from the settings has come and the day goes on
         due = (self.cfg["day_end_enabled"] and s.reminders_today(now) and not s.day_finished(now)
                and now >= s.moment(now, self.cfg["day_end_at"]))
         if due != bool(self.w["finish_btn"].winfo_manager()):
@@ -1282,7 +1282,7 @@ class MainWindow:
         self.render_glasses(today["water"])
 
     def render_glasses(self, drunk):
-        """Ряд склянок у картці «Вода» — перемальовуємо лише коли щось змінилося."""
+        """The row of glasses in the Water card, redrawn only when something changed."""
         goal = self.cfg["water_goal"]
         if self.w.get("glasses_key") == (drunk, goal):
             return
@@ -1294,7 +1294,7 @@ class MainWindow:
         glasses = []
 
         def preview(count):
-            """Наведення на ще не випиту склянку: які склянки додасть клік; None — звичайний вигляд."""
+            """Hover over a glass not yet drunk: which glasses a click adds; None is the normal look."""
             self.w["glass_hover"] = count
             for i, glass in enumerate(glasses):
                 state = "add" if count is not None and drunk <= i < count else i < drunk
@@ -1318,18 +1318,18 @@ class MainWindow:
             glasses.append(glass)
 
     def set_water(self, count):
-        """Випито склянок за сьогодні — лише більше, ніж було: випите не скасовується."""
+        """Glasses drunk today, only more than before: drunk glasses can't be undone."""
         before = self.stats.day(self.today())["water"]
         count = min(count, MAX_GLASSES)
         if count <= before:
             return
         self.stats.set("water", count)
         self.log_water_times(count - before)
-        # Щойно випив — наступне нагадування відраховується заново; відкрите нагадування вже зайве
+        # Just drank: the next reminder counts down anew; an open reminder is no longer needed
         if self.water_win and not self.water_demo:
             self.water_win.destroy()
             self.water_win = None
-        self.sync_day()  # темп наступної склянки — з урахуванням щойно випитих
+        self.sync_day()  # the next glass's pace, counting the ones just drunk
         self.sched.water_answered(True)
         self.refresh_main()
         if self.w.get("chart") and self.w["chart"].winfo_ismapped():
