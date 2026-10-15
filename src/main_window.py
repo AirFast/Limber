@@ -1301,12 +1301,16 @@ class MainWindow:
                 glass.configure(image=glass_image(22, 30, state, C["card"]))
             self.refresh_main()
 
-        # Випите не скасовується: клікабельні лише ще не випиті склянки
-        for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
+        # Drunk glasses can't be undone: only the ones not yet drunk are clickable.
+        # A narrow window fits fewer per row; rows are then split evenly (8 → 4 + 4), never clipped
+        shown = min(max(goal, drunk), MAX_GLASSES_SHOWN)
+        fit = GLASSES_PER_ROW if self.layout["columns"] > 2 else 6
+        per_row = -(-shown // -(-shown // fit)) if shown else fit
+        for i in range(shown):
             done = i < drunk
             glass = tk.Label(frame, image=glass_image(22, 30, done, C["card"]), bg=C["card"],
                              cursor="arrow" if done else "hand2")
-            glass.grid(row=i // GLASSES_PER_ROW, column=i % GLASSES_PER_ROW, padx=3, pady=2)
+            glass.grid(row=i // per_row, column=i % per_row, padx=3, pady=2)
             if not done:
                 glass.bind("<Button-1>", lambda e, n=i + 1: self.set_water(n))
                 glass.bind("<Enter>", lambda e, n=i + 1: preview(n))
