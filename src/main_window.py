@@ -18,11 +18,11 @@ from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend
 from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
                   fmt_volume, t)
 from system import font
-from widgets import CARD, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
+from widgets import CARD, HEAD_GAP, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
 
 TIMELINE_HEIGHT = 100     # the day timeline in the Today card
-TIMELINE_DAYS = 7         # the day switch above it: today and the six days before
+STATUS_DAYS = 7           # the day switch of the day card: today and the six days before
 TIMELINE_Y = 62           # where the bar is: labels above it in two tiers, hours below it (with air)
 TITLE_BAR = 32            # approximate OS title bar height, so the window fits the work area
 STATS_RANGES = (7, 30)    # the period switch on the statistics chart
@@ -216,24 +216,25 @@ class MainWindow:
         self.w["glasses"].pack(anchor="w", pady=(TIGHT, 0))
         self.w["glasses_key"] = None
 
-        today = card(right, t("card_today"))
+        # The day card: a day switch instead of a heading (today and the days before it, to compare how days
+        # went); the metrics and the timeline show the chosen day
+        today = card(right)
         today.pack(fill="both", expand=True, pady=(CARD, 0))
+        self.day_back, self.w["day_chips_date"] = 0, self.today()
+        days = tk.Frame(today, bg=C["panel"])
+        days.pack(fill="x", pady=(0, HEAD_GAP))
+        self.w["day_chips"] = []
+        for back in range(STATUS_DAYS - 1, -1, -1):
+            chip = tk.Label(days, font=font(9), padx=4, pady=2, cursor="hand2")
+            chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
+            chip.bind("<Button-1>", lambda e, b=back: self.set_status_day(b))
+            self.w["day_chips"].append((back, chip))
         # The day timeline at the bottom of the card: from morning to the workday end, meals, day end and "now"
         self.w["timeline"] = tk.Canvas(today, height=TIMELINE_HEIGHT, bg=C["card"], highlightthickness=0)
         self.w["timeline"].pack(side="bottom", fill="x", pady=(3 * UNIT, 0))
         self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
         self.w["timeline"].bind("<Motion>", self.timeline_hover)
         self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
-        # Day switch right above the timeline: today and the days before it, to compare how days went
-        self.timeline_back = 0
-        days = tk.Frame(today, bg=C["panel"])
-        days.pack(side="bottom", fill="x", pady=(ITEM, 0))
-        self.w["timeline_chips"] = []
-        for back in range(TIMELINE_DAYS - 1, -1, -1):
-            chip = tk.Label(days, font=font(9), padx=4, pady=2, cursor="hand2")
-            chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
-            chip.bind("<Button-1>", lambda e, b=back: self.set_timeline_day(b))
-            self.w["timeline_chips"].append((back, chip))
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
         # Breaks and rest on top; work, continuous work and absence below
@@ -379,20 +380,23 @@ class MainWindow:
             marks.append((end, t("tl_day_finished"), C["accent"], "done", "day"))
         return sorted(marks, key=lambda mark: mark[0])
 
-    def set_timeline_day(self, back):
-        """A day switch chip: the timeline of today or of a day before it."""
-        self.timeline_back = back
+    def set_status_day(self, back):
+        """A day switch chip: the day card (metrics and timeline) shows today or a day before it."""
+        self.day_back = back
         self.timeline_leave()
-        self.refresh_timeline_days()
+        self.refresh_status()
         self.draw_timeline(force=True)
 
-    def refresh_timeline_days(self):
-        """Chip captions follow the date ("Mo 13", the last one "Today"); days without a record are dimmed."""
+    def refresh_day_chips(self):
+        """Chip captions follow the date ("Mo 13", the last one "Today"); days without a record are dimmed.
+        A new day brings the card back to today."""
         today = self.today()
+        if self.w.get("day_chips_date") != today:
+            self.w["day_chips_date"], self.day_back = today, 0
         weekdays = t("weekdays").split()
-        for back, chip in self.w.get("timeline_chips", ()):
+        for back, chip in self.w.get("day_chips", ()):
             date = today - dt.timedelta(days=back)
-            active = back == self.timeline_back
+            active = back == self.day_back
             known = not back or date.isoformat() in self.stats.data
             chip.configure(text=f"{weekdays[date.weekday()]} {date.day}" if back else t("today"),
                            bg=C["accent"] if active else C["panel"],
@@ -411,8 +415,8 @@ class MainWindow:
         width = c.winfo_width()
         if width < 100:
             return
-        today = self.today() - dt.timedelta(days=self.timeline_back)
-        live = not self.timeline_back
+        today = self.today() - dt.timedelta(days=self.day_back)
+        live = not self.day_back
         events = self.stats.events(today)
         minute = self.minute(now) if live else None
         marks = self.timeline_marks(now, events, today)
@@ -1297,19 +1301,32 @@ class MainWindow:
         else:
             self.set_headline("water", fmt_time(s.water_remaining), countdown=True)
             self.w["water_sub"].configure(text=t("water_next", progress=progress))
-        work = today["work_sec"] + int(self.work_pending)  # not yet recorded time is shown too, live
+        self.refresh_day_chips()
         now = dt.datetime.now()
-        events = self.stats.events(self.today())
-        reg = regularity(events, self.minute(now)) or {}
-        stretch = 0 if (s.in_break or s.away or s.paused or s.eating) else current_stretch(events, self.minute(now))
+        # The day card: today live, or a past day from the day switch (its longest stretch instead of the
+        # current one; days from before the event log have no stretch or absence)
+        date = self.today() - dt.timedelta(days=self.day_back)
+        rec = self.stats.day(date)
+        events = self.stats.events(date)
+        if self.day_back:
+            work = rec["work_sec"]
+            reg = regularity(events)
+            stretch = (reg["longest_min"], t("longest_day")) if reg else ("—", "")
+            away = (reg["away_min"], t("times_n", n=reg["away"]) if reg["away"] else "") if reg else ("—", "")
+        else:
+            work = rec["work_sec"] + int(self.work_pending)  # not yet recorded time is shown too, live
+            reg = regularity(events, self.minute(now)) or {}
+            current = 0 if (s.in_break or s.away or s.paused or s.eating) else current_stretch(events, self.minute(now))
+            stretch = (current, t("longest_n", time=fmt_minutes(reg["longest_min"])) if reg.get("longest_min") else "")
+            away = (reg.get("away_min", 0), t("times_n", n=reg["away"]) if reg.get("away") else "")
         values = {
-            "breaks": (today["mini_done"] + today["long_done"],
-                       t("breaks_split", mini=today["mini_done"], long=today["long_done"])),
-            "skipped": (today["skipped"], t("postponed_n", n=today["postponed"]) if today["postponed"] else ""),
-            "active": (today["active_sec"] // 60, ""),
-            "work": (fmt_hm(work), self.work_span(today)),
-            "stretch": (stretch, t("longest_n", time=fmt_minutes(reg["longest_min"])) if reg.get("longest_min") else ""),
-            "away": (reg.get("away_min", 0), t("times_n", n=reg["away"]) if reg.get("away") else ""),
+            "breaks": (rec["mini_done"] + rec["long_done"],
+                       t("breaks_split", mini=rec["mini_done"], long=rec["long_done"])),
+            "skipped": (rec["skipped"], t("postponed_n", n=rec["postponed"]) if rec["postponed"] else ""),
+            "active": (rec["active_sec"] // 60, ""),
+            "work": (fmt_hm(work), self.work_span(rec)),
+            "stretch": stretch,
+            "away": away,
         }
         for key, (value, sub) in values.items():
             self.w[f"today_{key}"].configure(text=value)
@@ -1324,7 +1341,6 @@ class MainWindow:
                 self.w["finish_btn"].pack_forget()
         self.refresh_schedule()
         self.refresh_meal_card(now)
-        self.refresh_timeline_days()
         self.draw_timeline()
         self.render_glasses(today["water"])
 

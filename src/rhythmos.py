@@ -86,7 +86,7 @@ class App(Popups, MainWindow):
         self.current_page = None
         self.chart_info = None
         self._timeline_key = self._ring_key = None
-        self.timeline_back = 0     # the day the Status timeline shows: 0 today, 1 yesterday…
+        self.day_back = 0          # the day the Status day card shows: 0 today, 1 yesterday…
         self.timeline_points = []  # [(x, tooltip)] of unlabelled day timeline marks
         self.timeline_spans = []   # [(x0, x1, tooltip)] of spans on the day bar: absence, pause
         self.state_saved_at = None  # when state.json was last saved before this launch
@@ -566,8 +566,8 @@ def run_smoke_test(app, out_dir):
         # Busyness (a call, fullscreen): on macOS real CoreAudio, CoreMediaIO and Quartz calls
         (lambda: note(f"busy {system.busy_reason()}"), None),
         (lambda: page("status"), "status"),
-        (lambda: app.set_timeline_day(1), "status_yesterday"),
-        (lambda: app.set_timeline_day(0), None),
+        (lambda: app.set_status_day(1), "status_yesterday"),
+        (lambda: app.set_status_day(0), None),
         (lambda: page("stats"), "stats"),
         (lambda: app.set_stats_range(30), "stats_30"),
         (lambda: app.set_stats_range(7), None),
