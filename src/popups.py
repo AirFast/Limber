@@ -82,8 +82,7 @@ class Popups:
         for x, y, w, h, work, primary in screens:
             win = tk.Toplevel(self.root, bg=C["bg"])
             win.overrideredirect(True)
-            win.geometry(f"{w}x{h}+{x}+{y}")
-            system.keep_on_top(win)
+            system.keep_on_top(win, f"{w}x{h}+{x}+{y}")
             win.protocol("WM_DELETE_WINDOW", lambda: None)
             self.break_wins.append(win)
             if demo:
@@ -480,8 +479,7 @@ class Popups:
         win.update_idletasks()
         width = max(width, win.winfo_reqwidth())
         height = win.winfo_reqheight()
-        win.geometry(f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
-        system.keep_on_top(win)
+        system.keep_on_top(win, f"{width}x{height}+{right - width - 16}+{bottom - height - 16}")
 
     def popup_head(self, win, title, color, counter, demo, close):
         """The header of the water or meal window: the title, "2 of 3" on the right and, for a demo, the badge and Esc."""

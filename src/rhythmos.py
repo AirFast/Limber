@@ -554,6 +554,16 @@ def run_smoke_test(app, out_dir):
              f"content {area.inner.winfo_width()}x{area.inner.winfo_height()} "
              f"(asks {area.inner.winfo_reqwidth()}x{area.inner.winfo_reqheight()})")
 
+    def in_corner(win, name):
+        """A reminder window must stand at the right edge of the work area, not at the screen's top left
+        (macOS once moved it there): the place goes to info.txt, a wrong one fails the smoke test."""
+        app.root.update()
+        _left, top, right, _bottom = system.work_area(app.root)
+        x, y, w = win.winfo_rootx(), win.winfo_rooty(), win.winfo_width()
+        note(f"{name} window at {x},{y} size {w}x{win.winfo_height()}, work area right {right} top {top}")
+        if abs(x + w - (right - 16)) > 40 or y <= top + 8:
+            raise AssertionError(f"{name} window is not in the bottom right corner")
+
     def note(text):
         """A line to the log and to info.txt next to the screenshots: on macOS the built app's stderr isn't kept."""
         print(f"smoke test: {text}", file=sys.stderr)
@@ -584,12 +594,15 @@ def run_smoke_test(app, out_dir):
         (lambda: (app.show_demo_break("long"), app.next_break_step()), "workout"),
         (lambda: app.end_break("skip"), None),
         (lambda: app.show_water(demo=True), "water"),
+        (lambda: in_corner(app.water_win, "water"), None),
         # The main window brought forward (opened from the tray, clicked) must not cover a reminder
         (lambda: (app.main_win.lift(), app.main_win.focus_force()), "water_over_main"),
         (lambda: app.end_water(False), None),
         (lambda: app.show_meal("lunch", demo=True), "meal"),
+        (lambda: in_corner(app.meal_win, "meal"), None),
         (app.close_meal_window, None),
         (lambda: app.show_day_end(demo=True), "day_end"),
+        (lambda: in_corner(app.toast_win, "day end"), None),
         (app.close_toast, None),
         (lambda: app.show_overwork(demo=True), "overwork"),
         (app.close_toast, None),
