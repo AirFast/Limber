@@ -18,7 +18,7 @@ from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend
 from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
                   fmt_volume, t)
 from system import font
-from widgets import ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
+from widgets import CARD, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
 
 
 TIMELINE_HEIGHT = 100     # шкала дня в картці «Сьогодні»
@@ -56,9 +56,9 @@ class MainWindow:
         Slider.page_scrolls = staticmethod(self.page_scrolls)
 
         header = tk.Frame(win, bg=C["bg"])
-        header.pack(fill="x", padx=24, pady=(18, 10))
+        header.pack(fill="x", padx=6 * UNIT, pady=(5 * UNIT, 2 * UNIT))
         self.header_icon = ImageTk.PhotoImage(make_app_icon(40))
-        tk.Label(header, image=self.header_icon, bg=C["bg"]).pack(side="left", padx=(0, 10))
+        tk.Label(header, image=self.header_icon, bg=C["bg"]).pack(side="left", padx=(0, 3 * UNIT))
         title = tk.Frame(header, bg=C["bg"])
         title.pack(side="left")
         tk.Label(title, text=APP_NAME, bg=C["bg"], fg=C["text"],
@@ -66,10 +66,10 @@ class MainWindow:
         tk.Label(title, text=t("tagline"), bg=C["bg"], fg=C["muted"],
                  font=font(9)).pack(anchor="w")
         self.w["saved"] = tk.Label(header, text="", bg=C["bg"], fg=C["accent"], font=font(10))
-        self.w["saved"].pack(side="left", padx=14, pady=(6, 0))
+        self.w["saved"].pack(side="left", padx=4 * UNIT, pady=(2 * UNIT, 0))
         self.w["update"] = tk.Label(header, text="", bg=C["bg"], fg=C["water"], font=font(10, "semibold"),
                                     cursor="hand2")
-        self.w["update"].pack(side="left", pady=(6, 0))
+        self.w["update"].pack(side="left", pady=(2 * UNIT, 0))
         self.w["update"].bind("<Button-1>", lambda e: self.start_update())
         tabs = tk.Frame(header, bg=C["panel"])
         tabs.pack(side="right")
@@ -77,7 +77,7 @@ class MainWindow:
         body = tk.Frame(win, bg=C["bg"])
         # Смуга прокрутки (6 + 8 px) живе в правому відступі: правий край вмісту — на одній лінії
         # з правим краєм кнопок вкладок (24 px від краю вікна)
-        body.pack(fill="both", expand=True, padx=(24, 24 - ScrollArea.BAR - 8), pady=(4, 20))
+        body.pack(fill="both", expand=True, padx=(6 * UNIT, 6 * UNIT - ScrollArea.BAR - 2 * UNIT), pady=(TIGHT, 5 * UNIT))
         self.pages, self.page_frames, self.tab_buttons = {}, {}, {}
         self.current_page = None
         for key, builder in (("status", self.build_status_page),
@@ -173,21 +173,21 @@ class MainWindow:
     def build_status_page(self, parent):
         page = tk.Frame(parent, bg=C["bg"])
         left = card(page)
-        left.pack(side="left", fill="y", padx=(0, 14))
+        left.pack(side="left", fill="y", padx=(0, CARD))
         self.w["ring"] = tk.Canvas(left, width=270, height=270, bg=C["card"], highlightthickness=0)
-        self.w["ring"].pack(pady=(4, 12))
+        self.w["ring"].pack(pady=(TIGHT, 4 * UNIT))
         flat_button(left, t("break_now"), self.trigger_break, bg=C["accent"], fg=C["on_accent"],
-                    size=11).pack(fill="x", pady=3)
+                    size=11).pack(fill="x", pady=UNIT)
         self.w["pause_btn"] = flat_button(left, t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])), self.toggle_pause, size=11)
-        self.w["pause_btn"].pack(fill="x", pady=3)
+        self.w["pause_btn"].pack(fill="x", pady=UNIT)
         self.w["reset_btn"] = flat_button(left, t("reset"), self.sched.reset, size=11)
-        self.w["reset_btn"].pack(fill="x", pady=3)
+        self.w["reset_btn"].pack(fill="x", pady=UNIT)
         # «Завершити день» — лише коли настав кінець дня з налаштувань, а день ще не завершено
         self.w["finish_btn"] = flat_button(left, t("day_end_finish"), lambda: self.handle(("pause", None)),
                                            bg=C["accent"], fg=C["on_accent"], size=11)
         # Розклад: довга перерва й кінець дня — рядок «назва … стан», оновлюється щосекунди
         tk.Label(left, text=t("card_schedule").upper(), bg=C["card"], fg=C["accent"],
-                 font=font(9, "semibold")).pack(anchor="w", pady=(24, 6))
+                 font=font(9, "semibold")).pack(anchor="w", pady=(6 * UNIT, 2 * UNIT))
         self.w["schedule"] = tk.Frame(left, bg=C["card"])
         self.w["schedule"].pack(fill="x")
         self.w["schedule_rows"] = {}
@@ -199,9 +199,9 @@ class MainWindow:
         top = tk.Frame(right, bg=C["bg"])
         top.pack(fill="x")
         water = card(top, t("card_water"))
-        water.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        water.grid(row=0, column=0, sticky="nsew", padx=(0, CARD // 2))
         meals = card(top, t("card_meals"))
-        meals.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        meals.grid(row=0, column=1, sticky="nsew", padx=(CARD // 2, 0))
         for column in (0, 1):
             top.columnconfigure(column, weight=1, uniform="top")
         self.build_meal_card(meals)
@@ -212,14 +212,14 @@ class MainWindow:
         self.w["water_sub"].pack(fill="x")
         # Склянки за сьогодні: клік по склянці виставляє кількість (як тарілки в картці «Їжа»)
         self.w["glasses"] = tk.Frame(water, bg=C["card"])
-        self.w["glasses"].pack(anchor="w", pady=(4, 0))
+        self.w["glasses"].pack(anchor="w", pady=(TIGHT, 0))
         self.w["glasses_key"] = None
 
         today = card(right, t("card_today"))
-        today.pack(fill="both", expand=True, pady=(14, 0))
+        today.pack(fill="both", expand=True, pady=(CARD, 0))
         # Шкала дня внизу картки: від ранку до кінця робочого дня, їжа, кінець дня й «зараз»
         self.w["timeline"] = tk.Canvas(today, height=TIMELINE_HEIGHT, bg=C["card"], highlightthickness=0)
-        self.w["timeline"].pack(side="bottom", fill="x", pady=(10, 0))
+        self.w["timeline"].pack(side="bottom", fill="x", pady=(3 * UNIT, 0))
         self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
         self.w["timeline"].bind("<Motion>", self.timeline_hover)
         self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
@@ -231,7 +231,7 @@ class MainWindow:
                    ("stretch", t("m_stretch"), C["text"]), ("away", t("m_away"), C["muted"]))
         for i, (key, caption, color) in enumerate(metrics):
             cell = tk.Frame(grid, bg=C["card"])
-            cell.grid(row=i // 3, column=i % 3, sticky="nw", pady=(0 if i < 3 else 14, 0))
+            cell.grid(row=i // 3, column=i % 3, sticky="nw", pady=(0 if i < 3 else ITEM, 0))
             grid.columnconfigure(i % 3, weight=1, uniform="today")
             self.w[f"today_{key}"] = tk.Label(cell, bg=C["card"], fg=color, font=font(28, "light"))
             self.w[f"today_{key}"].pack(anchor="w")
@@ -247,7 +247,7 @@ class MainWindow:
                                                     justify="left", anchor="nw", wraplength=260))
         self.w["meal_sub"].pack(fill="x")
         self.w["plates"] = tk.Frame(box, bg=C["card"])
-        self.w["plates"].pack(anchor="w", pady=(4, 0))
+        self.w["plates"].pack(anchor="w", pady=(TIGHT, 0))
         self.w["plates_key"] = None
 
     def set_headline(self, key, text, countdown=False):
@@ -313,7 +313,7 @@ class MainWindow:
             done = state == "done"
             cursor = "arrow" if done else "hand2"
             cell = tk.Frame(frame, bg=C["card"], cursor=cursor)
-            cell.grid(row=0, column=i, padx=(0, 14))
+            cell.grid(row=0, column=i, padx=(0, 4 * UNIT))
             plate = tk.Label(cell, image=plate_image(30, state, C["card"]), bg=C["card"], cursor=cursor)
             plate.pack()
             name = tk.Label(cell, text=t(f"meal_{meal}"), bg=C["card"], fg=C["muted"], font=font(9), cursor=cursor)
@@ -633,9 +633,9 @@ class MainWindow:
             widgets.clear()
             for i, (key, name, _text, _hot) in enumerate(rows):
                 tk.Label(frame, text=name, bg=C["card"], fg=C["muted"], font=font(10)).grid(
-                    row=i, column=0, sticky="w", pady=3)
+                    row=i, column=0, sticky="w", pady=UNIT)
                 widgets[key] = tk.Label(frame, bg=C["card"], font=font(10))
-                widgets[key].grid(row=i, column=1, sticky="e", pady=3)
+                widgets[key].grid(row=i, column=1, sticky="e", pady=UNIT)
             frame.columnconfigure(1, weight=1)
         for key, _name, text, hot in rows:
             widgets[key].configure(text=text, fg=(C["meal"] if key in MEALS else C["accent"]) if hot else C["text"])
@@ -679,7 +679,7 @@ class MainWindow:
         під ними графік за 7 або 30 днів і підсумки за цей період."""
         page = tk.Frame(parent, bg=C["bg"])
         self.w["stats_day"] = tk.Label(page, bg=C["bg"], fg=C["text"], font=font(12, "semibold"))
-        self.w["stats_day"].pack(anchor="w", pady=(0, 8))
+        self.w["stats_day"].pack(anchor="w", pady=(0, 2 * UNIT))
         summary = tk.Frame(page, bg=C["bg"])
         summary.pack(fill="x")
         # Порядок, як і всюди: перерви → рух → вода → їжа → робота
@@ -690,8 +690,8 @@ class MainWindow:
         for i, (key, caption, color) in enumerate(cards):
             box = card(summary)
             column = i % per_row
-            box.grid(row=i // per_row, column=column, sticky="nsew", pady=(0 if i < per_row else 10, 0),
-                     padx=(0 if column == 0 else 5, 0 if column == per_row - 1 else 5))
+            box.grid(row=i // per_row, column=column, sticky="nsew", pady=(0 if i < per_row else CARD, 0),
+                     padx=(0 if column == 0 else CARD // 2, 0 if column == per_row - 1 else CARD // 2))
             summary.columnconfigure(column, weight=1, uniform="sum")
             self.w[key] = tk.Label(box, bg=C["card"], fg=color, font=font(26, "light"))
             self.w[key].pack(anchor="w")
@@ -702,16 +702,16 @@ class MainWindow:
             self.w[f"{key}_sub"].pack(anchor="w")
 
         chart = card(page)
-        chart.pack(fill="both", expand=True, pady=(14, 0))
+        chart.pack(fill="both", expand=True, pady=(CARD, 0))
         head = tk.Frame(chart, bg=C["card"])
-        head.pack(fill="x", pady=(0, 4))
+        head.pack(fill="x", pady=(0, TIGHT))
         self.w["chart_title"] = tk.Label(head, bg=C["card"], fg=C["accent"], font=font(9, "semibold"))
         self.w["chart_title"].pack(side="left")
         segments = tk.Frame(head, bg=C["panel"])
         segments.pack(side="right")
         # Експорт усієї статистики в CSV — посилання поруч з перемикачем періоду
         export = tk.Label(head, text=t("export_link"), bg=C["card"], fg=C["accent"], font=font(9), cursor="hand2")
-        export.pack(side="right", padx=(0, 14))
+        export.pack(side="right", padx=(0, 4 * UNIT))
         export.bind("<Button-1>", lambda e: self.export_stats())
         self.w["range_buttons"] = {}
         for days in STATS_RANGES:
@@ -724,17 +724,17 @@ class MainWindow:
         self.w["chart"].bind("<Motion>", self.on_chart_motion)
         self.w["chart"].bind("<Leave>", lambda e: self.highlight_day(None))
         bottom_row = tk.Frame(chart, bg=C["card"])
-        bottom_row.pack(fill="x", pady=(6, 0))
+        bottom_row.pack(fill="x", pady=(2 * UNIT, 0))
         for text, color in ((t("lg_mini"), C["accent"]), (t("lg_long"), C["accent_dark"]),
                             (t("lg_skipped"), C["dim"]), (t("lg_water"), C["water"]), (t("lg_meals"), C["meal"])):
             tk.Label(bottom_row, text="●", bg=C["card"], fg=color, font=font(12)).pack(side="left")
             tk.Label(bottom_row, text=text, bg=C["card"], fg=C["muted"],
-                     font=font(10)).pack(side="left", padx=(2, 14))
+                     font=font(10)).pack(side="left", padx=(0, 4 * UNIT))
         for key in ("range_breaks", "range_water", "range_day"):
             # Переносяться за шириною картки: на вузькому екрані рядок підсумків довший за неї
             self.w[key] = wrap_to_width(tk.Label(chart, bg=C["card"], fg=C["muted"], font=font(10), justify="left",
                                                  anchor="w", wraplength=400))
-            self.w[key].pack(fill="x", pady=(4, 0))
+            self.w[key].pack(fill="x", pady=(TIGHT, 0))
         return page
 
     def set_stats_range(self, days):
@@ -947,25 +947,27 @@ class MainWindow:
     # налаштування
 
     def build_settings_page(self, parent):
-        """Картки за темами: спершу перерви (міні → довгі → відкладання й пауза), потім день
-        (робочий день → їжа → вода), а «Звук» — або наприкінці перерв (сигнал на початку й наприкінці
-        перерви), або поруч з «Іншим»: що з цього дає рівніші колонки. Колонок стільки, скільки вміщує
-        екран; картки заповнюють їх по черзі згори вниз, межі підібрані так, щоб колонки були якомога
-        рівнішими, а решту висоти картки колонки ділять порівну — усі колонки закінчуються на одній лінії.
-        У чотири колонки виходить логічно й по рядках: зверху — головні картки тем (перерви, відкладання,
-        робочий день, вода), під ними — їхні доповнення. «Спробувати» — у заголовку картки, поруч із тим,
-        що показує перегляд."""
+        """Cards grouped by theme: breaks first (mini → long → postpone & pause), then the day
+        (workday → meals → water); Sound either closes the breaks (it plays at their start and end) or
+        sits next to Other, whichever gives evener columns. As many columns as the screen fits; cards fill
+        them top to bottom, split so the columns are as even as possible, and a shorter column shares the
+        remaining height among its cards, so all columns end on one line. In four columns the rows read
+        logically too: the main card of each theme on top (breaks, postpone, workday, water), its
+        companions below. "Try it" sits in the card heading, next to what the preview shows."""
         page = tk.Frame(parent, bg=C["bg"])
         count = self.layout["columns"]
-        # Колонки — раніше за картки: картки кладемо в них через pack(in_=…), а показується лише те,
-        # що в порядку накладання вище за свою колонку
+        # Columns are created before the cards: cards are packed into them with pack(in_=…), and only
+        # widgets above their column in the stacking order are visible
         columns = [tk.Frame(page, bg=C["bg"]) for _ in range(count)]
         for i, column in enumerate(columns):
-            column.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == count - 1 else 7))
+            column.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else CARD // 2, 0 if i == count - 1 else CARD // 2))
             page.columnconfigure(i, weight=1, uniform="settings")
 
+        def settings_card(title, demo=None):
+            return card(page, title, (t("preview_try"), demo) if demo else None)
+
         def sliders(title, keys, demo=None):
-            box = card(page, title, (t("preview_try"), demo) if demo else None)
+            box = settings_card(title, demo)
             for key in keys:
                 self.add_slider(box, key)
             return box
@@ -975,17 +977,17 @@ class MainWindow:
 
         breaks = sliders(t("card_breaks"), ("mini_interval_min", "mini_duration_sec", "intensity"),
                          lambda: self.show_demo_break("mini"))
-        toggle(breaks, t("group_buttons_toggle"), "group_buttons", pady=(2, 0))
+        toggle(breaks, t("group_buttons_toggle"), "group_buttons", pady=(0, ITEM))
         long_box = sliders(t("card_long"), ("long_every", "long_duration_min"), lambda: self.show_demo_break("long"))
-        toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(2, 0))
+        toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(0, ITEM))
         postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
 
-        sound = card(page, t("card_sound"))
-        toggle(sound, t("sound_toggle"), "sound", pady=(0, 8))
+        sound = settings_card(t("card_sound"))
+        toggle(sound, t("sound_toggle"), "sound", pady=(0, ITEM))
         self.add_sound_slider(sound)
 
-        # «Робочий день»: дні, початок, кінець і ліміт роботи
-        day_end = card(page, t("card_day_end"), (t("preview_try"), lambda: self.show_day_end(demo=True)))
+        # Workday: days, start, end and the work limit
+        day_end = settings_card(t("card_day_end"), lambda: self.show_day_end(demo=True))
         self.build_workdays(day_end)
         self.add_slider(day_end, "workday_start")
         lo, hi, step, fmt = SLIDERS["day_end_at"]
@@ -996,38 +998,43 @@ class MainWindow:
             self.set_setting("day_end_enabled", value)
             day_end_slider.set_enabled(value)
 
-        # Як у «Їжі»: перемикач нагадування — у рядку повзунка, вимкнене — приглушене
+        # As in Meals: the reminder toggle sits in the slider row; when off, the slider is dimmed
         day_end_slider.label.configure(fg=C["text"], font=font(11))
         Toggle(day_end_slider.head, None, self.cfg["day_end_enabled"], toggle_day_end).pack(
             side="right", padx=(12, 0), before=day_end_slider.value_label)
-        day_end_slider.pack(fill="x", pady=(0, 10))
+        day_end_slider.pack(fill="x", pady=(0, ITEM))
         day_end_slider.set_enabled(self.cfg["day_end_enabled"])
         self.add_slider(day_end, "max_work_hours")
 
         meals = self.build_meals_card(page)
 
-        water = card(page, t("card_water"), (t("preview_try"), lambda: self.show_water(demo=True)))
-        toggle(water, t("water_toggle"), "water_enabled", pady=(0, 8))
+        water = settings_card(t("card_water"), lambda: self.show_water(demo=True))
+        toggle(water, t("water_toggle"), "water_enabled", pady=(0, ITEM))
         self.build_water_profile(water)
 
-        other = card(page, t("card_other"))
-        self.build_language_switch(other).pack(fill="x", pady=(0, 6))
+        other = settings_card(t("card_other"))
+        self.build_language_switch(other).pack(fill="x", pady=(0, ITEM))
         Toggle(other, t("autostart_toggle_mac" if system.IS_MAC else "autostart_toggle"), system.get_autostart(),
-               self.set_autostart_setting).pack(fill="x", pady=4)
-        toggle(other, t("updates_toggle"), "check_updates", pady=4)
+               self.set_autostart_setting).pack(fill="x", pady=(0, ITEM))
+        toggle(other, t("updates_toggle"), "check_updates", pady=(0, ITEM))
 
         cards = [breaks, long_box, postpone, sound, day_end, meals, water, other]
-        orders = [range(8), (0, 1, 2, 4, 5, 6, 3, 7)]  # «Звук» — після перерв або перед «Іншим»
+        for box in cards:
+            # The card padding already closes the card: drop the gap after its last setting
+            last = box.pack_slaves()[-1]
+            top = last.pack_info()["pady"]
+            last.pack_configure(pady=(top[0] if isinstance(top, tuple) else 0, 0))
+        orders = [range(8), (0, 1, 2, 4, 5, 6, 3, 7)]  # Sound: after breaks or before Other
         page.update_idletasks()
         for column, group in zip(columns, split_orders([c.winfo_reqheight() for c in cards], orders, count)):
             for j, index in enumerate(group):
-                # expand: коротша колонка розтягує свої картки до висоти найвищої
-                cards[index].pack(in_=column, fill="both", expand=True, pady=(0 if j == 0 else 14, 0))
+                # expand: a shorter column stretches its cards to the height of the tallest
+                cards[index].pack(in_=column, fill="both", expand=True, pady=(0 if j == 0 else CARD, 0))
         return page
 
     def build_meals_card(self, parent):
-        """Сніданок, обід, вечеря: кожна — повзунок часу, а назва їжі й перемикач — у його верхньому рядку
-        (компактно, як рядок розкладу); повзунок неактивний, поки їжу вимкнено."""
+        """Breakfast, lunch, dinner: each is a time slider with the meal name and its toggle in the top row
+        (compact, like a schedule line); the slider is inactive while the meal is off."""
         box = card(parent, t("card_meals"), (t("preview_try"), lambda: self.show_meal("lunch", demo=True)))
         for meal in MEALS:
             lo, hi, step, fmt = SLIDERS[f"{meal}_at"]
@@ -1041,17 +1048,17 @@ class MainWindow:
 
             Toggle(slider.head, None, self.cfg[f"{meal}_enabled"], toggle).pack(
                 side="right", padx=(12, 0), before=slider.value_label)
-            slider.pack(fill="x", pady=(0, 10))
+            slider.pack(fill="x", pady=(0, ITEM))
             slider.set_enabled(self.cfg[f"{meal}_enabled"])
         self.add_slider(box, "meal_pause_min")
         return box
 
     def build_workdays(self, parent):
-        """Робочі дні — сегменти з днями тижня (як перемикач мови): у ці дні нагадуємо про їжу й кінець дня."""
+        """Workdays as weekday segments (like the language switch): meals and day end are reminded on these days."""
         bg = parent["bg"]
         tk.Label(parent, text=t("workdays_label"), bg=bg, fg=C["muted"], font=font(10)).pack(anchor="w")
         segments = tk.Frame(parent, bg=C["panel"])
-        segments.pack(fill="x", pady=(4, 10))
+        segments.pack(fill="x", pady=(TIGHT, ITEM))
         chips = {}
 
         def paint():
@@ -1060,7 +1067,7 @@ class MainWindow:
                 chip.configure(bg=C["accent"] if active else C["panel"], fg=C["on_accent"] if active else C["muted"])
 
         def flip(day):
-            self.set_setting("workdays", sorted(set(self.cfg["workdays"]) ^ {day}))  # новий список, не той самий
+            self.set_setting("workdays", sorted(set(self.cfg["workdays"]) ^ {day}))  # a new list, not the same one
             paint()
 
         for day, name in enumerate(t("weekdays").split()):
@@ -1071,7 +1078,7 @@ class MainWindow:
         paint()
 
     def build_language_switch(self, parent):
-        """Рядок «Мова» з перемикачем-сегментом між мовами."""
+        """The Language row with a segmented switch between languages."""
         row = tk.Frame(parent, bg=parent["bg"])
         tk.Label(row, text=t("language"), bg=parent["bg"], fg=C["text"], font=font(11)).pack(side="left")
         segments = tk.Frame(row, bg=C["panel"])
@@ -1085,22 +1092,21 @@ class MainWindow:
         return row
 
     def build_water_profile(self, parent):
-        """Перемикач «Норма: жінка / чоловік / вручну», підказка-рекомендація і повзунки води."""
-        row = tk.Frame(parent, bg=parent["bg"])
-        row.pack(fill="x", pady=(0, 4))
-        tk.Label(row, text=t("water_profile"), bg=parent["bg"], fg=C["text"], font=font(11)).pack(side="left")
-        segments = tk.Frame(row, bg=C["panel"])
-        segments.pack(side="right")
+        """Intake switch (female / male / custom), the recommendation hint and the water sliders."""
+        # Label above the segments, like every slider: the row never forces the column wider
+        tk.Label(parent, text=t("water_profile"), bg=parent["bg"], fg=C["muted"], font=font(10)).pack(anchor="w")
+        segments = tk.Frame(parent, bg=C["panel"])
+        segments.pack(fill="x", pady=(TIGHT, 2 * UNIT))
         self.w["water_profile"] = {}
         for code in (*WATER_PROFILES, "custom"):
-            btn = tk.Label(segments, text=t(f"water_profile_{code}"), font=font(10), padx=10, pady=3, cursor="hand2")
-            btn.pack(side="left", padx=2, pady=2)
+            btn = tk.Label(segments, text=t(f"water_profile_{code}"), font=font(10), padx=4, pady=3, cursor="hand2")
+            btn.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.set_water_profile(c))
             self.w["water_profile"][code] = btn
-        # Початковий перенос — вужчий за колонку, щоб довгий рядок не роздував вікно; далі — за шириною
+        # Initial wrap is narrower than the column so a long line doesn't widen the window; then it follows the width
         hint = tk.Label(parent, bg=parent["bg"], fg=C["muted"], font=font(9), justify="left", anchor="w",
                         wraplength=240)
-        hint.pack(fill="x", pady=(0, 10))
+        hint.pack(fill="x", pady=(0, ITEM))
         hint.bind("<Configure>", lambda e: hint.configure(wraplength=e.width))
         self.w["water_hint"] = hint
         self.w["water_sliders"] = {}
@@ -1109,10 +1115,10 @@ class MainWindow:
 
             def change(v, k=key):
                 self.set_setting(k, v)
-                self.refresh_water_profile()  # підказка для ручного режиму залежить від мети
+                self.refresh_water_profile()  # the custom-mode hint depends on the goal
 
             slider = Slider(parent, t(f"s_{key}"), lo, hi, step, self.cfg[key], fmt, change)
-            slider.pack(fill="x", pady=(0, 10))
+            slider.pack(fill="x", pady=(0, ITEM))
             self.w["water_sliders"][key] = slider
         self.refresh_water_profile()
 
@@ -1188,13 +1194,13 @@ class MainWindow:
             return t(key) if key in i18n.STRINGS[i18n.get_language()] else names[index]
 
         Slider(parent, t("sound_name_label"), 0, len(names) - 1, 1, names.index(self.sound_name()),
-               label, choose).pack(fill="x", pady=(0, 6))
+               label, choose).pack(fill="x", pady=(0, ITEM))
 
     def add_slider(self, parent, key):
         """Повзунок налаштування; крайнє ліве положення деяких — «авто»/«вимкнено» (0 у налаштуваннях)."""
         lo, hi, step, fmt = SLIDERS[key]
         Slider(parent, t(f"s_{key}"), lo, hi, step, slider_position(key, self.cfg[key]), fmt,
-               lambda v, k=key: self.set_setting(k, setting_value(k, v))).pack(fill="x", pady=(0, 10))
+               lambda v, k=key: self.set_setting(k, setting_value(k, v))).pack(fill="x", pady=(0, ITEM))
 
     def set_setting(self, key, value):
         if self.cfg.get(key) == value:

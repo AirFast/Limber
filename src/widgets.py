@@ -53,13 +53,25 @@ def wrap_to_width(label):
     return label
 
 
-def card(parent, title=None, action=None):
-    """Картка з заголовком; action = (текст, команда) — мала кнопка праворуч від заголовка
-    (у налаштуваннях — «Спробувати»: перегляд поруч із тим, що він показує)."""
-    frame = tk.Frame(parent, bg=C["card"], padx=18, pady=14)
+# Spacing scale for a steady vertical rhythm: every gap is a multiple of one 4 px unit.
+# Proximity: a label sits close to its own control (TIGHT), settings are farther apart (ITEM),
+# cards farther still (CARD). A card heading is closer to its content than to the card edge.
+UNIT = 4
+TIGHT = UNIT          # label and its control, a hint and what it explains
+ITEM = 5 * UNIT       # between settings inside a card
+CARD = 5 * UNIT       # between cards and columns
+CARD_PAD = (6 * UNIT, 5 * UNIT)   # inside a card: horizontal, vertical
+HEAD_GAP = 4 * UNIT   # card heading and its first item
+EDGE = 5 * UNIT       # inside corner windows and toasts
+
+
+def card(parent, title=None, action=None, pad=CARD_PAD, head_gap=HEAD_GAP):
+    """A card with a heading; action = (text, command) adds a small button right of the heading
+    (in settings, "Try it": the preview sits next to what it shows)."""
+    frame = tk.Frame(parent, bg=C["card"], padx=pad[0], pady=pad[1])
     if title:
         head = tk.Frame(frame, bg=C["card"])
-        head.pack(fill="x", pady=(0, 8))
+        head.pack(fill="x", pady=(0, head_gap))
         tk.Label(head, text=title.upper(), bg=C["card"], fg=C["accent"],
                  font=font(9, "semibold")).pack(side="left")
         if action:
@@ -70,7 +82,7 @@ def card(parent, title=None, action=None):
 
 
 class Slider(tk.Frame):
-    """Повзунок: перетягування, клік по доріжці, коліщатко миші."""
+    """A slider: drag, click on the track, mouse wheel."""
     PAD = 11
 
     def __init__(self, parent, label, lo, hi, step, value, fmt, on_change):
@@ -79,7 +91,7 @@ class Slider(tk.Frame):
         self.lo, self.hi, self.step, self.fmt, self.on_change = lo, hi, step, fmt, on_change
         self.value = self.snap(value)
         self.enabled = True
-        # Рядок над доріжкою: підпис і значення; сюди ж можна поставити перемикач (див. «Їжа»)
+        # Row above the track: label and value; a toggle can go here too (see Meals)
         self.head = head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
         self.label = tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10))
@@ -87,9 +99,9 @@ class Slider(tk.Frame):
         self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
                                     font=font(11, "semibold"))
         self.value_label.pack(side="right")
-        # Явна мала ширина: інакше Canvas просить типові ~380 px і роздуває колонки налаштувань
+        # Explicit small width: otherwise the Canvas asks for ~380 px and widens the settings columns
         self.canvas = tk.Canvas(self, width=160, height=26, bg=bg, highlightthickness=0, cursor="hand2")
-        self.canvas.pack(fill="x", pady=(2, 0))
+        self.canvas.pack(fill="x", pady=(TIGHT, 0))
         self.canvas.bind("<Configure>", lambda e: self.draw())
         self.canvas.bind("<Button-1>", self.drag)
         self.canvas.bind("<B1-Motion>", self.drag)

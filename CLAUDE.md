@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Rhythmos is a break-reminder tray/menu-bar app for Windows and macOS (Apple Silicon), written in Python 3.12 with Tkinter for windows and `pystray` + Pillow for the tray icon. Code comments, docstrings, README and build-script messages are in **Ukrainian** — keep new comments in Ukrainian to match. Commits follow Conventional Commits (`feat(macos): …`, `fix: …`, `chore: release x.y.z`).
+Rhythmos is a break-reminder tray/menu-bar app for Windows and macOS (Apple Silicon), written in Python 3.12 with Tkinter for windows and `pystray` + Pillow for the tray icon. Code is **English only**: new comments, docstrings and identifiers are written in English (older comments are still Ukrainian; translate them when touching that code). Ukrainian stays only in user-facing text (`i18n.py`) and the README. Commits follow Conventional Commits (`feat(macos): …`, `fix: …`, `chore: release x.y.z`).
 
 ## Commands
 
@@ -27,7 +27,7 @@ All source is in `src/` as flat modules (no package); tests add `src/` to `sys.p
 
 - **`core.py`** — all logic without Tk, and what tests cover: config (`DEFAULTS`, `SLIDERS` with `SLIDER_ZERO` "auto"/"off" positions, `migrate_config`, water profiles), the workday helpers (`workday_date`, `at_workday_minute`), `Scheduler` (person state, break countdown, reminders, persistence — see below), `build_workout`/`regroup_workout`/`build_break` (break steps that sum to an exact duration), `Stats` (per-day counters plus time lists such as `water_at`, keyed by the current workday via `Stats(today=…)`, and the per-day event log — see below), the pure event helpers (`event_spans`, `day_bounds`, `regularity`, `longest_work_stretch`, `absence_span`, `export_csv`), and layout maths (`split_balanced`, `main_layout`).
 - **`graphics.py`** — the palette `C` and everything drawn with Pillow: tray ring, app icon, glasses, plates, dots, check mark. Tk does not anti-alias, so shapes are drawn supersampled (`smooth_image`) and cached as `PhotoImage`s.
-- **`widgets.py`** — custom Tk widgets (`flat_button`, `card`, `Slider`, `Toggle`, `ScrollArea`, `demo_badge`). Built from `Label`/`Canvas` because `tk.Button` on macOS ignores colours.
+- **`widgets.py`** — custom Tk widgets (`flat_button`, `card`, `Slider`, `Toggle`, `ScrollArea`, `demo_badge`). Built from `Label`/`Canvas` because `tk.Button` on macOS ignores colours. It also holds the spacing scale (`UNIT` = 4 px; `TIGHT`, `ITEM`, `CARD`, `CARD_PAD`, `HEAD_GAP`, `EDGE`): every padding in the UI is a multiple of `UNIT`, following betterwebtype.com (vertical rhythm; proximity — a label is closer to its control than to the next setting, cards are farther apart still). Use these constants instead of raw pixel values.
 - **`popups.py`** — `Popups` mixin of `App`: break warning and break screens, water/meal/day-end windows and toasts stacked in the screen corner (`corner_window`, `place_in_corner`, `popup_head`, `popup_buttons`).
 - **`main_window.py`** — `MainWindow` mixin of `App`: the main window sized to the screen's work area (`main_layout`; pages in `ScrollArea`s scroll when they don't fit) with the Status, Statistics and Settings pages. `refresh_main` runs every second but redraws the Status page only while it is visible.
 - **`rhythmos.py`** — entry point and `App(Popups, MainWindow)`: tray, the per-second loop, action queue, update checks, `--smoke-test`. `__version__` lives here.

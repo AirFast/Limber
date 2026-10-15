@@ -11,7 +11,7 @@ from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZ
 from graphics import C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, glass_image, plate_image
 from i18n import content, fmt_clock, fmt_minutes, fmt_volume, t
 from system import font
-from widgets import demo_badge, flat_button
+from widgets import EDGE, TIGHT, UNIT, demo_badge, flat_button
 
 
 class Popups:
@@ -108,13 +108,13 @@ class Popups:
                 "info": tk.Label(frame, bg=C["bg"], fg=C["muted"], font=font(12)),
             }
             widgets["phase"].pack()
-            widgets["title"].pack(pady=(8, 24))
+            widgets["title"].pack(pady=(2 * UNIT, 6 * UNIT))
             widgets["text"].pack()
-            widgets["timer"].pack(pady=(30, 4))
-            widgets["info"].pack(pady=(0, 18))
+            widgets["timer"].pack(pady=(8 * UNIT, UNIT))
+            widgets["info"].pack(pady=(0, 5 * UNIT))
             # Вибір групи м'язів: замінює поточну (і наступні) вправи
             chips = tk.Frame(frame, bg=C["bg"])
-            chips.pack(pady=(0, 22 if self.cfg["group_buttons"] else 8))
+            chips.pack(pady=(0, 6 * UNIT if self.cfg["group_buttons"] else 2 * UNIT))
             widgets["chips"] = {}
             for group in (None, *exercises.GROUPS) if self.cfg["group_buttons"] else ():
                 chip = tk.Label(chips, text=t(f"group_{group or 'any'}"), font=font(10),
@@ -137,7 +137,7 @@ class Popups:
             flat_button(buttons, t("skip"), lambda: self.end_break("skip")).pack(side="left", padx=8)
             if multi:
                 tk.Label(frame, text=t("body_note"),
-                         bg=C["bg"], fg=C["dim"], font=font(11)).pack(pady=(28, 0))
+                         bg=C["bg"], fg=C["dim"], font=font(11)).pack(pady=(7 * UNIT, 0))
             win.focus_force()
 
         self.update_break_view()
@@ -270,7 +270,7 @@ class Popups:
         self.popup_head(win, t("water_title"), C["water"], t("x_of_y", a=drunk if done else drunk + 1, b=goal),
                         demo, lambda: self.end_water(False))
         glasses = tk.Frame(win, bg=C["panel"])
-        glasses.pack(anchor="w", padx=18, pady=(6, 10))
+        glasses.pack(anchor="w", padx=EDGE - 2, pady=(2 * UNIT, 3 * UNIT))
         for i in range(min(max(goal, drunk), MAX_GLASSES_SHOWN)):
             tk.Label(glasses, image=glass_image(18, 24, i < drunk, C["panel"]), bg=C["panel"]).grid(
                 row=i // GLASSES_PER_ROW, column=i % GLASSES_PER_ROW, padx=2, pady=2)
@@ -279,7 +279,7 @@ class Popups:
         else:
             tip = random.choice(content("water_tips"))
         tk.Label(win, text=tip, bg=C["panel"], fg=C["text"], font=font(11),
-                 wraplength=width - 44, justify="left").pack(anchor="w", padx=20)
+                 wraplength=width - 2 * EDGE - 4, justify="left").pack(anchor="w", padx=EDGE)
         drank = t(f"drank_{self.cfg['water_profile']}")  # «Випила» / «Випив» / нейтральне «Готово»
         self.popup_buttons(win, ((t("later"), lambda: self.end_water(False), False),
                                  (drank, lambda: self.end_water(True), True)), C["water"], C["on_water"])
@@ -319,7 +319,7 @@ class Popups:
                         demo, self.close_meal_window)
         # Тарілки за день: з'їдено / зараз / ще буде / пропущено — як склянки у воді
         plates = tk.Frame(win, bg=C["panel"])
-        plates.pack(anchor="w", padx=18, pady=(8, 10))
+        plates.pack(anchor="w", padx=EDGE - 2, pady=(2 * UNIT, 3 * UNIT))
         for i, m in enumerate(meals):
             if m == meal:
                 state = "done" if mode == "over" else "now"
@@ -336,10 +336,10 @@ class Popups:
         else:
             text = t("meal_over_text")
         tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(11),
-                 wraplength=width - 44, justify="left").pack(anchor="w", padx=20)
+                 wraplength=width - 2 * EDGE - 4, justify="left").pack(anchor="w", padx=EDGE)
         if mode == "remind":
             tk.Label(win, text=random.choice(content("meal_tips")), bg=C["panel"], fg=C["muted"], font=font(10),
-                     wraplength=width - 44, justify="left").pack(anchor="w", padx=20, pady=(6, 0))
+                     wraplength=width - 2 * EDGE - 4, justify="left").pack(anchor="w", padx=EDGE, pady=(2 * UNIT, 0))
         if mode == "remind":
             answers = ((t("skip"), "skip", False), (t("meal_snooze", min=MEAL_SNOOZE_MIN), "snooze", False),
                        (t("meal_go"), "eat", True))
@@ -480,7 +480,7 @@ class Popups:
     def popup_head(self, win, title, color, counter, demo, close):
         """Шапка віконця води чи їжі: заголовок, «2 з 3» праворуч і, для демо, позначка й Esc."""
         head = tk.Frame(win, bg=C["panel"])
-        head.pack(fill="x", padx=20, pady=(16, 0))
+        head.pack(fill="x", padx=EDGE, pady=(EDGE, 0))
         tk.Label(head, text=title, bg=C["panel"], fg=color, font=font(16, "semibold")).pack(side="left")
         tk.Label(head, text=counter, bg=C["panel"], fg=C["muted"], font=font(11)).pack(side="right")
         if demo:
@@ -490,7 +490,7 @@ class Popups:
     def popup_buttons(self, win, actions, color, on_color):
         """Кнопки внизу праворуч: actions — [(напис, дія, головна?)]; головна — у кольорі віконця з галочкою."""
         row = tk.Frame(win, bg=C["panel"])
-        row.pack(anchor="e", padx=16, pady=14)
+        row.pack(anchor="e", padx=EDGE - UNIT, pady=4 * UNIT)
         for label, command, primary in actions:
             flat_button(row, label, command, size=11, bg=color if primary else C["bg"],
                         fg=on_color if primary else C["text"],
@@ -507,17 +507,17 @@ class Popups:
         width = 380
         win = self.corner_window(C["accent"])
         head = tk.Frame(win, bg=C["panel"])
-        head.pack(fill="x", padx=18, pady=(14, 2))
+        head.pack(fill="x", padx=EDGE, pady=(4 * UNIT, TIGHT))
         tk.Label(head, text=title, bg=C["panel"], fg=C["accent"], font=font(13, "semibold")).pack(side="left")
         if demo:
             demo_badge(head).pack(side="right", padx=(8, 0))
             win.bind("<Escape>", lambda e: self.close_toast())
         self.toast_text = tk.Label(win, text=text, bg=C["panel"], fg=C["text"], font=font(10),
                                    wraplength=width - 40, justify="left")
-        self.toast_text.pack(anchor="w", padx=18, pady=(0, 0 if actions else 14))
+        self.toast_text.pack(anchor="w", padx=EDGE, pady=(0, 0 if actions else 4 * UNIT))
         if actions:
             row = tk.Frame(win, bg=C["panel"])
-            row.pack(anchor="e", padx=14, pady=12)
+            row.pack(anchor="e", padx=EDGE - UNIT, pady=3 * UNIT)
             for label, command, primary in actions:
                 btn = flat_button(row, label, lambda c=command: (self.close_toast(dismissed=False), c()), size=10,
                                   bg=C["accent"] if primary else C["bg"], fg=C["on_accent"] if primary else C["text"])
