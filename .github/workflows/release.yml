@@ -44,11 +44,15 @@ jobs:
         shell: pwsh
         run: |
           $smoke = Join-Path $PWD "smoke"
+          # A week of history in the old stats.json format: the app migrates it, the screenshots show real data
+          python tools/seed_stats.py "$env:APPDATA/Rhythmos"
           $p = Start-Process dist/Rhythmos/Rhythmos.exe -ArgumentList "--smoke-test", "`"$smoke`"" -PassThru -Wait
           New-Item -ItemType Directory -Force $smoke | Out-Null
           Copy-Item "$env:APPDATA/Rhythmos/rhythmos.log" $smoke -ErrorAction SilentlyContinue
           Get-Content "$smoke/rhythmos.log" -Tail 20 -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "smoke test exit code $($p.ExitCode)" }
+          python tools/seed_stats.py --check "$env:APPDATA/Rhythmos"
+          if ($LASTEXITCODE -ne 0) { throw "statistics were not migrated" }
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -86,7 +90,11 @@ jobs:
       # Runs the built Rhythmos.app, walks through every window and takes screenshots
       - name: Smoke test (UI screenshots)
         timeout-minutes: 5
-        run: dist/Rhythmos.app/Contents/MacOS/Rhythmos --smoke-test "$PWD/smoke"
+        run: |
+          # A week of history in the old stats.json format: the app migrates it, the screenshots show real data
+          python3 tools/seed_stats.py "$HOME/Library/Application Support/Rhythmos"
+          dist/Rhythmos.app/Contents/MacOS/Rhythmos --smoke-test "$PWD/smoke"
+          python3 tools/seed_stats.py --check "$HOME/Library/Application Support/Rhythmos"
 
       # Self-update: a copy of the built app "pretends" to be version 0.0.1, downloads
       # the latest release from GitHub itself, replaces itself and restarts
