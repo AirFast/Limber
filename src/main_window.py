@@ -10,7 +10,7 @@ from PIL import ImageTk
 import i18n
 import system
 from core import (APP_NAME, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats, average_minute, completion_rate,
-                  current_stretch, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity,
+                  current_stretch, day_bounds, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity,
                   restore_manual_water, save_config, setting_value, slider_position, split_orders,
                   water_interval_for, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
@@ -22,6 +22,7 @@ from widgets import CARD, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, f
 
 
 TIMELINE_HEIGHT = 100     # the day timeline in the Today card
+TIMELINE_DAYS = 7         # the day switch above it: today and the six days before
 TIMELINE_Y = 62           # where the bar is: labels above it in two tiers, hours below it (with air)
 TITLE_BAR = 32            # approximate OS title bar height, so the window fits the work area
 STATS_RANGES = (7, 30)    # the period switch on the statistics chart
@@ -223,6 +224,16 @@ class MainWindow:
         self.w["timeline"].bind("<Configure>", lambda e: self.draw_timeline(force=True))
         self.w["timeline"].bind("<Motion>", self.timeline_hover)
         self.w["timeline"].bind("<Leave>", lambda e: self.timeline_leave())
+        # Day switch right above the timeline: today and the days before it, to compare how days went
+        self.timeline_back = 0
+        days = tk.Frame(today, bg=C["panel"])
+        days.pack(side="bottom", fill="x", pady=(ITEM, 0))
+        self.w["timeline_chips"] = []
+        for back in range(TIMELINE_DAYS - 1, -1, -1):
+            chip = tk.Label(days, font=font(9), padx=4, pady=2, cursor="hand2")
+            chip.pack(side="left", fill="x", expand=True, padx=2, pady=2)
+            chip.bind("<Button-1>", lambda e, b=back: self.set_timeline_day(b))
+            self.w["timeline_chips"].append((back, chip))
         grid = tk.Frame(today, bg=C["card"])
         grid.pack(fill="x")
         # Breaks and rest on top; work, continuous work and absence below
@@ -338,22 +349,24 @@ class MainWindow:
                 return eaten_at[0]
         return self.cfg[f"{meal}_at"]
 
-    def timeline_marks(self, now, events):
+    def timeline_marks(self, now, events, date):
         """Day timeline marks: (minute, name, colour, state, kind). Meals ("done"/"now"/"later"/"skip") stand
         at the moment they were eaten, so the regularity shows; kind "day" is the day start and end (labelled).
-        Start and end come from the event log (where times after midnight go past 24:00), in old days from counters."""
-        today = self.stats.day(self.today())
-        planned = self.sched.reminders_today(now)  # on days off, only what really happened
+        Start and end come from the event log (where times after midnight go past 24:00), in old days from counters.
+        A past date shows only what happened: no planned meals or day end."""
+        rec = self.stats.day(date)
+        # on days off and past days, only what really happened
+        planned = date == self.today() and self.sched.reminders_today(now)
         logged = {e["type"]: e["at"] for e in events if e["type"] in ("day_start", "day_end")}
         marks = []
         for meal in MEALS:
-            if today[f"ate_{meal}"]:
-                marks.append((self.meal_time(meal, self.today()), t(f"meal_{meal}"), C["meal"], "done", "meal"))
+            if rec[f"ate_{meal}"]:
+                marks.append((self.meal_time(meal, date), t(f"meal_{meal}"), C["meal"], "done", "meal"))
             elif self.cfg[f"{meal}_enabled"] and planned:
                 state = PLATE_STATES.get(self.sched.meal_state(meal, now)[0], "later")
-                marks.append((self.meal_time(meal, self.today()), t(f"meal_{meal}"), C["meal"],
+                marks.append((self.meal_time(meal, date), t(f"meal_{meal}"), C["meal"],
                               "later" if state == "done" else state, "meal"))
-        start = logged.get("day_start") or today["day_start"]
+        start = logged.get("day_start") or rec["day_start"]
         if start:
             marks.append((start, t("sch_day_start"), C["accent"], "done", "day"))
         # The planned day end (from the settings) stays in place: before it, a hollow dot;
@@ -361,16 +374,36 @@ class MainWindow:
         if self.cfg["day_end_enabled"] and planned:
             passed = self.minute(now) >= self.cfg["day_end_at"]
             marks.append((self.cfg["day_end_at"], t("sch_day_end"), C["accent"], "skip" if passed else "later", "day"))
-        end = logged.get("day_end") or today["day_end"]
+        end = logged.get("day_end") or rec["day_end"]
         if end:
             marks.append((end, t("tl_day_finished"), C["accent"], "done", "day"))
         return sorted(marks, key=lambda mark: mark[0])
+
+    def set_timeline_day(self, back):
+        """A day switch chip: the timeline of today or of a day before it."""
+        self.timeline_back = back
+        self.timeline_leave()
+        self.refresh_timeline_days()
+        self.draw_timeline(force=True)
+
+    def refresh_timeline_days(self):
+        """Chip captions follow the date ("Mo 13", the last one "Today"); days without a record are dimmed."""
+        today = self.today()
+        weekdays = t("weekdays").split()
+        for back, chip in self.w.get("timeline_chips", ()):
+            date = today - dt.timedelta(days=back)
+            active = back == self.timeline_back
+            known = not back or date.isoformat() in self.stats.data
+            chip.configure(text=f"{weekdays[date.weekday()]} {date.day}" if back else t("today"),
+                           bg=C["accent"] if active else C["panel"],
+                           fg=C["on_accent"] if active else C["muted"] if known else C["dim"])
 
     def draw_timeline(self, force=False):
         """The day bar: filled up to "now"; on it, spans from the log (absence, pause, meal pause,
         held break), small green dots for breaks (hollow when skipped), blue ones for glasses, circles
         for meals and day end, a blue circle for the next water reminder; labels only for the day start
-        and end, hours under the bar. Drawn anti-aliased with Pillow, and only when something changed."""
+        and end, hours under the bar. Drawn anti-aliased with Pillow, and only when something changed.
+        A past day from the day switch is filled from its start to its end, without "now" or plans."""
         c = self.w.get("timeline")
         if not c:
             return
@@ -378,27 +411,38 @@ class MainWindow:
         width = c.winfo_width()
         if width < 100:
             return
-        today = self.today()
+        today = self.today() - dt.timedelta(days=self.timeline_back)
+        live = not self.timeline_back
         events = self.stats.events(today)
-        minute = self.minute(now)
-        marks = self.timeline_marks(now, events)
+        minute = self.minute(now) if live else None
+        marks = self.timeline_marks(now, events, today)
         drinks = [e["at"] for e in events if e["type"] == "water"] or self.stats.times(today, "water_at")
         missed = [e["at"] for e in events if e["type"] == "water_missed"]  # reminders without a glass
         breaks = [e for e in events if e["type"] == "break" and e.get("result") in ("done", "skipped")]
         spans = event_spans(events, minute)
         s = self.sched
         next_water = None
-        if self.cfg["water_enabled"] and not s.water_open and not s.water_done and not (s.paused and s.pause_water):
+        if (live and self.cfg["water_enabled"] and not s.water_open and not s.water_done
+                and not (s.paused and s.pause_water)):
             next_water = minute + round(s.water_remaining / 60)
-        idle = s.paused or bool(s.eating)
-        key = (width, minute, tuple(marks), tuple(drinks), tuple(missed), next_water, idle,
+        idle = live and (s.paused or bool(s.eating))
+        # The filled (worked) part: from the day start to "now"; a past day from its start to its end
+        rec = self.stats.day(today)
+        if live:
+            fill_from, fill_to = rec["day_start"], minute
+        else:
+            # the same start and end as the labelled marks; without a finish, up to the day's last event
+            logged = {e["type"]: e["at"] for e in events if e["type"] in ("day_start", "day_end")}
+            fill_from = logged.get("day_start") or rec["day_start"]
+            fill_to = logged.get("day_end") or rec["day_end"] or (day_bounds(events) or (None, None))[1]
+        key = (width, today, minute, tuple(marks), tuple(drinks), tuple(missed), next_water, idle,
                tuple(tuple(sorted(e.items())) for e in events))
         if not force and key == self._timeline_key:
             return
         self._timeline_key = key
         # Timeline bounds: from the morning (no later than 8:00 or the first event) to the day end (no earlier
         # than 18:00 and "now"), in whole hours, so every mark and span fits
-        times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks] + [minute]
+        times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks] + ([minute] if live else [])
                  + [m for span in spans for m in span[1:3]])
         start = (min([8 * 60] + times) - 30) // 60 * 60
         end = -(-(max([18 * 60] + times) + 30) // 60) * 60
@@ -407,7 +451,7 @@ class MainWindow:
         def x_of(m):
             return pad + (width - 2 * pad) * (min(max(m, start), end) - start) / (end - start)
 
-        xn = x_of(minute)
+        xn = x_of(fill_to) if fill_to else None
         # Absence is faint, a pause muted, a meal amber, "until morning" like the not yet lived bar,
         # a held break lighter than the green, so it shows on the filled bar
         span_colors = {"away": C["dim"], "timed": C["muted"], "eating": C["meal"], "finished": C["track"],
@@ -417,10 +461,9 @@ class MainWindow:
             r = 3 * sc
             d.rounded_rectangle((pad * sc - r, y * sc - r, (width - pad) * sc + r, y * sc + r), radius=r,
                                 fill=rgba(C["track"]))
-            # Green is the working time: from the day start (once known) to "now"
-            day_start = self.stats.day(today)["day_start"]
-            x0 = x_of(day_start) if day_start else pad
-            if minute > start and xn > x0:
+            # Green is the working time: from the day start (once known) to "now" or to a past day's end
+            x0 = x_of(fill_from) if fill_from else pad
+            if xn is not None and (live or fill_from) and fill_to > start and xn > x0:
                 d.rounded_rectangle((x0 * sc - r, y * sc - r, xn * sc + r, y * sc + r), radius=r,
                                     fill=rgba(C["dim"] if idle else C["accent_dark"]))
             # Spans are thin strips on the bar itself (at least 3 px, so short ones show too)
@@ -459,7 +502,8 @@ class MainWindow:
                     dot(x_of(m), 7, color)
                 else:
                     dot(x_of(m), 7, C["dim"] if state == "skip" else color, ring=2)
-            dot(xn, 5, C["text"])  # "now"
+            if live:
+                dot(xn, 5, C["text"])  # "now"
 
         self.timeline_photo = ImageTk.PhotoImage(smooth_image(width, TIMELINE_HEIGHT, paint, C["card"]))
         c.delete("all")
@@ -486,7 +530,8 @@ class MainWindow:
         def clash(box, tier):
             return [b for b in placed[tier] if not (box[0] > b[2] + 8 or box[2] < b[0] - 8)]
 
-        self.timeline_points = self.timeline_tips(marks, drinks, breaks, next_water, now, x_of, end, missed)
+        self.timeline_points = self.timeline_tips(marks, drinks, breaks, next_water, now if live else None, x_of,
+                                                  end, missed)
         self.timeline_spans = self.timeline_span_tips(spans, x_of)
         for m, name, color, state, kind in marks:
             if kind != "day":
@@ -541,7 +586,8 @@ class MainWindow:
                 points.append((x, f"{t('tl_breaks')}: {', '.join(fmt_clock(m) for m, _e in group)}"))
         if next_water is not None and next_water <= end:
             points.append((x_of(next_water), f"{t('tl_next_water')}: {fmt_clock(next_water)}"))
-        points.append((x_of(self.minute(now)), f"{t('tl_now')}: {now:%H:%M}"))
+        if now is not None:  # None for a past day
+            points.append((x_of(self.minute(now)), f"{t('tl_now')}: {now:%H:%M}"))
         return points
 
     def timeline_span_tips(self, spans, x_of):
@@ -1278,6 +1324,7 @@ class MainWindow:
                 self.w["finish_btn"].pack_forget()
         self.refresh_schedule()
         self.refresh_meal_card(now)
+        self.refresh_timeline_days()
         self.draw_timeline()
         self.render_glasses(today["water"])
 

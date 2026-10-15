@@ -97,7 +97,7 @@ EXERCISES = [
      ("Forward fold", "Stand up, slowly bend towards your toes and let your neck relax — 15 seconds.")),
     ("active", "body", None, ("Потягніться", "Встаньте на носки, потягніться руками вгору й затримайтеся на 10 секунд."),
      ("Stretch up", "Stand on your toes, reach up high and hold for 10 seconds.")),
-    ("active", "body", None, ("Пройдіться", "Встаньте й пройдіться кімнатою — сидіння теж треба перебивати."),
+    ("active", "body", None, ("Пройдіться", "Встаньте й пройдіться кімнатою — довге сидіння варто переривати."),
      ("Take a walk", "Get up and walk around the room — long sitting needs breaking up too.")),
 
     # ---------- long break without a workout ----------
@@ -109,7 +109,7 @@ EXERCISES = [
                    "Palming: warm palms over closed eyes for a minute.", "Slowly roll your eyes in a circle each way."])),
     ("long", "neck", None, ("Шия та плечі", ["Повільно покрутіть головою по 5 разів у кожен бік.",
                                              "Зведіть лопатки й потримайте 5 секунд — 10 разів.",
-                                             "Потягніть руку через груди іншою рукою — по 15 секунд."]),
+                                             "Іншою рукою притягніть випрямлену руку до грудей — по 15 секунд."]),
      ("Neck and shoulders", ["Slowly roll your head 5 times in each direction.",
                              "Squeeze your shoulder blades together for 5 seconds — 10 times.",
                              "Pull one arm across your chest with the other — 15 seconds each."])),
@@ -196,17 +196,17 @@ EXERCISES = [
     # ---------- workout: level 3 (vigorous) ----------
     ("workout", "body", 3, ("Джампінг-джек", "Стрибок — ноги ширше, руки над головою; стрибок назад. У швидкому темпі."),
      ("Jumping jacks", "Jump feet apart with arms overhead, then jump back. Keep a quick pace.")),
-    ("workout", "body", 3, ("Біг на місці", "Швидко, коліна до рівня пояса, активно працюйте руками."),
+    ("workout", "body", 3, ("Біг на місці", "У швидкому темпі, коліна до рівня пояса, активно працюйте руками."),
      ("Running on the spot", "Fast, knees up to waist height, pump your arms.")),
-    ("workout", "body", 3, ("Альпініст", "Упор лежачи, по черзі швидко підтягуйте коліна до грудей."),
+    ("workout", "body", 3, ("Скелелаз", "Упор лежачи, по черзі швидко підтягуйте коліна до грудей."),
      ("Mountain climbers", "In a high plank, quickly drive your knees towards your chest in turn.")),
-    ("workout", "body", 3, ("Берпі без стрибка", "Присід, руки на підлогу, ноги назад у планку, назад у присід і встати."),
+    ("workout", "body", 3, ("Берпі без стрибка", "Присядьте, руки на підлогу, ноги назад у планку, поверніться в присід і встаньте."),
      ("Burpees without the jump", "Squat, hands to the floor, step back into a plank, back to a squat and stand up.")),
     ("workout", "legs", 3, ("Присідання зі стрибком", "Присід і вибуховий стрибок угору. Приземляйтеся м'яко, на зігнуті ноги."),
      ("Squat jumps", "Squat and jump up explosively. Land softly on bent knees.")),
     ("workout", "legs", 3, ("Випади з чергуванням", "Глибокі випади вперед, по черзі кожною ногою."),
      ("Alternating lunges", "Deep forward lunges, alternating legs.")),
-    ("workout", "legs", 3, ("Присідання сумо", "Широко ноги, носки назовні, глибокий присід."),
+    ("workout", "legs", 3, ("Присідання сумо", "Ноги широко, носки назовні, глибокий присід."),
      ("Sumo squats", "Wide stance, toes out, deep squat.")),
     ("workout", "arms", 3, ("Віджимання", "Від підлоги або з колін. Тіло рівне, опускайтеся грудьми до підлоги."),
      ("Push-ups", "On the floor or on your knees. Keep your body straight, chest towards the floor.")),
@@ -216,7 +216,7 @@ EXERCISES = [
      ("Plank", "On your forearms, body straight, core tight. Hold.")),
     ("workout", "back", 3, ("Бокова планка", "На передпліччі боком, тіло рівне. Половину часу — на кожен бік."),
      ("Side plank", "On one forearm, body straight. Switch sides halfway.")),
-    ("workout", "back", 3, ("Ягідичний місток", "Лежачи на спині, ноги зігнуті: піднімайте таз до прямої лінії й опускайте."),
+    ("workout", "back", 3, ("Сідничний місток", "Лежачи на спині, ноги зігнуті: піднімайте таз до прямої лінії й опускайте."),
      ("Glute bridge", "Lying on your back with knees bent, lift your hips into a straight line and lower.")),
 ]
 

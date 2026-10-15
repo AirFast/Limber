@@ -754,7 +754,7 @@ def test_long_break_without_workout_is_single_step():
     assert [s["kind"] for s in core.build_break("long", cfg)] == ["list"]
 
 
-@pytest.mark.parametrize("value, text", [(1, "1 раз"), (2, "2 рази"), (5, "5 разів"), (0, "не можна")])
+@pytest.mark.parametrize("value, text", [(1, "1 раз"), (2, "2 рази"), (5, "5 разів"), (0, "жодного")])
 def test_fmt_times(value, text):
     assert core.fmt_times(value) == text
 
@@ -855,7 +855,7 @@ def test_every_slider_has_a_label_in_both_languages():
 
 
 @pytest.mark.parametrize("fmt, value, text", [
-    (core.fmt_times, 1, "1 time"), (core.fmt_times, 3, "3 times"), (core.fmt_times, 0, "not allowed"),
+    (core.fmt_times, 1, "1 time"), (core.fmt_times, 3, "3 times"), (core.fmt_times, 0, "none"),
     (core.fmt_glasses, 1, "1 glass (≈0.25 L)"), (core.fmt_glasses, 8, "8 glasses (≈2 L)"),
     (core.fmt_minutes, 90, "1 h 30 min"), (core.fmt_seconds, 75, "1 min 15 s"), (core.fmt_warn, 0, "off"),
 ])
