@@ -18,12 +18,30 @@ Rhythmos is a break-reminder tray/menu-bar app for Windows and macOS (Apple Sili
 - **Ukrainian text must sound natural**, not translated: questions are phrased as a person would ask them ("Було смачно?", not "Смачного було?"), no Russianisms ("сідничний", not "ягідичний"), one form of address (always "ви"). A label and its value must read as one phrase ("Ліміт відкладань: жодного").
 - **Status vs Statistics.** Status is the live main window plus a quick but detailed look at any of the last 7 days (the day card); Statistics is the chart over 7/30 days for trends. New per-day facts go to the day card, period totals to Statistics.
 
+## Keeping this file current
+
+This file is the single place for everything about the app: rules from the owner, decisions and why they were made, the logic of features, pitfalls found (with the version they bit in), the workflow. **Every session updates it in the same commit as the change** — a new rule from the owner, a new feature's logic, a bug's root cause worth remembering, a changed workflow. No separate `.md` files for rules or notes and no machine-local Claude memory for anything shared (the other machine can't see it); `README.md` stays the users' document. If this file grows unwieldy, split it into files under `docs/` imported here with `@docs/<name>.md`, never into notes outside the repo.
+
 ## Working from two sessions (Windows and macOS)
 
-- Git `main` is the only sync point. `git pull --rebase` before starting a task and again before every push; commit small and push often. If a push is rejected, rebase on `origin/main` (never force-push) and rerun the tests.
-- **Roles.** The Windows session does the main development and *all releases* (version bump + tag). The macOS session tests on a real Mac and fixes macOS-only problems (`system.py`, window behaviour on macOS); it commits and pushes those fixes to `main` but does not bump the version or tag — the Windows session releases them. This avoids two sessions cutting the same version.
-- **Findings go to GitHub Issues** (`gh issue create --label macos` / `windows`): what happened, steps, a screenshot, the version. The other session picks issues up and closes them from the fixing commit (`fixes #N`).
-- On macOS also check what CI cannot: the menu-bar menu, idle detection with real input and after sleep, holding a break during a real call (camera/microphone), open at login.
+Git `main` is the only sync point between the sessions; they cannot see each other otherwise.
+
+**Both sessions**
+- `git pull --rebase` before starting a task and again before every push; commit small and push often. A rejected push means the other session pushed: rebase on `origin/main` (never force-push), rerun lint and tests, push again.
+- Read `git log` since your last pull before starting: the other session's commits explain what changed and why.
+- Findings for the other machine go to GitHub Issues (`gh issue create --label macos` or `--label windows`): what happened, steps, a screenshot, the version (`__version__` / window title). The fixing commit closes it (`fixes #N`).
+- Anything learned that the other session needs (a rule, a pitfall, a platform quirk) goes into this file, not into local memory.
+
+**Windows session** — main development and *all releases*
+- Develops features and fixes, tests on Windows (`tools/smoke_local.py`) and on macOS through CI screenshots, and cuts every release (version bump + `v*` tag), including fixes pushed by the macOS session.
+- Before a release, checks open `macos` issues: a release must not ship a known macOS regression.
+
+**macOS session** — real-Mac testing and macOS-only fixes, never releases
+1. Start: `git pull --rebase`; note the latest released version (`gh release view`) and whether the installed app is on it (it updates itself hourly; the window title shows the version).
+2. Test the installed release on the real Mac, focusing on what CI cannot check: the menu-bar icon and menu, reminder windows in the bottom right corner and above the main window, the main window opening with a page chosen, idle and away detection with real input and after sleep/wake, a break held during a real call (camera, microphone, screen sharing), fullscreen break screens on every monitor (notch/menu bar), sounds, open at login, the self-update from the previous version. `python3 tools/smoke_local.py` tests the current source next to the installed app.
+3. A problem → a GitHub issue with the `macos` label. If it is macOS-only and the fix belongs in `system.py` or macOS window handling, fix it: tests and lint pass, `tools/smoke_local.py` looks right, commit `fix(macos): …` with `fixes #N`, push to `main`. Do not bump `__version__` and do not tag — the Windows session releases it.
+4. A problem in shared logic (`core.py`, the UI on both OSes) → fix it the same way if it's clear and small, otherwise leave the issue for the Windows session.
+5. Never touch the owner's installed copy's data or settings; test from source with `tools/smoke_local.py`.
 
 ## Commands
 
