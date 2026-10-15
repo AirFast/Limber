@@ -189,6 +189,22 @@ def test_stats_are_written_to_the_calendar_day(monkeypatch, tmp_path):
     stats.add("work_sec", 60)
     assert stats.day(dt.date(2026, 10, 14))["work_sec"] == 60 and stats.day(dt.date(2026, 10, 13))["work_sec"] == 0
 
+def test_stats_are_stored_per_month_and_old_file_is_migrated(monkeypatch, tmp_path):
+    path = tmp_path / "stats.json"
+    monkeypatch.setattr(core, "STATS_PATH", str(path))
+    old = {"2026-09-30": {"water": 5}, "2026-10-01": {"water": 7, "events": [{"type": "water", "at": 600}]}}
+    path.write_text(json.dumps(old), encoding="utf-8")
+    stats = core.Stats(today=lambda: dt.date(2026, 10, 14))
+    assert stats.data == old                                                 # nothing lost
+    assert sorted(p.name for p in (tmp_path / "stats").iterdir()) == ["2026-09.json", "2026-10.json"]
+    assert not path.exists() and (tmp_path / "stats-before-2.16.json").exists()   # the old file is kept aside
+    stats.add("water")                                                       # a write touches only its month
+    september = (tmp_path / "stats" / "2026-09.json").read_text(encoding="utf-8")
+    assert json.loads(september) == {"2026-09-30": {"water": 5}}
+    again = core.Stats(today=lambda: dt.date(2026, 10, 14))
+    assert again.day(dt.date(2026, 10, 14))["water"] == 1 and again.day(dt.date(2026, 9, 30))["water"] == 5
+
+
 def test_day_end_is_asked_once_per_calendar_day():
     s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
     assert s.tick(1, now=at(18)) == ["day_end"]

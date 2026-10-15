@@ -701,7 +701,7 @@ class MainWindow:
         fraction = 1 - s.remaining / max(s.period, 1)
         idle = s.paused or bool(s.eating)
         color = rgba(C["dim"] if idle else C["accent"])
-        key = (round(fraction, 3), idle)
+        key = (round(fraction * 500), idle)  # steps of 0.2% (under 2 px of the arc): no redraws nobody sees
         if key != self._ring_key:
             self._ring_key = key
             self.ring_photo = ImageTk.PhotoImage(smooth_image(

@@ -16,7 +16,7 @@ from i18n import (content, fmt_clock, fmt_glasses, fmt_intensity, fmt_minutes, f
 APP_NAME = "Rhythmos"
 DATA_DIR = system.data_dir()
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-STATS_PATH = os.path.join(DATA_DIR, "stats.json")
+STATS_PATH = os.path.join(DATA_DIR, "stats.json")  # before 2.16 all days in one file; now stats/<YYYY-MM>.json
 STATE_PATH = os.path.join(DATA_DIR, "state.json")  # timer state, so a restart doesn't reset the day
 ICON_PATH = os.path.join(DATA_DIR, "rhythmos.ico")
 LOG_PATH = os.path.join(DATA_DIR, "rhythmos.log")
@@ -224,11 +224,15 @@ def load_json(path, default):
         return default
 
 
-def save_json(path, data):
+def save_json(path, data, compact=False):
+    """Atomic write; compact (no indentation) for statistics, which are written often and only grow."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        if compact:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
 
@@ -357,20 +361,58 @@ class Stats:
             "day_start", "day_end", "ate_breakfast", "ate_lunch", "ate_dinner")
     MOMENTS = ("day_start", "day_end")  # times of day, not counters: never summed
 
+    # Stored one file per month (stats/2026-10.json): a change rewrites only its month, so a write
+    # stays small however long the history is (it happens every minute and on every logged event)
+
     def __init__(self, today=None):
-        self.data = load_json(STATS_PATH, {})
+        self.folder = os.path.splitext(STATS_PATH)[0]
+        self.data = self.load()
         self.today = today or dt.date.today  # the current workday (App.today)
 
+    @staticmethod
+    def month(key):
+        return key[:7]  # "2026-10-14" → "2026-10"
+
+    def load(self):
+        """All days from the monthly files. The single stats.json of older versions is split into months
+        once (into a temporary folder renamed at the end, so a crash halfway loses nothing) and kept as
+        stats-before-2.16.json."""
+        legacy = os.path.exists(STATS_PATH)
+        if not os.path.isdir(self.folder) and legacy:
+            data = load_json(STATS_PATH, {})
+            tmp = self.folder + ".tmp"
+            for month in {self.month(key) for key in data}:
+                save_json(os.path.join(tmp, f"{month}.json"),
+                          {k: v for k, v in data.items() if self.month(k) == month}, compact=True)
+            if data:
+                os.replace(tmp, self.folder)
+        data = {}
+        if os.path.isdir(self.folder):
+            for name in sorted(os.listdir(self.folder)):
+                if name.endswith(".json"):
+                    data.update(load_json(os.path.join(self.folder, name), {}))
+            if legacy:
+                os.replace(STATS_PATH, os.path.join(os.path.dirname(STATS_PATH), "stats-before-2.16.json"))
+        return data
+
+    def save(self, key):
+        """Writes the month of day `key`."""
+        month = self.month(key)
+        save_json(os.path.join(self.folder, f"{month}.json"),
+                  {k: v for k, v in self.data.items() if self.month(k) == month}, compact=True)
+
     def add(self, key, amount=1):
-        rec = self.data.setdefault(self.today().isoformat(), {})
+        day = self.today().isoformat()
+        rec = self.data.setdefault(day, {})
         rec[key] = rec.get(key, 0) + amount
-        save_json(STATS_PATH, self.data)
+        self.save(day)
 
     def set(self, key, value):
         """Manual correction of today's counter (for example, the number of water glasses)."""
-        rec = self.data.setdefault(self.today().isoformat(), {})
+        day = self.today().isoformat()
+        rec = self.data.setdefault(day, {})
         rec[key] = max(0, int(value))
-        save_json(STATS_PATH, self.data)
+        self.save(day)
 
     def day(self, date):
         rec = self.data.get(date.isoformat(), {})
@@ -383,9 +425,10 @@ class Stats:
         return list(self.data.get(date.isoformat(), {}).get(key, []))
 
     def set_times(self, key, values):
-        rec = self.data.setdefault(self.today().isoformat(), {})
+        day = self.today().isoformat()
+        rec = self.data.setdefault(day, {})
         rec[key] = list(values)
-        save_json(STATS_PATH, self.data)
+        self.save(day)
 
     # --- the day's event log ---
     # Besides counters, each day has an "events" list: it drives the day timeline and the regularity
@@ -405,7 +448,8 @@ class Stats:
         """Logs `event_type` at minute `at` in the log of day `date` (today by default); one disk
         write. replace is a tuple of fields: an event of the same type with the same values of these fields
         is replaced (day end, an eaten meal) instead of adding another. Returns the event's index in the day's log."""
-        rec = self.data.setdefault((date or self.today()).isoformat(), {})
+        day = (date or self.today()).isoformat()
+        rec = self.data.setdefault(day, {})
         events = rec.setdefault("events", [])
         event = {"type": event_type, "at": int(at), **fields}
         index = len(events)
@@ -416,7 +460,7 @@ class Stats:
             events[index] = event
         else:
             events.append(event)
-        save_json(STATS_PATH, self.data)
+        self.save(day)
         return index
 
     def close(self, date, index, to):
@@ -424,16 +468,17 @@ class Stats:
         events = self.data.get(date.isoformat(), {}).get("events", [])
         if 0 <= index < len(events) and events[index].get("to") is None:
             events[index]["to"] = max(int(to), events[index]["at"])
-            save_json(STATS_PATH, self.data)
+            self.save(date.isoformat())
 
     def unlog(self, event_type, /, date=None, **match):
         """Removes `event_type` events with these fields (the "eaten" mark was taken off)."""
-        rec = self.data.get((date or self.today()).isoformat(), {})
+        day = (date or self.today()).isoformat()
+        rec = self.data.get(day, {})
         events = rec.get("events", [])
         kept = [e for e in events if not (e.get("type") == event_type and all(e.get(k) == v for k, v in match.items()))]
         if len(kept) != len(events):
             rec["events"] = kept
-            save_json(STATS_PATH, self.data)
+            self.save(day)
 
     def open_spans(self, dates):
         """[(date, index, event)] of spans still in progress (to = None), to close them after a restart."""
