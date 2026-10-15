@@ -255,6 +255,13 @@ def test_overwork_warns_once_a_day():
     s.overwork_answered("later", now=at(18, 2))
     assert s.tick(1, now=at(19)) == []                          # once a day
     assert s.tick(1, now=at(19) + dt.timedelta(days=1)) == ["overwork"]   # the next day (worked comes from App)
+    # Pushed out by another notification before an answer: asked again later, not decided as "later"
+    pushed = make_scheduler(max_work_hours=9)
+    pushed.update_day(drunk=0, worked=9 * 3600)
+    assert pushed.tick(1, now=at(18)) == ["overwork"]
+    pushed.overwork_answered("snooze", now=at(18, 1))
+    assert pushed.tick(1, now=at(18, 30)) == []
+    assert pushed.tick(1, now=at(18, 31)) == ["overwork"]
     off = make_scheduler(max_work_hours=0)
     off.update_day(drunk=0, worked=20 * 3600)
     assert off.tick(1, now=at(20)) == []

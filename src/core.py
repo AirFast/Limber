@@ -873,9 +873,11 @@ class DayEndReminder(Reminder):
 
 class OverworkReminder(Reminder):
     """More than the daily limit (max_work_hours) at the computer today, once a day.
-    Answers: "later", "finish" (App sets the "until morning" pause)."""
+    Answers: "later", "finish" (App sets the "until morning" pause); "snooze" asks again (the window
+    was pushed out by another notification before the person answered)."""
     group = "day"
     waits = ("meal", "day")
+    snooze_min = DAY_END_SNOOZE_MIN
 
     def quiet(self, now):
         return (not self.cfg["max_work_hours"] or self.sched.day_finished(now)
@@ -1156,7 +1158,8 @@ class Scheduler:
         self.day_end.answer(answer, now or dt.datetime.now())
 
     def overwork_answered(self, answer, now=None):
-        """answer: "later" means no more reminders today, "finish" finishes the day (App sets the pause)."""
+        """answer: "later" means no more reminders today, "finish" finishes the day (App sets the pause),
+        "snooze" asks again in 30 min."""
         self.overwork.answer(answer, now or dt.datetime.now())
 
     # --- water ---

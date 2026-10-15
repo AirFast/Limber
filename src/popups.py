@@ -254,6 +254,8 @@ class Popups:
     # --- water ---
 
     def show_water(self, demo=False):
+        """"Time for some water". It waits for an answer and never closes by itself: the person may have gone
+        to get water, and a window that vanished would count the glass as missed."""
         if self.water_win:
             if not self.water_demo or demo:
                 return
@@ -284,8 +286,8 @@ class Popups:
         self.popup_buttons(win, ((t("later"), lambda: self.end_water(False), False),
                                  (drank, lambda: self.end_water(True), True)), C["water"], C["on_water"])
         self.place_in_corner(win, width, right, bottom)
-        win.after(120_000, lambda: self.end_water(False) if self.water_win is win else None)
         if demo:
+            win.after(60_000, lambda: self.end_water(False) if self.water_win is win else None)
             win.focus_force()
         self.beep()
 
@@ -414,7 +416,7 @@ class Popups:
         answer = (lambda _answer: None) if demo else self.answer_day_end
         actions = [(t("day_end_snooze", min=DAY_END_SNOOZE_MIN), lambda: answer("snooze"), False),
                    (t("day_end_finish"), lambda: answer("finish"), True)]
-        self.show_toast(t("day_end_title"), text, actions, timeout_ms=60_000 if demo else 3 * 60 * 60_000,
+        self.show_toast(t("day_end_title"), text, actions, timeout_ms=60_000 if demo else None,
                         kind="day_end", on_dismiss=None if demo else lambda: answer("snooze"), demo=demo)
         self.beep()
 
@@ -425,7 +427,8 @@ class Popups:
 
     def show_overwork(self, demo=False):
         """Today's time at the computer reached the limit (max_work_hours): "Finish the day" or "Later".
-        It stands in the corner like day end (kind="day_end"); finishing the day removes both."""
+        It stands in the corner like day end (kind="day_end") until answered; finishing the day removes both.
+        Pushed out by another notification, it asks again later instead of deciding "Later" for the person."""
         if demo:  # in the demo, the limit itself (or the default 9 h if it's off)
             seconds = (self.cfg["max_work_hours"] or DEFAULTS["max_work_hours"]) * 3600
         else:
@@ -434,8 +437,8 @@ class Popups:
         answer = (lambda _answer: None) if demo else self.answer_overwork
         actions = [(t("later"), lambda: answer("later"), False), (t("day_end_finish"), lambda: answer("finish"), True)]
         self.show_toast(t("overwork_title"), t("overwork_text", time=worked), actions,
-                        timeout_ms=60_000 if demo else 60 * 60_000, kind="day_end",
-                        on_dismiss=None if demo else lambda: answer("later"), demo=demo)
+                        timeout_ms=60_000 if demo else None, kind="day_end",
+                        on_dismiss=None if demo else lambda: answer("snooze"), demo=demo)
         self.beep()
 
     def answer_overwork(self, answer):
@@ -501,7 +504,8 @@ class Popups:
         the user may have turned them off (on Windows they then silently disappear),
         and on macOS they are unreliable for apps not signed by Apple.
         actions: [(label, function, primary_button?)]; on_dismiss runs if the window closed without a button
-        (a timeout, or another notification pushed it out)."""
+        (a timeout, or another notification pushed it out). timeout_ms=None: it stays until answered —
+        for anything that asks the person, so nothing is decided for them while they are away."""
         self.close_toast()
         right, bottom = self.corner(self.water_win, self.meal_win)  # don't cover water and meals
         width = 380
@@ -530,7 +534,7 @@ class Popups:
         self.toast_win = win
         self.toast_kind = kind
         self.toast_on_dismiss = on_dismiss
-        self.toast_after = self.root.after(timeout_ms, self.close_toast)
+        self.toast_after = self.root.after(timeout_ms, self.close_toast) if timeout_ms else None
 
     def close_toast(self, dismissed=True):
         if self.toast_after:
@@ -556,7 +560,7 @@ class Popups:
         if drank:
             self.stats.add("water")
             self.log_water_times(1)
-        else:  # "Later", or the reminder closed without an answer: a missed glass on the day timeline
+        else:  # "Later": a missed glass on the day timeline
             self.stats.log("water_missed", self.minute())
         self.sync_day()  # the next glass's pace, counting the one just drunk
         self.sched.water_answered(drank)

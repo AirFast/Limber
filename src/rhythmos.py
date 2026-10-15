@@ -224,7 +224,7 @@ class App(Popups, MainWindow):
                 traceback.print_exc()
 
         self.show_toast(t("autostart_ask_title"), t("autostart_ask_text"),
-                        [(t("no"), lambda: None, False), (t("yes"), enable, True)], timeout_ms=10 * 60_000)
+                        [(t("no"), lambda: None, False), (t("yes"), enable, True)], timeout_ms=None)
 
     def refresh_water_plan(self):
         """The female/male norm: a water interval that meets the daily goal within the actual workday.
