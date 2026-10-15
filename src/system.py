@@ -117,7 +117,7 @@ def keep_on_top(win, geometry):
     included. "-topmost" goes first: set after the place on a frameless window not yet on screen, it moves
     the window to the screen's top left corner (on Windows and macOS alike). On macOS "-topmost" given before
     the window is shown is also lost (the main window opened later covered a reminder), so there both are
-    set again, in the same order, once the window is on screen."""
+    set again, in the same order, once the window is on screen, and the corners are made square."""
     win.attributes("-topmost", True)
     win.geometry(geometry)
     if IS_MAC:
@@ -125,9 +125,27 @@ def keep_on_top(win, geometry):
             if win.winfo_exists():
                 win.attributes("-topmost", True)
                 win.geometry(geometry)
+                square_corners(win)
 
         win.after_idle(again)
         win.after(250, again)
+
+
+def square_corners(win):
+    """macOS: a Tk window without a frame still has a titled style mask, and macOS 26+ rounds such windows,
+    cutting the reminder's coloured border at the corners (and leaving the desktop visible in the corners of
+    a break screen). A borderless style mask keeps them square, as on Windows; clicks still work."""
+    try:
+        from AppKit import NSApplication
+        marker = f"rhythmos-{win.winfo_id()}"  # Tk gives no NSWindow handle: find it by a temporary title
+        title = win.title()
+        win.title(marker)
+        for nswindow in NSApplication.sharedApplication().windows():
+            if nswindow.title() == marker:
+                nswindow.setStyleMask_(0)  # NSWindowStyleMaskBorderless
+        win.title(title)
+    except Exception as error:
+        print(f"square_corners failed: {error}", file=sys.stderr)
 
 
 _display_assertion = None  # macOS: the IOPMAssertionID held while a break screen is shown
