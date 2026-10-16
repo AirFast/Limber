@@ -368,6 +368,8 @@ class App(Popups, MainWindow):
         elif action == "drink":
             self.set_water(self.stats.day(self.today())["water"] + 1)
         elif action == "resume":
+            if self.toast_kind == "continue":  # "Continue" from the tray or Status answers "Still working?" too
+                self.close_toast(dismissed=False)
             if self.sched.eating:
                 self.close_meal_window()  # "Continue?" isn't needed anymore
                 self.sched.finish_meal()
@@ -473,8 +475,8 @@ class App(Popups, MainWindow):
             elif event == "overwork":
                 self.stats.log("overwork", self.minute())
                 self.show_overwork()
-            elif event == "day_continued":
-                self.continue_day()
+            elif event == "ask_continue":
+                self.show_continue_day()
             elif event == "back":
                 self.log_away()
             # "break_held" (the break waits for a call to end) and "back" (returned) have no window of their own;
@@ -610,6 +612,9 @@ def run_smoke_test(app, out_dir):
         (lambda: in_corner(app.toast_win, "day end"), None),
         (app.close_toast, None),
         (lambda: app.show_overwork(demo=True), "overwork"),
+        (app.close_toast, None),
+        (lambda: app.show_continue_day(demo=True), "continue_day"),
+        (lambda: in_corner(app.toast_win, "still working"), None),
         (app.close_toast, None),
         (lambda: app.show_toast(t("update_toast_title", version="9.9.9"), t("update_toast_text"),
                                 [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),

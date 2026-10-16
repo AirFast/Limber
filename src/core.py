@@ -106,7 +106,7 @@ MORNING = dt.time(6, 0)         # when the "until morning" pause ends
 EARLIEST_START = dt.time(4, 0)  # the workday starts with the first input no earlier than this; before is night
 ACTIVE_IDLE_SEC = 60            # the person is at the computer if mouse or keyboard were used within a minute
 MIN_AWAY_MIN = 2                # an absence is never shorter than this, even if the long break is shorter
-FINISH_GRACE_MIN = 3            # after "Finish the day": working on longer than this continues the day
+FINISH_GRACE_MIN = 3            # after "Finish the day": working on longer than this asks whether the day goes on
 BREAK_HOLD_MAX_MIN = 30         # a break held during a call or presentation waits no longer than this
 STATE_MAX_AGE_H = 12            # an older saved timer state is not restored after a restart
 
@@ -957,6 +957,7 @@ class Scheduler:
         self.meal = None           # which meal is being eaten (EATING)
         self.finished_at = None    # when "Finish the day" was pressed (the "until morning" pause)
         self.active_since = None   # since when the person has worked continuously after "Finish the day"
+        self.continue_asked = None  # "Still working?" after "Finish the day": None, "open" or "no" (until morning)
         self.away = False          # the person isn't at the computer (see away_after)
         self.away_idle = 0.0       # the longest idleness during this absence
         self.last_away = 0.0       # how many seconds the last absence lasted (logged on the "back" event)
@@ -1082,20 +1083,21 @@ class Scheduler:
         """One step. idle: seconds without mouse and keyboard (system.idle_seconds); busy: the person
         is on a call or sharing the screen, so the break waits (no longer than BREAK_HOLD_MAX_MIN). Returns events:
         "warn", "break", "break_held", "water", "meal", "meal_over", "day_end", "overwork",
-        "day_continued", "back"."""
+        "ask_continue", "back"."""
         now = now or dt.datetime.now()
         events = []
         if self.mode in (PAUSED, FINISHED) and now >= self.until:
             self.mode, self.until = WORKING, None  # the pause ended by itself
-        # The day was finished but the person keeps working (FINISH_GRACE_MIN of continuous input, not a moment
-        # to glance at mail): the day goes on and is no longer finished; timers run, "Finish the day" is back,
-        # and day end isn't asked again. The same after a restart, when "finished" was restored from statistics
-        if self.day_finished(now) and self.mode in (FINISHED, WORKING) and idle < ACTIVE_IDLE_SEC:
+        # The day was finished but the person keeps using the computer (FINISH_GRACE_MIN of continuous input,
+        # not a moment to glance at mail): "Still working?" is asked once. The day never goes on by itself —
+        # until 2.18.0 it did, and an evening at the computer turned into work time with breaks and water.
+        if (self.mode == FINISHED and self.day_finished(now) and self.continue_asked is None
+                and idle < ACTIVE_IDLE_SEC):
             if self.active_since is None:
                 self.active_since = now
             elif now - max(self.active_since, self.finished_at) >= dt.timedelta(minutes=FINISH_GRACE_MIN):
-                self.mode, self.until, self.finished_at, self.active_since = WORKING, None, None, None
-                events.append("day_continued")
+                self.continue_asked, self.active_since = "open", None
+                events.append("ask_continue")
         else:
             self.active_since = None
         # Away for longer than a long break is a natural break: timers stand, and on return
@@ -1235,6 +1237,7 @@ class Scheduler:
         self.meal_over.cancel()
         if minutes is None:
             self.mode, self.until, self.finished_at = FINISHED, self.morning(now), now
+            self.continue_asked, self.active_since = None, None
             for r in (*self.meals.values(), self.day_end, self.overwork):
                 r.cancel()
             self.day_end.shown = self.workday(now)
@@ -1251,10 +1254,19 @@ class Scheduler:
         continued = self.mode == FINISHED
         self.mode, self.until = WORKING, None
         if continued:
-            self.finished_at, self.active_since = None, None
+            self.finished_at, self.active_since, self.continue_asked = None, None, None
             if now < self.moment(now, self.cfg["day_end_at"]):
                 self.day_end.shown = None
         return continued
+
+    def continue_answered(self, answer, now=None):
+        """"Still working?" after "Finish the day": "continue" goes on with the day (as "Continue", True is
+        returned), "no" keeps it finished and doesn't ask again until morning, "snooze" (the window was pushed
+        out before an answer) asks again after another FINISH_GRACE_MIN of work."""
+        if answer == "continue":
+            return self.resume(now)
+        self.continue_asked = "no" if answer == "no" else None
+        return False
 
     def day_end_answered(self, answer, now=None):
         """answer: "snooze" reminds again in 30 min, "finish" finishes the day (App sets the pause)."""
@@ -1365,13 +1377,16 @@ class Scheduler:
             self._set_countdown(interval)
         self.water.remaining = min(self.water.remaining, self.water_interval(now or dt.datetime.now()))
 
-    def restore_day(self, day, eaten=(), finished_minute=0, day_end_asked=False):
+    def restore_day(self, day, eaten=(), finished_minute=0, day_end_asked=False, now=None):
         """What statistics already recorded about today (in case there is no state.json): eaten meals
-        aren't reminded, a finished day and the day-end question aren't repeated."""
+        aren't reminded, a finished day and the day-end question aren't repeated, and a finished day
+        stays finished until morning (the person goes on with "Continue" or "Still working?")."""
         for meal in eaten:
             self.meals[meal].answered = (day, "eat")
         if finished_minute and not (self.finished_at and self.workday(self.finished_at) == day):
             self.finished_at = at_workday_minute(day, finished_minute)
+            if self.mode == WORKING:
+                self.mode, self.until = FINISHED, self.morning(now or dt.datetime.now())
         if finished_minute or day_end_asked:
             self.day_end.shown = day
 
@@ -1382,7 +1397,7 @@ class Scheduler:
             "mode": self.mode, "until": _iso(self.until), "meal": self.meal, "finished_at": _iso(self.finished_at),
             "remaining": self.remaining, "period": self.period, "warned": self.warned,
             "breaks_taken": self.breaks_taken, "postpones": self.postpones, "long_skipped": self.long_skipped,
-            "chosen": self.chosen, "reminders": {r.name: r.snapshot() for r in self.reminders},
+            "chosen": self.chosen, "continue_declined": self.continue_asked == "no", "reminders": {r.name: r.snapshot() for r in self.reminders},
         }
 
     def restore(self, data, now):
@@ -1402,6 +1417,7 @@ class Scheduler:
                 "warned": bool(data["warned"]), "breaks_taken": int(data["breaks_taken"]),
                 "postpones": int(data["postpones"]), "long_skipped": bool(data["long_skipped"]),
                 "chosen": data.get("chosen") if data.get("chosen") in ("mini", "long") else None,
+                "continue_asked": "no" if data.get("continue_declined") else None,
             }
             if (mode not in MODES or (mode == EATING and values["meal"] not in MEALS)
                     or (mode in (EATING, PAUSED, FINISHED) and values["until"] is None)):

@@ -733,18 +733,45 @@ def test_old_workdays_only_setting_migrates_to_a_list_of_days():
     assert core.migrate_config({"workdays": "пн"})["workdays"] == core.DEFAULTS["workdays"]
 
 
-def test_finished_day_is_not_asked_again_and_continues_if_still_working():
+def test_finished_day_never_goes_on_by_itself_but_asks_once():
     s = make_scheduler(day_end_enabled=True, day_end_at=18 * 60)
     assert s.tick(1, now=at(18)) == ["day_end"]
     s.day_end_answered("finish", now=at(18, 1))
     s.pause(None, now=at(18, 1))
     assert s.paused_until is not None and s.day_finished(at(18, 2))
     assert s.tick(1, now=at(18, 2), idle=0) == []            # just pressed: not "keeps working" yet
-    assert s.tick(1, now=at(18, 4), idle=0) == []            # 2 min of work is not enough
-    assert s.tick(1, now=at(18, 5), idle=0) == ["day_continued"]
-    assert s.paused_until is None                            # the timers run again
-    assert not s.day_finished(at(18, 5))                     # and the day is no longer finished
-    assert s.tick(1, now=at(19), idle=0) == []               # day end isn't asked anymore
+    assert s.tick(1, now=at(18, 4), idle=0) == []            # 2 min at the computer is not enough
+    assert s.tick(1, now=at(18, 5), idle=0) == ["ask_continue"]
+    assert s.day_finished(at(18, 5)) and s.paused_until is not None   # only asked: the day is still finished
+    assert tick_at(s, at(18, 5), 60 * 60) == []               # the window waits; not asked twice
+    assert s.continue_answered("continue", now=at(19, 10)) is True
+    assert not s.day_finished(at(19, 10)) and s.paused_until is None
+    assert s.tick(1, now=at(19, 11), idle=0) == []           # day end isn't asked anymore
+
+
+def test_no_to_still_working_keeps_the_day_finished_until_morning():
+    s = make_scheduler()
+    s.pause(None, now=at(18))
+    s.tick(1, now=at(20), idle=0)
+    assert s.tick(1, now=at(20, 3), idle=0) == ["ask_continue"]
+    assert s.continue_answered("no", now=at(20, 4)) is False
+    assert tick_at(s, at(20, 4), 2 * 60 * 60) == [] and s.day_finished(at(22, 5))   # a whole evening, no more asking
+    restored = make_scheduler()
+    assert restored.restore(s.snapshot(at(22, 5)), at(22, 6)) and restored.continue_asked == "no"
+    s.resume(now=at(22, 10))
+    s.pause(None, now=at(22, 20))                              # finished again: may ask again
+    s.tick(1, now=at(22, 21), idle=0)
+    assert s.tick(1, now=at(22, 24), idle=0) == ["ask_continue"]
+
+
+def test_still_working_pushed_out_asks_again_later():
+    s = make_scheduler()
+    s.pause(None, now=at(18))
+    s.tick(1, now=at(20), idle=0)
+    assert s.tick(1, now=at(20, 3), idle=0) == ["ask_continue"]
+    s.continue_answered("snooze", now=at(20, 4))
+    s.tick(1, now=at(20, 4), idle=0)
+    assert s.tick(1, now=at(20, 7), idle=0) == ["ask_continue"]
 
 
 def test_continue_after_finishing_the_day_continues_it_right_away():
@@ -753,7 +780,7 @@ def test_continue_after_finishing_the_day_continues_it_right_away():
     assert s.day_finished(at(17, 1))
     assert s.resume(now=at(17, 1)) is True                    # "Continue" under the timer
     assert not s.day_finished(at(17, 1)) and s.paused_until is None
-    assert "day_continued" not in s.tick(1, now=at(17, 5), idle=0)   # nothing left to decide for the person
+    assert "ask_continue" not in s.tick(1, now=at(17, 5), idle=0)    # nothing left to ask the person
     assert s.resume(now=at(17, 6)) is False                   # not paused: nothing to continue
     s.pause(30, now=at(17, 10))
     assert s.resume(now=at(17, 11)) is False and not s.day_finished(at(17, 11))  # a timed pause keeps the day
@@ -767,22 +794,22 @@ def test_continue_after_the_day_end_time_does_not_ask_again_at_once():
     assert s.tick(1, now=at(18, 41), idle=0) == []            # the person just said "continue"
 
 
-def test_a_quick_look_after_finishing_does_not_continue_the_day():
+def test_a_quick_look_after_finishing_does_not_ask():
     s = make_scheduler()
     s.pause(None, now=at(18))
     s.tick(1, now=at(20), idle=0)                             # glanced at mail
     s.tick(1, now=at(20, 1), idle=0)
     assert s.tick(1, now=at(20, 2), idle=5 * 60) == []        # and left
-    assert "day_continued" not in s.tick(1, now=at(21), idle=0) and s.day_finished(at(21))
-    assert s.tick(1, now=at(21, 3), idle=0) == ["day_continued"]   # and now really works
+    assert "ask_continue" not in s.tick(1, now=at(21), idle=0) and s.day_finished(at(21))
+    assert s.tick(1, now=at(21, 3), idle=0) == ["ask_continue"]   # and now uses the computer for a while
 
 
-def test_restored_finished_day_continues_when_working():
+def test_restored_finished_day_stays_finished_and_asks():
     s = make_scheduler()
-    s.restore_day(at(10).date(), finished_minute=18 * 60)    # after a restart: "finished at 18:00"
-    assert s.day_finished(at(20)) and s.mode == core.WORKING
+    s.restore_day(at(10).date(), finished_minute=18 * 60, now=at(20))   # after a restart: "finished at 18:00"
+    assert s.day_finished(at(20)) and s.mode == core.FINISHED and s.paused_until == at(6) + dt.timedelta(days=1)
     s.tick(1, now=at(20), idle=0)
-    assert s.tick(1, now=at(20, 3), idle=0) == ["day_continued"] and not s.day_finished(at(20, 3))
+    assert s.tick(1, now=at(20, 3), idle=0) == ["ask_continue"] and s.day_finished(at(20, 3))
 
 
 def test_day_start_is_the_earliest_known_activity():

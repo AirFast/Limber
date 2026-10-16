@@ -483,6 +483,25 @@ class Popups:
                         on_dismiss=None if demo else lambda: answer("snooze"), demo=demo)
         self.beep()
 
+    def show_continue_day(self, demo=False):
+        """"Still working?" after "Finish the day" once the person has kept using the computer for a while.
+        The day goes on only on "Continue the day"; it waits for an answer, and pushed out by another
+        notification it asks again later."""
+        finished = self.sched.finished_at or dt.datetime.now()
+        answer = (lambda _answer: None) if demo else self.answer_continue_day
+        actions = [(t("continue_no"), lambda: answer("no"), False),
+                   (t("continue_yes"), lambda: answer("continue"), True)]
+        self.show_toast(t("continue_title"), t("continue_text", time=f"{finished:%H:%M}"), actions,
+                        timeout_ms=60_000 if demo else None, kind="continue",
+                        on_dismiss=None if demo else lambda: answer("snooze"), demo=demo)
+        self.beep()
+
+    def answer_continue_day(self, answer):
+        if answer == "continue":
+            self.handle("resume")  # the same as "Continue": the day is no longer finished
+        else:
+            self.sched.continue_answered(answer)
+
     def answer_overwork(self, answer):
         self.sched.overwork_answered(answer)
         if answer == "finish":

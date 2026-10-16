@@ -385,6 +385,10 @@ STRINGS = {
         "day_end_text": "Час відпочити! Сьогодні перерв: {breaks}, води: {volume}. "
                         "«Завершити день» поставить Rhythmos на паузу до ранку.",
         "day_end_finish": "Завершити день",
+        "continue_title": "Ви ще працюєте?",
+        "continue_text": "Ви завершили робочий день о {time}. Якщо продовжите, перерви й вода знову нагадуватимуть.",
+        "continue_no": "Ні, відпочиваю",
+        "continue_yes": "Продовжити день",
         "day_end_snooze": "Ще {min} хв",
         # units
         "u_min": "{n} хв",
@@ -671,6 +675,10 @@ STRINGS = {
         "day_end_text": "Time to rest! Today: {breaks} breaks, {volume} of water. "
                         "“Finish the day” pauses Rhythmos until morning.",
         "day_end_finish": "Finish the day",
+        "continue_title": "Still working?",
+        "continue_text": "You finished the workday at {time}. If you go on, breaks and water reminders resume.",
+        "continue_no": "No, I'm off",
+        "continue_yes": "Continue the day",
         "day_end_snooze": "{min} more min",
         "u_min": "{n} min",
         "u_h": "{h} h",
