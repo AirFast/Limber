@@ -241,6 +241,49 @@ def test_skipped_long_break_comes_back_once():
     assert s.next_kind() == "long"
 
 
+def test_short_break_instead_of_long_keeps_the_long_one_next():
+    s = make_scheduler(long_every=3)
+    s.breaks_taken = 2
+    assert s.next_kind() == "long"
+    s.choose_kind("mini")
+    assert s.next_kind() == "mini" and s.swapped and s.breaks_until_long() == 2
+    s.finish_break()
+    assert s.chosen is None and s.next_kind() == "long"            # the long break moved to the next one
+    s.choose_kind("mini")
+    s.finish_break(skipped=True)                                   # a skipped swap counts as the long one skipped
+    assert s.next_kind() == "long" and s.long_skipped
+    s.finish_break()
+    assert s.next_kind() == "mini" and s.breaks_until_long() == 3
+
+
+def test_long_break_instead_of_mini_starts_the_count_over():
+    s = make_scheduler(long_every=3)
+    s.finish_break()
+    assert s.breaks_until_long() == 2
+    s.choose_kind("long")
+    assert s.next_kind() == "long" and s.breaks_until_long() == 1
+    s.choose_kind("mini")                                          # changed the mind back: no choice left
+    assert s.chosen is None and not s.swapped
+    s.choose_kind("long")
+    s.postpone()
+    assert s.next_kind() == "long"                                 # the choice survives a postponement
+    s.finish_break()
+    assert s.next_kind() == "mini" and s.breaks_until_long() == 3   # a full cycle until the next long one
+    s.choose_kind("long")
+    s.finish_break(skipped=True)                                   # skipped: as a skipped mini break
+    assert s.breaks_until_long() == 2
+
+
+def test_break_kind_choice_is_dropped_after_an_absence_and_kept_after_a_restart():
+    s = make_scheduler(long_every=3)
+    s.choose_kind("long")
+    restored = make_scheduler(long_every=3)
+    assert restored.restore(s.snapshot(at(10)), at(10, 1)) and restored.next_kind() == "long"
+    s.tick(1, now=at(10), idle=10 * 60)
+    assert s.tick(1, now=at(10, 1), idle=0) == ["back"]
+    assert s.chosen is None
+
+
 def test_smart_water_pacing_follows_the_rest_of_the_day():
     s = make_scheduler(water_interval_min=60, water_goal=8)
     assert s.water_interval(at(10)) == 60 * 60                      # day end unknown: as in the settings

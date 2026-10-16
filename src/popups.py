@@ -6,8 +6,8 @@ import tkinter as tk
 
 import exercises
 import system
-from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZE_MIN, build_break, fmt_time, regroup_workout,
-                  single_break_step)
+from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZE_MIN, build_break, fmt_time, other_kind,
+                  regroup_workout, single_break_step)
 from graphics import C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, glass_image, plate_image
 from i18n import content, fmt_clock, fmt_minutes, fmt_volume, t
 from system import HAND, font
@@ -32,6 +32,8 @@ class Popups:
         if self.sched.can_postpone():
             left = self.cfg["postpone_limit"] - self.sched.postpones
             actions.append((t("postpone_btn", min=self.cfg["postpone_min"], left=left), self.postpone_from_warning, False))
+        if self.cfg["kind_choice"]:
+            actions.append((t(f"instead_{other_kind(kind)}"), self.swap_from_warning, False))
         actions.append((t("ok"), lambda: None, True))
         self.show_toast(title, t("warn_countdown", time=fmt_time(self.sched.remaining)), actions,
                         timeout_ms=int(self.sched.remaining * 1000) + 15_000, kind="warning")
@@ -45,6 +47,13 @@ class Popups:
             self.close_toast()
         elif self.toast_text:
             self.toast_text.configure(text=t("warn_countdown", time=fmt_time(s.remaining)))
+
+    def swap_from_warning(self):
+        """"Short one instead" / "Long one instead" in the warning: the window comes back with the new kind."""
+        if self.sched.in_break or self.sched.remaining <= 0:
+            return
+        self.sched.choose_kind(other_kind(self.sched.next_kind()))
+        self.show_break_warning()
 
     def postpone_from_warning(self):
         if self.sched.in_break or not self.sched.can_postpone():
@@ -67,16 +76,21 @@ class Popups:
             return
         self.show_break(kind, demo=True)
 
-    def show_break(self, kind, demo=False):
+    def show_break(self, kind, demo=False, elapsed=None, group=None):
+        """elapsed: the break changed its kind on the screen (swap_break_kind) — it goes on, without a beep."""
         if self.toast_kind == "warning" and not demo:
             self.close_toast()  # the break started: the warning isn't needed anymore
         self.close_break_windows()
         system.keep_display_awake(True)  # the person exercises without input: no screen saver over the break
-        steps = build_break(kind, self.cfg)
+        steps = build_break(kind, self.cfg, group)
         multi = len(steps) > 1
-        self.break_state = {"kind": kind, "steps": steps, "index": 0, "left": steps[0]["secs"],
-                            "after": None, "widgets": None, "demo": demo, "group": None}
-        self.beep()
+        left = steps[0]["secs"]
+        if elapsed and kind == "mini":
+            left = max(1, left - elapsed)  # a mini break instead of a long one: the time already spent counts
+        self.break_state = {"kind": kind, "steps": steps, "index": 0, "left": left, "elapsed": elapsed or 0,
+                            "after": None, "widgets": None, "demo": demo, "group": group}
+        if elapsed is None:
+            self.beep()
 
         system.activate_app()
         screens = system.monitors() or [(0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight(), None, True)]
@@ -137,6 +151,12 @@ class Popups:
             if multi:
                 flat_button(buttons, t("next_exercise"), self.next_break_step).pack(side="left", padx=8)
             flat_button(buttons, t("skip"), lambda: self.end_break("skip")).pack(side="left", padx=8)
+            if self.cfg["kind_choice"]:
+                # A quiet text button below the others: the choice is there, but doesn't compete with them
+                swap = tk.Label(frame, text=t(f"instead_{other_kind(kind)}"), bg=C["bg"], fg=C["muted"],
+                                font=(*font(11), "underline"), cursor=HAND)
+                swap.pack(pady=(4 * UNIT, 0))
+                swap.bind("<Button-1>", lambda e: self.swap_break_kind())
             if multi:
                 tk.Label(frame, text=t("body_note"),
                          bg=C["bg"], fg=C["dim"], font=font(11)).pack(pady=(7 * UNIT, 0))
@@ -144,6 +164,21 @@ class Popups:
 
         self.update_break_view()
         self.break_state["after"] = self.root.after(1000, self.break_tick)
+
+    def swap_break_kind(self):
+        """"Short one instead" / "Long one instead" on the break screen: the break goes on as the other kind.
+        A mini break instead of a long one that has already lasted as long as a mini break is done."""
+        state = self.break_state
+        if not state:
+            return
+        kind, demo, elapsed = other_kind(state["kind"]), state["demo"], state.get("elapsed", 0)
+        if not demo:
+            self.sched.choose_kind(kind)
+        if kind == "mini" and elapsed >= self.cfg["mini_duration_sec"]:
+            state["kind"] = kind
+            self.end_break("done")
+            return
+        self.show_break(kind, demo=demo, elapsed=elapsed, group=state["group"])
 
     def update_break_view(self):
         state = self.break_state
@@ -226,6 +261,7 @@ class Popups:
 
     def end_break(self, result):
         kind = self.break_state["kind"] if self.break_state else "mini"
+        swapped = {"swapped": True} if self.sched.swapped else {}
         demo = bool(self.break_state and self.break_state["demo"])
         elapsed = self.break_state.get("elapsed", 0) if self.break_state else 0
         self.close_break_windows()
@@ -240,8 +276,10 @@ class Popups:
         if not away:  # the log records the absence itself when the person comes back ("back")
             results = {"done": "done", "skip": "skipped", "postpone": "postponed"}
             started = dt.datetime.now() - dt.timedelta(seconds=elapsed)
-            self.stats.log("break", self.minute(started), kind=kind, result=results[result], sec=elapsed)
+            self.stats.log("break", self.minute(started), kind=kind, result=results[result], sec=elapsed,
+                           **swapped)
         if away:
+            self.sched.choose_kind(None)  # nobody exercised: the rhythm goes on as if there was no choice
             self.sched.finish_break()
         elif result == "done":
             self.stats.add(f"{kind}_done")

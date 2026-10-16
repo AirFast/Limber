@@ -53,6 +53,7 @@ DEFAULTS = {
     "check_updates": True,
     "sound_name": "",        # system notification sound; "": the first available one
     "group_buttons": True,   # muscle group buttons on the break screen; off: random exercises
+    "kind_choice": True,     # "Short one instead" / "Long one instead" on the break warning and screen
     "notified_version": "",  # the new version a notification was already shown for
 }
 MAX_GLASSES = 30          # upper limit for manually entered water per day
@@ -204,6 +205,11 @@ def single_break_step(kind, cfg, group=None, avoid=None):
         return step(title, body, cfg["mini_duration_sec"], phase=t("phase_mini"))
     text = "\n".join(f"{i}.  {line}" for i, line in enumerate(body, 1))
     return step(title, text, cfg["long_duration_min"] * 60, "list", t("phase_long"))
+
+
+def other_kind(kind):
+    """The break kind offered instead: "Short one instead" on a long break, "Long one instead" on a mini one."""
+    return "mini" if kind == "long" else "long"
 
 
 def build_break(kind, cfg, group=None):
@@ -954,6 +960,7 @@ class Scheduler:
         self.breaks_taken = 0
         self.postpones = 0
         self.long_skipped = False  # a long break was skipped: the next one is long again (once)
+        self.chosen = None         # "mini"/"long" the person chose for the coming break instead of its kind
         self.held = None           # seconds the break has been held by busyness; None when not held
         # What App knows about today (update_day): for the water pace and the work limit
         self.drunk = 0
@@ -1129,6 +1136,7 @@ class Scheduler:
         An absence twice as long as the long break was the long break: a full cycle until the next one."""
         self.away = False
         self.postpones = 0
+        self.chosen = None  # a choice made before the absence was for that moment
         self._set_countdown(self.cfg["mini_interval_min"] * 60)
         if self.away_idle >= self.cfg["long_duration_min"] * 60 * 2:
             every = max(1, self.cfg["long_every"])
@@ -1139,15 +1147,37 @@ class Scheduler:
 
     # --- breaks ---
 
-    def breaks_until_long(self):
-        """Breaks left until the long one, including it: 1 means the next break is long."""
+    def natural_until_long(self):
+        """Breaks left until the long one by the rhythm alone, including it: 1 means the next break is long."""
         if self.long_skipped:
             return 1
         every = max(1, self.cfg["long_every"])
         return every - self.breaks_taken % every
 
+    def breaks_until_long(self):
+        """Breaks left until the long one, counting the person's choice for the coming break."""
+        left = self.natural_until_long()
+        if self.chosen == "long":
+            return 1
+        if self.chosen == "mini" and left == 1:
+            return 2
+        return left
+
+    def natural_kind(self):
+        return "long" if self.natural_until_long() == 1 else "mini"
+
     def next_kind(self):
-        return "long" if self.breaks_until_long() == 1 else "mini"
+        return self.chosen or self.natural_kind()
+
+    @property
+    def swapped(self):
+        """The coming (or current) break is of the kind the person chose instead of the rhythm's one."""
+        return self.chosen is not None and self.chosen != self.natural_kind()
+
+    def choose_kind(self, kind):
+        """"Short one instead" / "Long one instead": only this break, never the settings.
+        None or the rhythm's own kind drops the choice."""
+        self.chosen = kind if kind != self.natural_kind() else None
 
     def start_break(self):
         """"Break now": a break matters more than a pause or a meal."""
@@ -1156,17 +1186,28 @@ class Scheduler:
 
     def finish_break(self, skipped=False):
         """The break is over (done, skipped, or interrupted by a pause). A skipped long break comes back:
-        the next break is long again, but only once; then the rhythm goes on as usual."""
-        long = self.next_kind() == "long"
+        the next break is long again, but only once; then the rhythm goes on as usual.
+        A swapped break that was done: a mini one instead of the long one keeps the long one next;
+        a long one instead of a mini one starts the count to the next long break over.
+        A skipped swapped break is skipped by the rhythm's own kind."""
+        swapped, chosen = self.swapped, self.chosen
+        self.chosen = None
         if self.mode == BREAK:
             self.mode = WORKING
+        self.postpones = 0
+        self._set_countdown(self.cfg["mini_interval_min"] * 60)
+        if swapped and not skipped:
+            if chosen == "long":
+                every = max(1, self.cfg["long_every"])
+                self.breaks_taken = -(-(self.breaks_taken + 1) // every) * every
+                self.long_skipped = False
+            return
+        long = self.natural_kind() == "long"
         if skipped and long and not self.long_skipped:
             self.long_skipped = True
         else:
             self.long_skipped = False
             self.breaks_taken += 1
-        self.postpones = 0
-        self._set_countdown(self.cfg["mini_interval_min"] * 60)
 
     def can_postpone(self):
         return self.postpones < self.cfg["postpone_limit"]
@@ -1338,7 +1379,7 @@ class Scheduler:
             "mode": self.mode, "until": _iso(self.until), "meal": self.meal, "finished_at": _iso(self.finished_at),
             "remaining": self.remaining, "period": self.period, "warned": self.warned,
             "breaks_taken": self.breaks_taken, "postpones": self.postpones, "long_skipped": self.long_skipped,
-            "reminders": {r.name: r.snapshot() for r in self.reminders},
+            "chosen": self.chosen, "reminders": {r.name: r.snapshot() for r in self.reminders},
         }
 
     def restore(self, data, now):
@@ -1357,6 +1398,7 @@ class Scheduler:
                 "remaining": float(data["remaining"]), "period": float(data["period"]),
                 "warned": bool(data["warned"]), "breaks_taken": int(data["breaks_taken"]),
                 "postpones": int(data["postpones"]), "long_skipped": bool(data["long_skipped"]),
+                "chosen": data.get("chosen") if data.get("chosen") in ("mini", "long") else None,
             }
             if (mode not in MODES or (mode == EATING and values["meal"] not in MEALS)
                     or (mode in (EATING, PAUSED, FINISHED) and values["until"] is None)):

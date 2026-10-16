@@ -594,6 +594,7 @@ def run_smoke_test(app, out_dir):
         # A break holds off the screen saver: on macOS the assertion is visible in pmset (#2)
         (lambda: note(f"display assertion during a break: {system.display_assertions()}"), None),
         (lambda: app.choose_group("back"), "mini_break_back"),
+        (app.swap_break_kind, "long_instead_of_mini"),  # "A long one instead": the screen is built again
         (lambda: app.end_break("skip"), None),
         (lambda: (app.show_demo_break("long"), app.next_break_step()), "workout"),
         (lambda: app.end_break("skip"), None),
@@ -614,7 +615,8 @@ def run_smoke_test(app, out_dir):
                                 [(t("download"), lambda: None, True), (t("later"), lambda: None, False)]), "toast"),
         (app.close_toast, None),
         (lambda: (setattr(app.sched, "warned", True), app.show_break_warning()), "break_warning"),
-        (app.close_toast, None),
+        (app.swap_from_warning, "break_warning_swapped"),
+        (lambda: (app.close_toast(), app.sched.choose_kind(None)), None),
         # Network and certificates: on macOS HTTPS doesn't work in the built app without certifi
         (lambda: print(f"smoke test: update check -> {updates.fetch_latest()}", file=sys.stderr), None),
     ]

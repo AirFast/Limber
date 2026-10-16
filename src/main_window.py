@@ -604,6 +604,8 @@ class MainWindow:
                     name = t("tl_break_skipped")
                 else:
                     name = t("tl_break_long" if e.get("kind") == "long" else "tl_break")
+                    if e.get("swapped"):
+                        name += t("tl_swapped")
                 points.append((x, f"{name}: {fmt_clock(e['at'])}"))
             else:
                 points.append((x, f"{t('tl_breaks')}: {', '.join(fmt_clock(m) for m, _e in group)}"))
@@ -1049,6 +1051,7 @@ class MainWindow:
         toggle(breaks, t("group_buttons_toggle"), "group_buttons", pady=(0, ITEM))
         long_box = sliders(t("card_long"), ("long_every", "long_duration_min"), lambda: self.show_demo_break("long"))
         toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(0, ITEM))
+        toggle(long_box, t("kind_choice_toggle"), "kind_choice", pady=(0, ITEM))
         postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
 
         sound = settings_card(t("card_sound"))
