@@ -1077,12 +1077,14 @@ class MainWindow:
         day_end_slider.pack(fill="x", pady=(0, ITEM))
         day_end_slider.set_enabled(self.cfg["day_end_enabled"])
         self.add_slider(day_end, "max_work_hours")
+        self.add_slider(day_end, "day_end_snooze_min")
 
         meals = self.build_meals_card(page)
 
         water = settings_card(t("card_water"), lambda: self.show_water(demo=True))
         toggle(water, t("water_toggle"), "water_enabled", pady=(0, ITEM))
         self.build_water_profile(water)
+        self.add_slider(water, "water_later_min")
 
         other = settings_card(t("card_other"))
         self.build_language_switch(other).pack(fill="x", pady=(0, ITEM))
@@ -1123,6 +1125,7 @@ class MainWindow:
             slider.pack(fill="x", pady=(0, ITEM))
             slider.set_enabled(self.cfg[f"{meal}_enabled"])
         self.add_slider(box, "meal_pause_min")
+        self.add_slider(box, "meal_snooze_min")
         return box
 
     def build_workdays(self, parent):

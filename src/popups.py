@@ -6,7 +6,7 @@ import tkinter as tk
 
 import exercises
 import system
-from core import (DAY_END_SNOOZE_MIN, DEFAULTS, minute_of_day, MEALS, MEAL_SNOOZE_MIN, build_break, fmt_time, other_kind,
+from core import (DEFAULTS, minute_of_day, MEALS, build_break, fmt_time, other_kind,
                   regroup_workout, single_break_step)
 from graphics import C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, check_mark, glass_image, plate_image
 from i18n import content, fmt_clock, fmt_minutes, fmt_volume, t
@@ -385,10 +385,10 @@ class Popups:
             tk.Label(win, text=random.choice(content("meal_tips")), bg=C["panel"], fg=C["muted"], font=font(10),
                      wraplength=width - 2 * EDGE - 4, justify="left").pack(anchor="w", padx=EDGE, pady=(2 * UNIT, 0))
         if mode == "remind":
-            answers = ((t("skip"), "skip", False), (t("meal_snooze", min=MEAL_SNOOZE_MIN), "snooze", False),
+            answers = ((t("skip"), "skip", False), (t("meal_snooze", min=self.cfg["meal_snooze_min"]), "snooze", False),
                        (t("meal_go"), "eat", True))
         else:
-            answers = ((t("meal_more", min=MEAL_SNOOZE_MIN), "more", False), (t("resume"), "continue", True))
+            answers = ((t("meal_more", min=self.cfg["meal_snooze_min"]), "more", False), (t("resume"), "continue", True))
         self.popup_buttons(win, [(label, lambda a=answer: self.answer_meal(a), primary)
                                  for label, answer, primary in answers], C["meal"], C["on_meal"])
         self.place_in_corner(win, width, right, bottom)
@@ -456,7 +456,7 @@ class Popups:
         today = self.stats.day(self.today())
         text = t("day_end_text", breaks=today["mini_done"] + today["long_done"], volume=fmt_volume(today["water"]))
         answer = (lambda _answer: None) if demo else self.answer_day_end
-        actions = [(t("day_end_snooze", min=DAY_END_SNOOZE_MIN), lambda: answer("snooze"), False),
+        actions = [(t("day_end_snooze", min=self.cfg["day_end_snooze_min"]), lambda: answer("snooze"), False),
                    (t("day_end_finish"), lambda: answer("finish"), True)]
         self.show_toast(t("day_end_title"), text, actions, timeout_ms=60_000 if demo else None,
                         kind="day_end", on_dismiss=None if demo else lambda: answer("snooze"), demo=demo)

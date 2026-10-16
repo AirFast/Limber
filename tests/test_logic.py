@@ -105,6 +105,25 @@ def test_meal_snooze_reminds_again():
     assert s.tick(1, now=at(13, 15)) == ["meal"]
 
 
+def test_snooze_lengths_come_from_the_settings():
+    s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_snooze_min=25, day_end_enabled=True,
+                       day_end_at=18 * 60, day_end_snooze_min=60, water_later_min=40)
+    s.tick(1, now=at(13))
+    s.meal_answered("snooze", now=at(13))
+    assert s.tick(1, now=at(13, 15)) == []
+    assert s.tick(1, now=at(13, 25)) == ["meal"]
+    s.meal_answered("eat", now=at(13, 25))
+    s.extend_meal(now=at(14))
+    assert s.paused_until is None and s.until == at(14, 25)          # "25 more min" after the meal pause
+    s.finish_meal()
+    s.water_answered(False, now=at(15))
+    assert s.water_remaining == 40 * 60                               # "Later" in the water reminder
+    assert s.tick(1, now=at(18)) == ["day_end"]
+    s.day_end_answered("snooze", now=at(18))
+    assert s.tick(1, now=at(18, 30)) == []
+    assert s.tick(1, now=at(19)) == ["day_end"]
+
+
 def test_eating_freezes_timers_and_asks_to_continue():
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60, meal_pause_min=30, mini_interval_min=20,
                        water_interval_min=60, warn_before_sec=0)

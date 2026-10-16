@@ -40,6 +40,9 @@ DEFAULTS = {
     "dinner_enabled": False,
     "dinner_at": 18 * 60 + 30,
     "meal_pause_min": 45,    # how long "Going to eat" pauses breaks and water
+    "meal_snooze_min": 15,   # "In 15 min" in the meal reminder and "15 more min" after the meal pause
+    "water_later_min": 15,   # "Later" in the water reminder asks again in this many minutes
+    "day_end_snooze_min": 30,  # "30 more min" at the day end; the work limit pushed out asks again too
     "day_end_enabled": True,     # the "workday is over" reminder
     "day_end_at": 18 * 60,
     "workdays": [0, 1, 2, 3, 4],  # weekdays (0 is Monday) with meal and day-end reminders
@@ -76,6 +79,9 @@ SLIDERS = {
     "lunch_at": (11 * 60, 16 * 60, 15, fmt_clock),
     "dinner_at": (16 * 60, 22 * 60, 15, fmt_clock),
     "meal_pause_min": (15, 90, 15, fmt_minutes),
+    "meal_snooze_min": (5, 60, 5, fmt_minutes),
+    "water_later_min": (5, 60, 5, fmt_minutes),
+    "day_end_snooze_min": (10, 120, 10, fmt_minutes),
     "day_end_at": (15 * 60, 23 * 60, 15, fmt_clock),
     "workday_start": (5 * 60 + 45, 12 * 60, 15, lambda v: t("auto") if v < 6 * 60 else fmt_clock(v)),
     "max_work_hours": (5, 12, 1, lambda v: t("off") if v < 6 else fmt_minutes(v * 60)),
@@ -95,9 +101,6 @@ def setting_value(key, position):
 
 MEALS = ("breakfast", "lunch", "dinner")
 MEAL_WINDOW_MIN = 60   # the computer woke up more than an hour after meal time: the reminder is pointless
-MEAL_SNOOZE_MIN = 15   # "In 15 min" and "15 more min"
-DAY_END_SNOOZE_MIN = 30   # "30 more min": the person is still working, remind again
-WATER_LATER_MIN = 15      # "Later" in the water reminder
 WATER_MIN_PACE_MIN = 15   # sensible water pace: no more often than once in this many minutes
 MORNING = dt.time(6, 0)         # when the "until morning" pause ends
 EARLIEST_START = dt.time(4, 0)  # the workday starts with the first input no earlier than this; before is night
@@ -774,11 +777,11 @@ class Reminder:
     reminder from the `waits` groups is open (day end waits for meal answers). A snoozed one fires
     at snoozed_until, a stale one (stale: the computer slept) is dropped. Otherwise its own trigger
     triggered(now); shown is the workday when it already fired at its own time.
-    The answer "snooze" postpones by snooze_min; any other answer is final until the end of the workday."""
+    The answer "snooze" postpones by the setting snooze_key; any other answer is final until the end of the workday."""
     gate = CLOCK
     group = None
     waits = ()
-    snooze_min = MEAL_SNOOZE_MIN
+    snooze_key = "meal_snooze_min"
 
     def __init__(self, sched, name, event):
         self.sched, self.name, self.event = sched, name, event
@@ -831,7 +834,7 @@ class Reminder:
     def answer(self, answer, now):
         self.open = False
         if answer == "snooze":
-            self.snoozed_until = self.moved_to = now + dt.timedelta(minutes=self.snooze_min)
+            self.snoozed_until = self.moved_to = now + dt.timedelta(minutes=self.cfg[self.snooze_key])
         elif answer:
             self.answered = (self.sched.workday(now), answer)
             self.moved_to = None
@@ -855,7 +858,7 @@ class Reminder:
 
 class WaterReminder(Reminder):
     """Water: a work-time countdown. "Done" schedules the next glass at a sensible pace (Scheduler.water_interval),
-    "Later" in WATER_LATER_MIN; silent when the reminder is off or the daily goal is reached."""
+    "Later" in water_later_min; silent when the reminder is off or the daily goal is reached."""
     gate = WATER
 
     def __init__(self, sched):
@@ -873,7 +876,7 @@ class WaterReminder(Reminder):
 
     def answer(self, drank, now):
         self.open = False
-        self.remaining = self.sched.water_interval(now) if drank else WATER_LATER_MIN * 60
+        self.remaining = self.sched.water_interval(now) if drank else self.cfg["water_later_min"] * 60
 
     def snapshot(self):
         return {"remaining": 0 if self.open else self.remaining}
@@ -915,7 +918,7 @@ class DayEndReminder(Reminder):
     Answers: "snooze", "finish" (App sets the "until morning" pause)."""
     group = "day"
     waits = ("meal", "day")
-    snooze_min = DAY_END_SNOOZE_MIN
+    snooze_key = "day_end_snooze_min"
 
     def quiet(self, now):
         return (not self.cfg["day_end_enabled"] or not self.sched.reminders_today(now)
@@ -931,7 +934,7 @@ class OverworkReminder(Reminder):
     was pushed out by another notification before the person answered)."""
     group = "day"
     waits = ("meal", "day")
-    snooze_min = DAY_END_SNOOZE_MIN
+    snooze_key = "day_end_snooze_min"
 
     def quiet(self, now):
         return (not self.cfg["max_work_hours"] or self.sched.day_finished(now)
@@ -1293,9 +1296,9 @@ class Scheduler:
             self.meal_over.cancel()
 
     def extend_meal(self, now=None):
-        """"15 more min" after the meal pause."""
+        """"15 more min" after the meal pause (meal_snooze_min)."""
         if self.mode == EATING:
-            self.until = (now or dt.datetime.now()) + dt.timedelta(minutes=MEAL_SNOOZE_MIN)
+            self.until = (now or dt.datetime.now()) + dt.timedelta(minutes=self.cfg["meal_snooze_min"])
             self.meal_over.open = False
 
     def finish_meal(self, now=None):
