@@ -23,6 +23,7 @@ from widgets import CARD, HEAD_GAP, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggl
 
 TIMELINE_HEIGHT = 100     # the day timeline in the Today card
 STATUS_DAYS = 7           # the day switch of the day card: today and the six days before
+TIMELINE_MIN_H = 4        # the day timeline is at least this many hours long (early morning, a short day)
 TIMELINE_Y = 62           # where the bar is: labels above it in two tiers, hours below it (with air)
 TITLE_BAR = 32            # approximate OS title bar height, so the window fits the work area
 STATS_RANGES = (7, 30)    # the period switch on the statistics chart
@@ -457,12 +458,17 @@ class MainWindow:
         if not force and key == self._timeline_key:
             return
         self._timeline_key = key
-        # Timeline bounds: from the morning (no later than 8:00 or the first event) to the day end (no earlier
-        # than 18:00 and "now"), in whole hours, so every mark and span fits
-        times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks] + ([minute] if live else [])
-                 + [m for span in spans for m in span[1:3]])
-        start = (min([8 * 60] + times) - 30) // 60 * 60
-        end = -(-(max([18 * 60] + times) + 30) // 60) * 60
+        # Timeline bounds: only the hours that have something on them (marks, spans, "now", the next glass),
+        # in whole hours with half an hour of margin and at least TIMELINE_MIN_H long (stretched forward);
+        # a day with nothing on it shows 8:00-18:00. The "until morning" pause after the day end is left out:
+        # it looks like the empty bar, and it stretched a finished day to the evening
+        times = ([m[0] for m in marks] + drinks + missed + [e["at"] for e in breaks]
+                 + ([minute] if live else []) + ([next_water] if next_water is not None else [])
+                 + [m for kind, a, b, e in spans if e.get("kind") != "finished" for m in (a, b)]
+                 + [m for m in (fill_from, fill_to) if m])
+        start = (min(times or [8 * 60]) - 30) // 60 * 60
+        end = -(-(max(times or [18 * 60]) + 30) // 60) * 60
+        end = max(end, start + TIMELINE_MIN_H * 60)
         pad, y = 16, TIMELINE_Y
 
         def x_of(m):
