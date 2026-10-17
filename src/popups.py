@@ -27,7 +27,7 @@ class Popups:
             title = t("warn_title_workout")
         else:
             title = t(f"warn_title_{kind}")
-        actions = [(t("pause"), lambda: self.handle(("pause", 0)), False)]
+        actions = [(self.pause_label(), lambda: self.handle(("pause", self.pause_minutes())), False)]
         if self.sched.can_postpone():
             left = self.cfg["postpone_limit"] - self.sched.postpones
             actions.append((t("postpone_btn", min=self.cfg["postpone_min"], left=left), self.postpone_from_warning, False))

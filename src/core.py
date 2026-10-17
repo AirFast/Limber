@@ -39,6 +39,8 @@ DEFAULTS = {
     "lunch_at": 13 * 60,
     "dinner_enabled": False,
     "dinner_at": 18 * 60 + 30,
+    "pause_timed": False,    # off: the Pause button pauses until "Continue"; on: for pause_min minutes
+    "pause_min": 30,
     "meal_pause_min": 45,    # how long "Going to eat" pauses breaks and water
     "meal_snooze_min": 15,   # "In 15 min" in the meal reminder and "15 more min" after the meal pause
     "water_later_min": 15,   # "Later" in the water reminder asks again in this many minutes
@@ -76,6 +78,7 @@ SLIDERS = {
     "breakfast_at": (6 * 60, 11 * 60, 15, fmt_clock),
     "lunch_at": (11 * 60, 16 * 60, 15, fmt_clock),
     "dinner_at": (16 * 60, 22 * 60, 15, fmt_clock),
+    "pause_min": (15, 240, 15, fmt_minutes),
     "meal_pause_min": (15, 90, 15, fmt_minutes),
     "meal_snooze_min": (5, 60, 5, fmt_minutes),
     "water_later_min": (5, 60, 5, fmt_minutes),
@@ -1232,7 +1235,7 @@ class Scheduler:
         """minutes=0 is the Pause button: until "Continue", at the latest the morning, so a forgotten pause
         never carries into the next day. minutes=None means "until morning": the day is finished, so snoozed
         meal and day-end reminders are cancelled too, otherwise they would fire in the morning.
-        Other minutes: a timed pause (no button offers it since 2.18.2)."""
+        Other minutes: a timed pause (the Pause button with "Timed pause" on in the settings)."""
         now = now or dt.datetime.now()
         self.meal = None
         self.meal_over.cancel()

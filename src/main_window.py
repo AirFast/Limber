@@ -189,7 +189,7 @@ class MainWindow:
         self.w["ring"].pack(pady=(TIGHT, 4 * UNIT))
         flat_button(left, t("break_now"), self.trigger_break, bg=C["accent"], fg=C["on_accent"],
                     size=11).pack(fill="x", pady=UNIT)
-        self.w["pause_btn"] = flat_button(left, t("pause"), self.toggle_pause, size=11)
+        self.w["pause_btn"] = flat_button(left, self.pause_label(), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=UNIT)
         self.w["reset_btn"] = flat_button(left, t("reset"), self.sched.reset, size=11)
         self.w["reset_btn"].pack(fill="x", pady=UNIT)
@@ -713,7 +713,7 @@ class MainWindow:
 
     def toggle_pause(self):
         busy = self.sched.paused or self.sched.eating
-        self.handle("resume" if busy else ("pause", 0))
+        self.handle("resume" if busy else ("pause", self.pause_minutes()))
 
     def draw_ring(self):
         c, s = self.w["ring"], self.sched
@@ -1055,6 +1055,7 @@ class MainWindow:
         toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(0, ITEM))
         toggle(long_box, t("kind_choice_toggle"), "kind_choice", pady=(0, ITEM))
         postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
+        self.add_toggled_slider(postpone, t("s_pause_min"), "pause_min", "pause_timed")
 
         sound = settings_card(t("card_sound"))
         toggle(sound, t("sound_toggle"), "sound", pady=(0, ITEM))
@@ -1064,20 +1065,7 @@ class MainWindow:
         day_end = settings_card(t("card_day_end"), lambda: self.show_day_end(demo=True))
         self.build_workdays(day_end)
         self.add_slider(day_end, "workday_start")
-        lo, hi, step, fmt = SLIDERS["day_end_at"]
-        day_end_slider = Slider(day_end, t("s_day_end_at"), lo, hi, step, self.cfg["day_end_at"], fmt,
-                                lambda v: self.set_setting("day_end_at", v))
-
-        def toggle_day_end(value):
-            self.set_setting("day_end_enabled", value)
-            day_end_slider.set_enabled(value)
-
-        # As in Meals: the reminder toggle sits in the slider row; when off, the slider is dimmed
-        day_end_slider.label.configure(fg=C["text"], font=font(11))
-        Toggle(day_end_slider.head, None, self.cfg["day_end_enabled"], toggle_day_end).pack(
-            side="right", padx=(12, 0), before=day_end_slider.value_label)
-        day_end_slider.pack(fill="x", pady=(0, ITEM))
-        day_end_slider.set_enabled(self.cfg["day_end_enabled"])
+        self.add_toggled_slider(day_end, t("s_day_end_at"), "day_end_at", "day_end_enabled")
         self.add_slider(day_end, "max_work_hours")
         self.add_slider(day_end, "day_end_snooze_min")
 
@@ -1113,19 +1101,7 @@ class MainWindow:
         (compact, like a schedule line); the slider is inactive while the meal is off."""
         box = card(parent, t("card_meals"), (t("preview_try"), lambda: self.show_meal("lunch", demo=True)))
         for meal in MEALS:
-            lo, hi, step, fmt = SLIDERS[f"{meal}_at"]
-            slider = Slider(box, t(f"meal_{meal}"), lo, hi, step, self.cfg[f"{meal}_at"], fmt,
-                            lambda v, k=f"{meal}_at": self.set_setting(k, v))
-            slider.label.configure(fg=C["text"], font=font(11))
-
-            def toggle(value, meal=meal, slider=slider):
-                self.set_setting(f"{meal}_enabled", value)
-                slider.set_enabled(value)
-
-            Toggle(slider.head, None, self.cfg[f"{meal}_enabled"], toggle).pack(
-                side="right", padx=(12, 0), before=slider.value_label)
-            slider.pack(fill="x", pady=(0, ITEM))
-            slider.set_enabled(self.cfg[f"{meal}_enabled"])
+            self.add_toggled_slider(box, t(f"meal_{meal}"), f"{meal}_at", f"{meal}_enabled")
         self.add_slider(box, "meal_pause_min")
         self.add_slider(box, "meal_snooze_min")
         return box
@@ -1279,6 +1255,22 @@ class MainWindow:
         Slider(parent, t(f"s_{key}"), lo, hi, step, slider_position(key, self.cfg[key]), fmt,
                lambda v, k=key: self.set_setting(k, setting_value(k, v))).pack(fill="x", pady=(0, ITEM))
 
+    def add_toggled_slider(self, parent, label, key, enabled_key):
+        """A slider with its on/off toggle in the top row (a meal, day end, the timed pause): compact, like
+        a schedule line; while off, the slider is dimmed."""
+        lo, hi, step, fmt = SLIDERS[key]
+        slider = Slider(parent, label, lo, hi, step, self.cfg[key], fmt, lambda v: self.set_setting(key, v))
+        slider.label.configure(fg=C["text"], font=font(11))
+
+        def toggle(value):
+            self.set_setting(enabled_key, value)
+            slider.set_enabled(value)
+
+        Toggle(slider.head, None, self.cfg[enabled_key], toggle).pack(
+            side="right", padx=(12, 0), before=slider.value_label)
+        slider.pack(fill="x", pady=(0, ITEM))
+        slider.set_enabled(self.cfg[enabled_key])
+
     def set_setting(self, key, value):
         if self.cfg.get(key) == value:
             return
@@ -1287,6 +1279,8 @@ class MainWindow:
         self.sched.apply_config()
         if key in ("day_end_at", "day_end_enabled", "workday_start"):
             self.refresh_water_plan()
+        if key in ("pause_timed", "pause_min"):
+            self.icon.update_menu()  # the tray's Pause shows the length
         self.flash_saved()
 
     def set_autostart_setting(self, enabled):
@@ -1310,7 +1304,7 @@ class MainWindow:
     def refresh_status(self):
         s = self.sched
         self.draw_ring()
-        self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause"))
+        self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else self.pause_label())
         today = self.stats.day(self.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         hover = self.w.get("glass_hover")

@@ -31,7 +31,7 @@ from core import (APP_NAME, CONFIG_PATH, DATA_DIR, LOG_PATH, MEALS, PAUSE_KINDS,
                   at_workday_minute, average_minute, day_minute, fmt_time, load_config, load_json, minute_of_day,
                   save_config, save_json, set_language_setting, work_started, workday_date, workday_span)
 from graphics import ensure_icon_file, make_icon  # noqa: E402
-from i18n import t  # noqa: E402
+from i18n import fmt_minutes, t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
 from popups import Popups  # noqa: E402
 
@@ -336,7 +336,7 @@ class App(Popups, MainWindow):
             item(t("day_end_finish"), post(("pause", None)),
                  visible=lambda i: not self.sched.day_finished(dt.datetime.now())),
             pystray.Menu.SEPARATOR,
-            item(t("pause"), post(("pause", 0)),
+            item(lambda i: self.pause_label(), post("pause_button"),
                  visible=lambda i: self.sched.paused_until is None and not self.sched.eating),
             item(t("resume"), post("resume"),
                  visible=lambda i: self.sched.paused_until is not None or bool(self.sched.eating)),
@@ -364,6 +364,8 @@ class App(Popups, MainWindow):
             self.sched.reset()
         elif action == "drink":
             self.set_water(self.stats.day(self.today())["water"] + 1)
+        elif action == "pause_button":  # the tray's Pause: its length is read here, on the Tk thread
+            self.handle(("pause", self.pause_minutes()))
         elif action == "resume":
             if self.toast_kind == "continue":  # "Continue" from the tray or Status answers "Still working?" too
                 self.close_toast(dismissed=False)
@@ -411,6 +413,14 @@ class App(Popups, MainWindow):
             self.close_toast(dismissed=False)
         if not self.meal_demo:
             self.close_meal_window()
+
+    def pause_minutes(self):
+        """The Pause button: 0 means until "Continue" (at the latest the morning); with "Timed pause" on,
+        the length from the settings."""
+        return self.cfg["pause_min"] if self.cfg["pause_timed"] else 0
+
+    def pause_label(self):
+        return t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])) if self.cfg["pause_timed"] else t("pause")
 
     def continue_day(self):
         """The day goes on, so it isn't finished: clear the finish time, the "Finish the day" button comes back."""
