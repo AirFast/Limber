@@ -35,7 +35,7 @@ from i18n import t  # noqa: E402
 from main_window import MainWindow  # noqa: E402
 from popups import Popups  # noqa: E402
 
-__version__ = "2.18.1"
+__version__ = "2.18.2"
 
 UPDATE_CHECK_DELAY_MS = 30_000
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # hourly: with a daily check a new version could wait until tomorrow
