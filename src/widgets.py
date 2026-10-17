@@ -91,14 +91,17 @@ class Slider(tk.Frame):
         self.lo, self.hi, self.step, self.fmt, self.on_change = lo, hi, step, fmt, on_change
         self.value = self.snap(value)
         self.enabled = True
-        # Row above the track: label and value; a toggle can go here too (see Meals)
+        # Row above the track: label and value; a toggle can go here too (see Meals). As in Toggle, the value
+        # (and a toggle, packed before it) goes in first and the label wraps in what is left: in a narrow
+        # column a long label pushed the value and the toggle past the card edge ("Timed pause", 2.19.0)
         self.head = head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
-        self.label = tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10))
-        self.label.pack(side="left")
         self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
                                     font=font(11, "semibold"))
-        self.value_label.pack(side="right")
+        self.value_label.pack(side="right", padx=(8, 0))
+        self.label = wrap_to_width(tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10),
+                                            anchor="w", justify="left", wraplength=180))
+        self.label.pack(side="left", fill="x", expand=True)
         # Explicit small width: otherwise the Canvas asks for ~380 px and widens the settings columns
         self.canvas = tk.Canvas(self, width=160, height=26, bg=bg, highlightthickness=0, cursor=HAND)
         self.canvas.pack(fill="x", pady=(TIGHT, 0))
