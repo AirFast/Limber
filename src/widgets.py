@@ -146,11 +146,13 @@ class Slider(tk.Frame):
         value_font = font(11, "semibold")
         measure = tkfont.Font(font=value_font).measure
         widest = max(measure(fmt(v)) for v in range(lo, hi + 1, step))
-        self.value_box = tk.Frame(head, bg=bg, width=widest + 2)
+        # No label padding or border, and a few px to spare: Tk on macOS pads labels more than on Windows,
+        # and a box just as wide as the text cut "08:00" at the left there
+        self.value_box = tk.Frame(head, bg=bg, width=widest + 4)
         self.value_box.pack_propagate(False)
         self.value_box.pack(side="right", padx=(8, 0))
         self.value_label = tk.Label(self.value_box, text=fmt(self.value), bg=bg, fg=C["text"], font=value_font,
-                                    anchor="e")
+                                    anchor="e", padx=0, pady=0, bd=0, highlightthickness=0)
         self.value_label.pack(fill="both", expand=True)
         self.value_box.configure(height=self.value_label.winfo_reqheight())
         self.label = wrap_to_width(tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10),
