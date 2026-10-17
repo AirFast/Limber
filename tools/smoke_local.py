@@ -13,6 +13,10 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "smoke-local"))
+# The out dir is emptied before the run, so it must be an earlier smoke output (info.txt, screenshots) or empty:
+# a wrong argument once pointed it at the repository and wiped the working copy
+if os.path.isdir(out) and any(not (name == "info.txt" or name.endswith(".png")) for name in os.listdir(out)):
+    sys.exit(f"{out} is not a smoke test output (it has other files); refusing to empty it")
 home = tempfile.mkdtemp(prefix="rhythmos-smoke-")
 
 if sys.platform == "darwin":

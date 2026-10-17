@@ -2,6 +2,7 @@
 the DEMO badge. Plain tk.Button ignores colours on macOS, so everything is built from Label and Canvas."""
 
 import tkinter as tk
+import tkinter.font as tkfont
 
 from PIL import ImageTk
 
@@ -53,6 +54,50 @@ def wrap_to_width(label):
     return label
 
 
+def wrapped_line_count(text, fnt, width):
+    """How many lines the text takes wrapped at width, word by word as Tk's wraplength does."""
+    count = 0
+    for paragraph in text.split("\n"):
+        count += 1
+        line = ""
+        for word in paragraph.split(" "):
+            joined = f"{line} {word}" if line else word
+            if line and fnt.measure(joined) > width:
+                count += 1
+                line = word
+            else:
+                line = joined
+    return count
+
+
+class ReservedText(tk.Frame):
+    """Wrapped text whose height doesn't follow the text: it is as tall as the longest of the texts it may show
+    (texts()), so a card doesn't grow or shrink while a setting rewrites the text."""
+
+    def __init__(self, parent, fnt, texts, **label_options):
+        bg = parent["bg"]
+        super().__init__(parent, bg=bg, height=1)
+        self.pack_propagate(False)
+        self.font, self.texts = tkfont.Font(font=fnt), texts
+        # Initial wrap is narrower than the column so a long line doesn't widen the window; then it follows the width
+        self.label = tk.Label(self, bg=bg, font=fnt, justify="left", anchor="nw", wraplength=240, **label_options)
+        self.label.pack(fill="both", expand=True)
+        self.bind("<Configure>", lambda e: self.fit())
+
+    def set(self, text):
+        self.label.configure(text=text)
+        self.fit()
+
+    def fit(self):
+        width = self.winfo_width() if self.winfo_width() > 1 else 240
+        self.label.configure(wraplength=width)
+        texts = [self.label.cget("text"), *self.texts()]
+        lines = max(wrapped_line_count(text, self.font, width) for text in texts)
+        height = lines * self.font.metrics("linespace") + 2
+        if height != self.winfo_reqheight():
+            self.configure(height=height)
+
+
 # Spacing scale for a steady vertical rhythm: every gap is a multiple of one 4 px unit.
 # Proximity: a label sits close to its own control (TIGHT), settings are farther apart (ITEM),
 # cards farther still (CARD). A card heading is closer to its content than to the card edge.
@@ -96,9 +141,18 @@ class Slider(tk.Frame):
         # column a long label pushed the value and the toggle past the card edge ("Timed pause", 2.19.0)
         self.head = head = tk.Frame(self, bg=bg)
         head.pack(fill="x")
-        self.value_label = tk.Label(head, text=fmt(self.value), bg=bg, fg=C["text"],
-                                    font=font(11, "semibold"))
-        self.value_label.pack(side="right", padx=(8, 0))
+        # The value sits in a box as wide as its widest possible text: dragging from "30 min" to "1 h 30 min"
+        # must not change the room left for the label, or the label rewraps and the rows below jump
+        value_font = font(11, "semibold")
+        measure = tkfont.Font(font=value_font).measure
+        widest = max(measure(fmt(v)) for v in range(lo, hi + 1, step))
+        self.value_box = tk.Frame(head, bg=bg, width=widest + 2)
+        self.value_box.pack_propagate(False)
+        self.value_box.pack(side="right", padx=(8, 0))
+        self.value_label = tk.Label(self.value_box, text=fmt(self.value), bg=bg, fg=C["text"], font=value_font,
+                                    anchor="e")
+        self.value_label.pack(fill="both", expand=True)
+        self.value_box.configure(height=self.value_label.winfo_reqheight())
         self.label = wrap_to_width(tk.Label(head, text=label, bg=bg, fg=C["muted"], font=font(10),
                                             anchor="w", justify="left", wraplength=180))
         self.label.pack(side="left", fill="x", expand=True)

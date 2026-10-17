@@ -12,13 +12,14 @@ import system
 from core import (APP_NAME, MAX_GLASSES, MEALS, SLIDERS, WATER_PROFILES, Stats, average_minute, completion_rate,
                   current_stretch, day_bounds, event_spans, export_csv, fmt_hm, fmt_time, main_layout, regularity,
                   restore_manual_water, save_config, setting_value, slider_position, split_orders,
-                  water_interval_for, water_streak)
+                  water_interval_for, water_plan, water_streak)
 from graphics import (C, GLASSES_PER_ROW, MAX_GLASSES_SHOWN, PLATE_STATES, blend, check_mark, dot_image,
                       draw_progress_ring, glass_image, make_app_icon, plate_image, rgba, smooth_image)
 from i18n import (SEP, fmt_after_minis, fmt_clock, fmt_days, fmt_glasses, fmt_minutes, fmt_times,
                   fmt_volume, t)
 from system import HAND, font
-from widgets import CARD, HEAD_GAP, ITEM, TIGHT, UNIT, ScrollArea, Slider, Toggle, card, flat_button, wrap_to_width
+from widgets import (CARD, HEAD_GAP, ITEM, TIGHT, UNIT, ReservedText, ScrollArea, Slider, Toggle, card, flat_button,
+                     wrap_to_width)
 
 
 TIMELINE_HEIGHT = 100     # the day timeline in the Today card
@@ -1156,11 +1157,11 @@ class MainWindow:
             btn.pack(side="left", fill="x", expand=True, padx=2, pady=2)
             btn.bind("<Button-1>", lambda e, c=code: self.set_water_profile(c))
             self.w["water_profile"][code] = btn
-        # Initial wrap is narrower than the column so a long line doesn't widen the window; then it follows the width
-        hint = tk.Label(parent, bg=parent["bg"], fg=C["muted"], font=font(9), justify="left", anchor="w",
-                        wraplength=240)
+        # Its height is kept for the longest hint of any intake: switching it or moving a slider below
+        # rewrites the text, and the card must not jump
+        hint = ReservedText(parent, font(9), lambda: [self.water_hint(p) for p in ("female", "male", "custom")],
+                            fg=C["muted"])
         hint.pack(fill="x", pady=(0, ITEM))
-        hint.bind("<Configure>", lambda e: hint.configure(wraplength=e.width))
         self.w["water_hint"] = hint
         self.w["water_sliders"] = {}
         for key in ("water_interval_min", "water_goal"):
@@ -1183,17 +1184,19 @@ class MainWindow:
         for key, slider in self.w["water_sliders"].items():
             slider.set(self.cfg[key])
             slider.set_enabled(profile == "custom")
-        goal = self.cfg["water_goal"]
+        self.w["water_hint"].set(self.water_hint(profile))
+
+    def water_hint(self, profile):
+        """The hint under the intake switch for a profile, with today's workday."""
         start, end = self.workday()
         span = f"{fmt_clock(start)}–{fmt_clock(end)}"
         if profile == "custom":
-            text = t("water_hint_custom", female=fmt_volume(WATER_PROFILES["female"]),
+            goal = self.cfg["water_goal"] if self.cfg["water_profile"] == "custom" else WATER_PROFILES["male"]
+            return t("water_hint_custom", female=fmt_volume(WATER_PROFILES["female"]),
                      male=fmt_volume(WATER_PROFILES["male"]), goal=fmt_glasses(goal), span=span,
                      interval=fmt_minutes(water_interval_for(goal, end - start)))
-        else:
-            text = t("water_hint_auto", volume=fmt_volume(goal), span=span,
-                     interval=fmt_minutes(self.cfg["water_interval_min"]))
-        self.w["water_hint"].configure(text=text)
+        goal, interval = water_plan(profile, end - start)
+        return t("water_hint_auto", volume=fmt_volume(goal), span=span, interval=fmt_minutes(interval))
 
     def set_water_profile(self, profile):
         if profile == self.cfg["water_profile"]:
@@ -1267,7 +1270,7 @@ class MainWindow:
             slider.set_enabled(value)
 
         Toggle(slider.head, None, self.cfg[enabled_key], toggle).pack(
-            side="right", padx=(12, 0), before=slider.value_label)
+            side="right", padx=(12, 0), before=slider.value_box)
         slider.pack(fill="x", pady=(0, ITEM))
         slider.set_enabled(self.cfg[enabled_key])
 
