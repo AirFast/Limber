@@ -141,6 +141,20 @@ def test_eating_freezes_timers_and_asks_to_continue():
     assert s.tick(1, now=at(13, 56)) == []
 
 
+def test_pause_button_lasts_until_continue_but_not_into_the_next_day():
+    s = make_scheduler(mini_interval_min=20, water_enabled=False)   # a plain pause stops only breaks
+    s.pause(0, now=at(10))
+    assert s.open_pause and s.paused_until == at(6) + dt.timedelta(days=1)
+    remaining = s.remaining
+    assert tick_at(s, at(10), 3 * 60 * 60) == [] and s.remaining == remaining   # no breaks for hours
+    restored = make_scheduler()
+    assert restored.restore(s.snapshot(at(13)), at(13, 1)) and restored.open_pause and restored.paused
+    assert s.resume(now=at(13)) is False and not s.paused         # "Continue": a plain pause, the day goes on
+    s.pause(0, now=at(23))
+    s.tick(1, now=at(6) + dt.timedelta(days=1))
+    assert not s.paused                                          # forgotten overnight: over by the morning
+
+
 def test_going_to_eat_cancels_timed_pause():
     s = make_scheduler(lunch_enabled=True, lunch_at=13 * 60)
     s.pause(30, now=at(12, 59))

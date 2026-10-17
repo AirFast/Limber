@@ -189,7 +189,7 @@ class MainWindow:
         self.w["ring"].pack(pady=(TIGHT, 4 * UNIT))
         flat_button(left, t("break_now"), self.trigger_break, bg=C["accent"], fg=C["on_accent"],
                     size=11).pack(fill="x", pady=UNIT)
-        self.w["pause_btn"] = flat_button(left, t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])), self.toggle_pause, size=11)
+        self.w["pause_btn"] = flat_button(left, t("pause"), self.toggle_pause, size=11)
         self.w["pause_btn"].pack(fill="x", pady=UNIT)
         self.w["reset_btn"] = flat_button(left, t("reset"), self.sched.reset, size=11)
         self.w["reset_btn"].pack(fill="x", pady=UNIT)
@@ -713,7 +713,7 @@ class MainWindow:
 
     def toggle_pause(self):
         busy = self.sched.paused or self.sched.eating
-        self.handle("resume" if busy else ("pause", self.cfg["pause_min"]))
+        self.handle("resume" if busy else ("pause", 0))
 
     def draw_ring(self):
         c, s = self.w["ring"], self.sched
@@ -731,6 +731,8 @@ class MainWindow:
         c.create_image(0, 0, anchor="nw", image=self.ring_photo)
         if s.eating:
             subtitle = t(f"meal_until_{s.eating}", time=f"{s.eating_until:%H:%M}")
+        elif s.open_pause and s.paused:
+            subtitle = t("ring_paused_open")  # until "Continue": no end time to show
         elif s.paused:
             subtitle = t("ring_paused", time=f"{s.paused_until:%H:%M}")
         elif s.in_break:
@@ -1052,7 +1054,7 @@ class MainWindow:
         long_box = sliders(t("card_long"), ("long_every", "long_duration_min"), lambda: self.show_demo_break("long"))
         toggle(long_box, t("workout_toggle"), "workout_enabled", pady=(0, ITEM))
         toggle(long_box, t("kind_choice_toggle"), "kind_choice", pady=(0, ITEM))
-        postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec", "pause_min"))
+        postpone = sliders(t("card_postpone"), ("postpone_min", "postpone_limit", "warn_before_sec"))
 
         sound = settings_card(t("card_sound"))
         toggle(sound, t("sound_toggle"), "sound", pady=(0, ITEM))
@@ -1308,7 +1310,7 @@ class MainWindow:
     def refresh_status(self):
         s = self.sched
         self.draw_ring()
-        self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause_btn", time=fmt_minutes(self.cfg["pause_min"])))
+        self.w["pause_btn"].configure(text=t("resume") if s.paused or s.eating else t("pause"))
         today = self.stats.day(self.today())
         progress = t("water_today", n=today["water"], goal=self.cfg["water_goal"], volume=fmt_volume(today["water"]))
         hover = self.w.get("glass_hover")

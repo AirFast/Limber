@@ -336,11 +336,8 @@ class App(Popups, MainWindow):
             item(t("day_end_finish"), post(("pause", None)),
                  visible=lambda i: not self.sched.day_finished(dt.datetime.now())),
             pystray.Menu.SEPARATOR,
-            item(t("pause"), pystray.Menu(
-                item(t("pause_30"), post(("pause", 30))),
-                item(t("pause_60"), post(("pause", 60))),
-                item(t("pause_120"), post(("pause", 120))),
-            )),
+            item(t("pause"), post(("pause", 0)),
+                 visible=lambda i: self.sched.paused_until is None and not self.sched.eating),
             item(t("resume"), post("resume"),
                  visible=lambda i: self.sched.paused_until is not None or bool(self.sched.eating)),
             pystray.Menu.SEPARATOR,
@@ -425,6 +422,9 @@ class App(Popups, MainWindow):
         s = self.sched
         if s.eating:
             title = f"{APP_NAME}: " + t(f"meal_until_{s.eating}", time=f"{s.eating_until:%H:%M}")
+            key = ("paused",)
+        elif s.open_pause and s.paused:
+            title = t("tip_paused_open", app=APP_NAME)
             key = ("paused",)
         elif s.paused:
             title = t("tip_paused", app=APP_NAME, time=f"{s.paused_until:%H:%M}")

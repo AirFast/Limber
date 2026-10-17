@@ -48,7 +48,6 @@ DEFAULTS = {
     "workdays": [0, 1, 2, 3, 4],  # weekdays (0 is Monday) with meal and day-end reminders
     "workday_start": 0,          # workday start, minutes from midnight; 0: from the first mouse/keyboard input
     "max_work_hours": 9,         # warn after this many hours at the computer; 0: off
-    "pause_min": 30,         # length of the pause from the Pause button (Status tab, break warning)
     "intensity": 2,
     "workout_enabled": True,
     "sound": True,
@@ -74,7 +73,6 @@ SLIDERS = {
     "water_interval_min": (15, 240, 5, fmt_minutes),
     "water_goal": (4, 16, 1, fmt_glasses),
     "intensity": (1, 3, 1, fmt_intensity),
-    "pause_min": (15, 240, 15, fmt_minutes),
     "breakfast_at": (6 * 60, 11 * 60, 15, fmt_clock),
     "lunch_at": (11 * 60, 16 * 60, 15, fmt_clock),
     "dinner_at": (16 * 60, 22 * 60, 15, fmt_clock),
@@ -957,6 +955,7 @@ class Scheduler:
         self.meal = None           # which meal is being eaten (EATING)
         self.finished_at = None    # when "Finish the day" was pressed (the "until morning" pause)
         self.active_since = None   # since when the person has worked continuously after "Finish the day"
+        self.open_pause = False    # the Pause button's pause: until "Continue" (at the latest the morning)
         self.continue_asked = None  # "Still working?" after "Finish the day": None, "open" or "no" (until morning)
         self.away = False          # the person isn't at the computer (see away_after)
         self.away_idle = 0.0       # the longest idleness during this absence
@@ -1229,18 +1228,23 @@ class Scheduler:
 
     # --- pause and day end ---
 
-    def pause(self, minutes, now=None):
-        """minutes=None means "until morning": the day is finished, so snoozed meal and day-end reminders
-        are cancelled too, otherwise they would fire in the morning."""
+    def pause(self, minutes=0, now=None):
+        """minutes=0 is the Pause button: until "Continue", at the latest the morning, so a forgotten pause
+        never carries into the next day. minutes=None means "until morning": the day is finished, so snoozed
+        meal and day-end reminders are cancelled too, otherwise they would fire in the morning.
+        Other minutes: a timed pause (no button offers it since 2.18.2)."""
         now = now or dt.datetime.now()
         self.meal = None
         self.meal_over.cancel()
+        self.open_pause = minutes == 0
         if minutes is None:
             self.mode, self.until, self.finished_at = FINISHED, self.morning(now), now
             self.continue_asked, self.active_since = None, None
             for r in (*self.meals.values(), self.day_end, self.overwork):
                 r.cancel()
             self.day_end.shown = self.workday(now)
+        elif minutes == 0:
+            self.mode, self.until = PAUSED, self.morning(now)
         else:
             self.mode, self.until = PAUSED, now + dt.timedelta(minutes=minutes)
 
@@ -1397,7 +1401,8 @@ class Scheduler:
             "mode": self.mode, "until": _iso(self.until), "meal": self.meal, "finished_at": _iso(self.finished_at),
             "remaining": self.remaining, "period": self.period, "warned": self.warned,
             "breaks_taken": self.breaks_taken, "postpones": self.postpones, "long_skipped": self.long_skipped,
-            "chosen": self.chosen, "continue_declined": self.continue_asked == "no", "reminders": {r.name: r.snapshot() for r in self.reminders},
+            "chosen": self.chosen, "open_pause": self.open_pause, "continue_declined": self.continue_asked == "no",
+            "reminders": {r.name: r.snapshot() for r in self.reminders},
         }
 
     def restore(self, data, now):
@@ -1418,6 +1423,7 @@ class Scheduler:
                 "postpones": int(data["postpones"]), "long_skipped": bool(data["long_skipped"]),
                 "chosen": data.get("chosen") if data.get("chosen") in ("mini", "long") else None,
                 "continue_asked": "no" if data.get("continue_declined") else None,
+                "open_pause": bool(data.get("open_pause")) and mode == PAUSED,
             }
             if (mode not in MODES or (mode == EATING and values["meal"] not in MEALS)
                     or (mode in (EATING, PAUSED, FINISHED) and values["until"] is None)):
